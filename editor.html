@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Quill Editor</title>
+
+  <!-- Local CSS: keep the SAME version as JS -->
+  <link rel="stylesheet" href="web_resources/quill.snow.css" />
+
+  <style>
+    html, body { margin:0; padding:0; height:100%; width:100%; }
+    #editor-container { height:100vh; width:100%; display:flex; flex-direction:column; }
+    #editor { flex:1; }
+  </style>
+</head>
+<body>
+  <div id="editor-container">
+    <div id="editor"></div>
+  </div>
+
+  <!-- IMPORTANT: Use a clean UMD build, e.g., quill.min.js -->
+  <script src="web_resources/quill.min.js"></script>
+
+  <script>
+    if (typeof window.Quill === "undefined" || !Quill.import) {
+      throw new Error("Quill failed to load. Check web_resources/quill.min.js and version match.");
+    }
+
+    const quill = new Quill("#editor", {
+      theme: "snow",
+      modules: {
+        toolbar: [
+          [{ header: [1, 2, 3, false] }],
+          ["bold","italic","underline","strike"],
+          [{ list: "ordered" }, { list: "bullet" }],
+          ["link"], ["clean"]
+        ]
+      }
+    });
+
+    // API for Python
+    window.setEditorContent = function (html) {
+      if (html) quill.clipboard.dangerouslyPasteHTML(html);
+      else quill.setText("");
+    };
+    window.getEditorContent = function () {
+      return quill.root.innerHTML;
+    };
+    window.focusEditor = function () { quill.focus(); };
+  </script>
+</body>
+</html>
