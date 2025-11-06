@@ -147,11 +147,12 @@ class ProjectDashboardWidget(QWidget):
         self.load_readings()
 
         self.bottom_tabs = []
+        # MODIFIED: Use the full database column names
         fields = [
-            ("Key Questions", "key_questions"),
-            ("Thesis/Argument", "thesis"),
-            ("Key Insights", "insights"),
-            ("Unresolved Questions", "unresolved")
+            ("Key Questions", "key_questions_text"),
+            ("Thesis/Argument", "thesis_text"),
+            ("Key Insights", "insights_text"),
+            ("Unresolved Questions", "unresolved_text")
         ]
         for tab_title, field_name in fields:
             editor_tab = ProjectEditorTab(self.db, self.project_id, field_name)
@@ -202,6 +203,7 @@ class ProjectDashboardWidget(QWidget):
 
         for tab in self.bottom_tabs:
             def cb(field):
+                # This 'field' now correctly holds 'key_questions_text', etc.
                 return lambda html: self.db.update_project_text_field(self.project_id, field, html) if html is not None else None
             tab.get_editor_content(cb(tab.text_field))
 
@@ -217,3 +219,4 @@ class ProjectDashboardWidget(QWidget):
     def return_to_home(self):
         self.save_all_editors()
         self.returnToHome.emit()
+

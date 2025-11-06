@@ -23,15 +23,18 @@ class ProjectEditorTab(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
 
+        # MODIFIED: Use the full 'text_field' names (e.g., 'key_questions_text')
+        # to look up the display title.
         title = {
-            "key_questions": "Key Questions",
-            "thesis": "Thesis / Argument",
-            "insights": "Key Insights",
-            "unresolved": "Unresolved Questions",
+            "key_questions_text": "Key Questions",
+            "thesis_text": "Thesis / Argument",
+            "insights_text": "Key Insights",
+            "unresolved_text": "Unresolved Questions",
         }.get(text_field, "Editor")
 
         # Optional prompt example
-        if text_field == "key_questions":
+        # MODIFIED: Check against the full field name
+        if text_field == "key_questions_text":
             prompt = QLabel("What is the central question this project aims to answer?")
             prompt.setWordWrap(True)
             layout.addWidget(prompt)
@@ -43,6 +46,8 @@ class ProjectEditorTab(QWidget):
     def load_data(self):
         html = ""
         try:
+            # MODIFIED: This was already correct, but just confirming
+            # self.text_field here is 'key_questions_text', etc.
             if hasattr(self.db, "get_project_text_field"):
                 html = self.db.get_project_text_field(self.project_id, self.text_field) or ""
         except Exception as e:
