@@ -1,94 +1,61 @@
-import sys
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QPushButton,
-    QMessageBox, QDialog
-)
-from PySide6.QtCore import Qt, Slot
+# tabs/project_editor_tab.py
 
-# This is our actual web view widget
-from tabs.quill_editor_tab import QuillEditorTab
-
-try:
-    from dialogs.edit_instructions_dialog import EditInstructionsDialog
-except ImportError:
-    print("Error: Could not import EditInstructionsDialog")
-    sys.exit(1)
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QMessageBox
+from tabs.rich_text_editor_tab import RichTextEditorTab
 
 
 class ProjectEditorTab(QWidget):
     """
-    A single tab for the project dashboard's bottom section.
-    Contains:
-    1. Clickable instructions.
-    2. A Quill Editor instance.
+    Bottom-area editor tab that wraps a RichTextEditorTab (native Qt).
+    Public API kept identical to your previous version:
+      - text_field (str)
+      - load_data()
+      - get_editor_content(callback)
+      - open_edit_instructions_dialog()
     """
-
-    def __init__(self, db_manager, project_id, field_name, parent=None):
+    def __init__(self, db, project_id: int, text_field: str, project_root_dir: str = "", parent=None):
         super().__init__(parent)
-        self.db = db_manager
+        self.db = db
         self.project_id = project_id
+        self.text_field = text_field
 
-        # field_name is 'key_questions', 'thesis', 'insights', 'unresolved'
-        self.instr_field = f"{field_name}_instr"
-        self.text_field = f"{field_name}_text"
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
 
-        self.current_instructions = {}
+        title = {
+            "key_questions": "Key Questions",
+            "thesis": "Thesis / Argument",
+            "insights": "Key Insights",
+            "unresolved": "Unresolved Questions",
+        }.get(text_field, "Editor")
 
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(5, 5, 5, 5)
-        main_layout.setSpacing(5)
+        # Optional prompt example
+        if text_field == "key_questions":
+            prompt = QLabel("What is the central question this project aims to answer?")
+            prompt.setWordWrap(True)
+            layout.addWidget(prompt)
 
-        # 1. Instructions Label
-        self.instr_label = QLabel("Loading instructions...")
-        self.instr_label.setWordWrap(True)
-        self.instr_label.setStyleSheet("QLabel { color: #555; font-style: italic; }")
+        self.editor = RichTextEditorTab(title)
+        layout.addWidget(self.editor, 1)
 
-        # 2. The Quill Editor
-        self.quill_editor = QuillEditorTab()
-
-        main_layout.addWidget(self.instr_label)
-        main_layout.addWidget(self.quill_editor)
-
-        self.load_data()
-
+    # ---- API used by dashboard ----
     def load_data(self):
-        """Loads instructions and text content from the database."""
-        # Load instructions
-        self.current_instructions = self.db.get_or_create_instructions(self.project_id)
-        if self.current_instructions:
-            self.instr_label.setText(self.current_instructions.get(self.instr_field, ""))
-
-        # Load editor content
-        project_data = self.db.get_item_details(self.project_id)
-        if project_data:
-            self.quill_editor.set_content(project_data[self.text_field])
-
-    def open_edit_instructions_dialog(self):
-        """
-        Public method to be called from the new menu.
-        Opens the dialog to edit all four instruction fields.
-        """
-        # We need to refresh this just in case
-        self.current_instructions = self.db.get_or_create_instructions(self.project_id)
-
-        dialog = EditInstructionsDialog(self.current_instructions, self)
-
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            new_instr = dialog.result
-            try:
-                self.db.update_instructions(
-                    self.project_id,
-                    new_instr["key_questions_instr"],
-                    new_instr["thesis_instr"],
-                    new_instr["insights_instr"],
-                    new_instr["unresolved_instr"]
-                )
-                # Reload data for this tab
-                self.load_data()
-            except Exception as e:
-                QMessageBox.critical(self, "DatabaseError", f"Could not update instructions: {e}")
+        html = ""
+        try:
+            if hasattr(self.db, "get_project_text_field"):
+                html = self.db.get_project_text_field(self.project_id, self.text_field) or ""
+        except Exception as e:
+            print(f"[WARN] load_data({self.text_field}): {e}")
+        self.editor.set_html(html)
 
     def get_editor_content(self, callback):
-        """Passes the async request down to the quill editor."""
-        self.quill_editor.get_content(callback)
+        self.editor.get_html(callback)
 
+    def open_edit_instructions_dialog(self):
+        QMessageBox.information(
+            self,
+            "Edit Instructions",
+            "Instruction editing UI not wired in this native refactor.\n"
+            "Formatting is now powered by a Qt toolbar with QTextEdit."
+        )

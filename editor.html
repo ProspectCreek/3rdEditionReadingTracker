@@ -2,50 +2,170 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Quill Editor</title>
-
-  <!-- Local CSS: keep the SAME version as JS -->
-  <link rel="stylesheet" href="web_resources/quill.snow.css" />
-
+  <title>Quill Editor (Qt-driven)</title>
+  <link rel="stylesheet" href="old%20files/web_resources/quill.snow.css" />
   <style>
     html, body { margin:0; padding:0; height:100%; width:100%; }
-    #editor-container { height:100vh; width:100%; display:flex; flex-direction:column; }
-    #editor { flex:1; }
+    #editor { height:100vh; }
+    .ql-editor { font-size:14px; }
   </style>
 </head>
 <body>
-  <div id="editor-container">
-    <div id="editor"></div>
-  </div>
+  <div id="editor"></div>
 
-  <!-- IMPORTANT: Use a clean UMD build, e.g., quill.min.js -->
-  <script src="web_resources/quill.min.js"></script>
-
+  <script src="old%20files/web_resources/quill.min.js"></script>
   <script>
     if (typeof window.Quill === "undefined" || !Quill.import) {
-      throw new Error("Quill failed to load. Check web_resources/quill.min.js and version match.");
+      throw new Error("Quill failed to load. Check web_resources/quill.min.js");
     }
 
-    const quill = new Quill("#editor", {
-      theme: "snow",
-      modules: {
-        toolbar: [
-          [{ header: [1, 2, 3, false] }],
-          ["bold","italic","underline","strike"],
-          [{ list: "ordered" }, { list: "bullet" }],
-          ["link"], ["clean"]
-        ]
-      }
+    // Font whitelist (class tokens the Qt toolbar sends)
+    var FontFormat = Quill.import('formats/font');
+    FontFormat.whitelist = [
+      '', 'serif','monospace',
+      'arial','georgia','times-new-roman','courier-new','tahoma','verdana','segoe-ui'
+    ];
+    Quill.register(FontFormat, true);
+
+    // Size whitelist (style px)
+    var SizeStyle = Quill.import('attributors/style/size');
+    SizeStyle.whitelist = ['','10px','12px','14px','16px','18px','20px','24px','32px'];
+    Quill.register(SizeStyle, true);
+
+    // IMPORTANT: no toolbar module here — Qt provides the toolbar
+    var quill = new Quill('#editor', {
+      theme: 'snow',
+      formats: [
+        'font','size','header',
+        'bold','italic','underline','strike',
+        'color','background',
+        'list','script','indent','align',
+        'link','image','video'
+      ],
+      modules: { history: true, clipboard: true, keyboard: true }
     });
 
-    // API for Python
+    // Track last non-collapsed selection so Qt actions apply to the exact range
+    var RT_savedRange = null;
+    quill.on('selection-change', function(range) {
+      if (range && range.length > 0) RT_savedRange = { index: range.index, length: range.length };
+    });
+    quill.root.addEventListener('mouseup', function() {
+      var r = quill.getSelection();
+      if (r && r.length > 0) RT_savedRange = { index: r.index, length: r.length };
+    });
+    quill.root.addEventListener('keyup', function() {
+      var r = quill.getSelection();
+      if (r && r.length > 0) RT_savedRange = { index: r.index, length: r.length };
+    });
+
+    function RT_targetRange() {
+      var r = quill.getSelection();
+      if (r && r.length > 0) return r;
+      if (RT_savedRange && RT_savedRange.length > 0) return RT_savedRange;
+      return null;
+    }
+
+    // === Bridge called from Qt toolbar ===
+    window.RT_applyFormat = function(name, value) {
+      var target = RT_targetRange();
+      var val = (value === '' || value == null) ? false : value;
+      if (target) {
+        quill.formatText(target.index, target.length, { [name]: val }, 'user');
+        setTimeout(function(){ quill.setSelection(target.index, target.length, 'silent'); RT_savedRange = { index: target.index, length: target.length }; }, 0);
+      } else {
+        quill.format(name, val, 'user');
+      }
+    };
+
+    window.RT_setHeader = function(level) {
+      var target = RT_targetRange();
+      var val = (!level || level === 0 || level === '') ? false : level;
+      if (target) {
+        quill.formatLine(target.index, target.length, { header: val }, 'user');
+        setTimeout(function(){ quill.setSelection(target.index, target.length, 'silent'); RT_savedRange = { index: target.index, length: target.length }; }, 0);
+      } else {
+        quill.format('header', val, 'user');
+      }
+    };
+
+    window.RT_setAlign = function(alignVal) {
+      var target = RT_targetRange();
+      var val = (alignVal === '' || alignVal == null) ? false : alignVal;
+      if (target) {
+        quill.formatLine(target.index, target.length, { align: val }, 'user');
+        setTimeout(function(){ quill.setSelection(target.index, target.length, 'silent'); RT_savedRange = { index: target.index, length: target.length }; }, 0);
+      } else {
+        quill.format('align', val, 'user');
+      }
+    };
+
+    window.RT_setList = function(kind) {
+      var target = RT_targetRange();
+      var val = (kind === '' || kind == null) ? false : kind;
+      if (target) {
+        quill.formatLine(target.index, target.length, { list: val }, 'user');
+        setTimeout(function(){ quill.setSelection(target.index, target.length, 'silent'); RT_savedRange = { index: target.index, length: target.length }; }, 0);
+      }
+    };
+
+    window.RT_indent = function(delta) {
+      var target = RT_targetRange();
+      if (!target) return;
+      var fmt = quill.getFormat(target);
+      var curr = parseInt(fmt.indent || 0, 10);
+      var next = Math.max(0, curr + (delta || 0));
+      var val = next === 0 ? false : next;
+      quill.formatLine(target.index, target.length, { indent: val }, 'user');
+      setTimeout(function(){ quill.setSelection(target.index, target.length, 'silent'); RT_savedRange = { index: target.index, length: target.length }; }, 0);
+    };
+
+    window.RT_setLink = function(url) {
+      var target = RT_targetRange();
+      var val = (url && url.trim()) ? url.trim() : false;
+      if (target) {
+        quill.formatText(target.index, target.length, { link: val }, 'user');
+        setTimeout(function(){ quill.setSelection(target.index, target.length, 'silent'); RT_savedRange = { index: target.index, length: target.length }; }, 0);
+      } else {
+        quill.format('link', val, 'user');
+      }
+    };
+
+    window.RT_insertImage = function(url) {
+      if (!url) return;
+      var r = quill.getSelection() || { index: quill.getLength(), length: 0 };
+      quill.insertEmbed(r.index, 'image', url, 'user');
+      quill.setSelection(r.index + 1, 0, 'silent');
+    };
+
+    window.RT_insertVideo = function(url) {
+      if (!url) return;
+      var r = quill.getSelection() || { index: quill.getLength(), length: 0 };
+      quill.insertEmbed(r.index, 'video', url, 'user');
+      quill.setSelection(r.index + 1, 0, 'silent');
+    };
+
+    window.RT_clean = function() {
+      var target = RT_targetRange();
+      if (target) {
+        quill.removeFormat(target.index, target.length, 'user');
+        setTimeout(function(){ quill.setSelection(target.index, target.length, 'silent'); RT_savedRange = { index: target.index, length: target.length }; }, 0);
+      }
+    };
+    window.RT_undo = function(){ quill.history.undo(); };
+    window.RT_redo = function(){ quill.history.redo(); };
+
+    // Content bridge
     window.setEditorContent = function (html) {
-      if (html) quill.clipboard.dangerouslyPasteHTML(html);
-      else quill.setText("");
+      if (html) {
+        const delta = quill.clipboard.convert(html);
+        quill.setContents(delta, 'silent');
+      } else {
+        quill.setContents([], 'silent');
+      }
+      RT_savedRange = null;
     };
-    window.getEditorContent = function () {
-      return quill.root.innerHTML;
-    };
+    window.getEditorContent = function () { return quill.root.innerHTML; };
     window.focusEditor = function () { quill.focus(); };
   </script>
 </body>

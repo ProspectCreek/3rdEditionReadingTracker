@@ -63,9 +63,14 @@ class MainWindow(QMainWindow):
     def show_project_dashboard(self, project_details):
         """Switches to the project dashboard and loads its data."""
         try:
+            # --- NEW WORKFLOW ---
+            # 1. Load project structure (creates tabs, but doesn't load text)
             self.project_dashboard.load_project(project_details)
+            # 2. Switch stack to make dashboard visible
             self.stacked_widget.setCurrentIndex(1)
             self.showMaximized()
+            # 3. NOW, load content into the (visible) editors
+            self.project_dashboard.load_all_editor_content()
         except Exception as e:
             print(f"Error loading project dashboard: {e}")
 
@@ -164,3 +169,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
