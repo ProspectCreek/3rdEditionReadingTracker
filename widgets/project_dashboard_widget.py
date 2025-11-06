@@ -12,8 +12,10 @@ from tabs.rich_text_editor_tab import RichTextEditorTab
 
 try:
     from dialogs.add_reading_dialog import AddReadingDialog
+    # MODIFIED: Import the EditInstructionsDialog
+    from dialogs.edit_instructions_dialog import EditInstructionsDialog
 except ImportError:
-    print("Error: Could not import AddReadingDialog")
+    print("Error: Could not import Dialogs")
     sys.exit(1)
 
 
@@ -161,7 +163,6 @@ class ProjectDashboardWidget(QWidget):
 
         QTimer.singleShot(0, self._enforce_equal_splits)
 
-    # >>> NEW: called by MainWindow after the widget becomes visible
     def load_all_editor_content(self):
         """
         Load HTML into all editors after the dashboard is shown.
@@ -209,11 +210,35 @@ class ProjectDashboardWidget(QWidget):
 
     @Slot()
     def open_edit_instructions(self):
-        current = self.editor_tab_widget.currentWidget()
-        if isinstance(current, ProjectEditorTab):
-            current.open_edit_instructions_dialog()
-            for t in self.bottom_tabs:
-                if t is not current: t.load_data()
+        """
+        MODIFIED: This slot now handles opening the dialog, saving
+        to the database, and telling the tabs to update their prompts.
+        """
+        if self.project_id == -1:
+            return
+
+        # 1. Get current instructions
+        instructions = self.db.get_or_create_instructions(self.project_id)
+
+        # 2. Open the dialog
+        dialog = EditInstructionsDialog(instructions, self)
+
+        # 3. If user clicked OK, save the new instructions
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            new_instr = dialog.result
+            if new_instr:
+                self.db.update_instructions(
+                    self.project_id,
+                    new_instr["key_questions_instr"],
+                    new_instr["thesis_instr"],
+                    new_instr["insights_instr"],
+                    new_instr["unresolved_instr"]
+                )
+
+                # 4. Tell all bottom tabs to reload their prompt text
+                for tab in self.bottom_tabs:
+                    if hasattr(tab, 'update_instructions'):
+                        tab.update_instructions()
 
     @Slot()
     def return_to_home(self):

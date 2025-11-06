@@ -11,13 +11,13 @@ class ProjectEditorTab(QWidget):
       - text_field (str)
       - load_data()
       - get_editor_content(callback)
-      - open_edit_instructions_dialog()
     """
     def __init__(self, db, project_id: int, text_field: str, project_root_dir: str = "", parent=None):
         super().__init__(parent)
         self.db = db
         self.project_id = project_id
         self.text_field = text_field
+        self.prompt_label = None  # MODIFIED: To hold the prompt label
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -32,12 +32,21 @@ class ProjectEditorTab(QWidget):
             "unresolved_text": "Unresolved Questions",
         }.get(text_field, "Editor")
 
-        # Optional prompt example
-        # MODIFIED: Check against the full field name
-        if text_field == "key_questions_text":
-            prompt = QLabel("What is the central question this project aims to answer?")
-            prompt.setWordWrap(True)
-            layout.addWidget(prompt)
+        # MODIFIED: Get instructions from DB and show the correct prompt
+        self.instructions = self.db.get_or_create_instructions(self.project_id)
+        prompt_text_map = {
+            "key_questions_text": self.instructions.get("key_questions_instr", ""),
+            "thesis_text": self.instructions.get("thesis_instr", ""),
+            "insights_text": self.instructions.get("insights_instr", ""),
+            "unresolved_text": self.instructions.get("unresolved_instr", "")
+        }
+        prompt_text = prompt_text_map.get(self.text_field)
+
+        if prompt_text:
+            self.prompt_label = QLabel(prompt_text)
+            self.prompt_label.setWordWrap(True)
+            self.prompt_label.setStyleSheet("font-style: italic; color: #555;") # Added styling
+            layout.addWidget(self.prompt_label)
 
         self.editor = RichTextEditorTab(title)
         layout.addWidget(self.editor, 1)
@@ -46,8 +55,7 @@ class ProjectEditorTab(QWidget):
     def load_data(self):
         html = ""
         try:
-            # MODIFIED: This was already correct, but just confirming
-            # self.text_field here is 'key_questions_text', etc.
+            # This was already correct
             if hasattr(self.db, "get_project_text_field"):
                 html = self.db.get_project_text_field(self.project_id, self.text_field) or ""
         except Exception as e:
@@ -57,10 +65,19 @@ class ProjectEditorTab(QWidget):
     def get_editor_content(self, callback):
         self.editor.get_html(callback)
 
-    def open_edit_instructions_dialog(self):
-        QMessageBox.information(
-            self,
-            "Edit Instructions",
-            "Instruction editing UI not wired in this native refactor.\n"
-            "Formatting is now powered by a Qt toolbar with QTextEdit."
-        )
+    # MODIFIED: This method is called by the dashboard to refresh the prompt text
+    def update_instructions(self):
+        """Fetches the latest instructions from the DB and updates the prompt label."""
+        self.instructions = self.db.get_or_create_instructions(self.project_id)
+        if self.prompt_label:
+            prompt_text_map = {
+                "key_questions_text": self.instructions.get("key_questions_instr", ""),
+                "thesis_text": self.instructions.get("thesis_instr", ""),
+                "insights_text": self.instructions.get("insights_instr", ""),
+                "unresolved_text": self.instructions.get("unresolved_instr", "")
+            }
+            new_text = prompt_text_map.get(self.text_field, "")
+            self.prompt_label.setText(new_text)
+            # Hide the label if the instruction text is empty
+            self.prompt_label.setVisible(bool(new_text))
+
