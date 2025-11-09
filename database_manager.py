@@ -72,6 +72,57 @@ class DatabaseManager:
         """)
         # --- END NEW ---
 
+        # --- NEW: Mindmap Tables ---
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS mindmaps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            display_order INTEGER,
+            default_font_family TEXT,
+            default_font_size INTEGER,
+            default_font_weight TEXT,
+            default_font_slant TEXT,
+            FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE
+        )
+        """)
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS mindmap_nodes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mindmap_id INTEGER NOT NULL,
+            node_id_text TEXT NOT NULL, -- The text ID we use for linking, e.g., "node_1"
+            x REAL NOT NULL,
+            y REAL NOT NULL,
+            width REAL NOT NULL,
+            height REAL NOT NULL,
+            text TEXT,
+            shape_type TEXT,
+            fill_color TEXT,
+            outline_color TEXT,
+            text_color TEXT,
+            font_family TEXT,
+            font_size INTEGER,
+            font_weight TEXT,
+            font_slant TEXT,
+            FOREIGN KEY (mindmap_id) REFERENCES mindmaps(id) ON DELETE CASCADE,
+            UNIQUE(mindmap_id, node_id_text)
+        )
+        """)
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS mindmap_edges (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mindmap_id INTEGER NOT NULL,
+            from_node_id_text TEXT NOT NULL,
+            to_node_id_text TEXT NOT NULL,
+            color TEXT,
+            style TEXT,
+            width INTEGER,
+            arrow_style TEXT,
+            FOREIGN KEY (mindmap_id) REFERENCES mindmaps(id) ON DELETE CASCADE
+        )
+        """)
+        # --- END NEW ---
+
         self.conn.commit()
 
     # --- Instructions Functions ---
@@ -247,6 +298,111 @@ class DatabaseManager:
         for index, item_id in enumerate(ordered_db_ids):
             self.cursor.execute("UPDATE items SET display_order = ? WHERE id = ?", (index, item_id))
         self.conn.commit()
+
+    # --- END NEW ---
+
+    # --- NEW: Mindmap Functions ---
+
+    def get_mindmaps_for_project(self, project_id):
+        """Gets all mindmaps for a specific project."""
+        self.cursor.execute(
+            "SELECT * FROM mindmaps WHERE project_id = ? ORDER BY display_order, name",
+            (project_id,)
+        )
+        return self.cursor.fetchall()
+
+    def create_mindmap(self, project_id, name):
+        """Creates a new, empty mindmap for a project."""
+        self.cursor.execute(
+            "INSERT INTO mindmaps (project_id, name) VALUES (?, ?)",
+            (project_id, name)
+        )
+        self.conn.commit()
+        return self.cursor.lastrowid
+
+    def rename_mindmap(self, mindmap_id, new_name):
+        self.cursor.execute("UPDATE mindmaps SET name = ? WHERE id = ?", (new_name, mindmap_id))
+        self.conn.commit()
+
+    def delete_mindmap(self, mindmap_id):
+        """Deletes a mindmap and all its nodes/edges (cascade)."""
+        self.cursor.execute("DELETE FROM mindmaps WHERE id = ?", (mindmap_id,))
+        self.conn.commit()
+
+    def get_mindmap_details(self, mindmap_id):
+        """Gets the top-level info for a single mindmap."""
+        self.cursor.execute("SELECT * FROM mindmaps WHERE id = ?", (mindmap_id,))
+        return self.cursor.fetchone()
+
+    def get_mindmap_data(self, mindmap_id):
+        """Gets all nodes and edges for a specific mindmap."""
+        self.cursor.execute("SELECT * FROM mindmap_nodes WHERE mindmap_id = ?", (mindmap_id,))
+        nodes = [dict(row) for row in self.cursor.fetchall()]
+
+        self.cursor.execute("SELECT * FROM mindmap_edges WHERE mindmap_id = ?", (mindmap_id,))
+        edges = [dict(row) for row in self.cursor.fetchall()]
+
+        return {'nodes': nodes, 'edges': edges}
+
+    def update_mindmap_defaults(self, mindmap_id, font_details):
+        """Updates the default font for a mindmap."""
+        self.cursor.execute("""
+            UPDATE mindmaps
+            SET default_font_family = ?, default_font_size = ?,
+                default_font_weight = ?, default_font_slant = ?
+            WHERE id = ?
+        """, (
+            font_details.get('family'), font_details.get('size'),
+            font_details.get('weight'), font_details.get('slant'),
+            mindmap_id
+        ))
+        self.conn.commit()
+
+    def save_mindmap_data(self, mindmap_id, nodes_to_save, edges_to_save):
+        """
+        Saves all nodes and edges for a mindmap in a transaction.
+        This deletes old data and inserts the new data.
+        """
+        try:
+            self.cursor.execute("BEGIN TRANSACTION")
+
+            # Delete old data
+            self.cursor.execute("DELETE FROM mindmap_nodes WHERE mindmap_id = ?", (mindmap_id,))
+            self.cursor.execute("DELETE FROM mindmap_edges WHERE mindmap_id = ?", (mindmap_id,))
+
+            # Insert new nodes
+            for node in nodes_to_save:
+                self.cursor.execute("""
+                    INSERT INTO mindmap_nodes (
+                        mindmap_id, node_id_text, x, y, width, height, text,
+                        shape_type, fill_color, outline_color, text_color,
+                        font_family, font_size, font_weight, font_slant
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    mindmap_id, str(node['id']), node['x'], node['y'], node['width'],
+                    node['height'], node['text'], node['shape_type'],
+                    node['fill_color'], node['outline_color'], node['text_color'],
+                    node['font_family'], node['font_size'],
+                    node['font_weight'], node['font_slant']
+                ))
+
+            # Insert new edges
+            for edge in edges_to_save:
+                self.cursor.execute("""
+                    INSERT INTO mindmap_edges (
+                        mindmap_id, from_node_id_text, to_node_id_text,
+                        color, style, width, arrow_style
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    mindmap_id, str(edge['from_node_id']), str(edge['to_node_id']),
+                    edge['color'], edge['style'], edge['width'], edge['arrow_style']
+                ))
+
+            self.conn.commit()
+        except Exception as e:
+            self.conn.rollback()
+            print(f"Error saving mindmap: {e}")
+            raise
 
     # --- END NEW ---
 

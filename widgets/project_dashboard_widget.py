@@ -9,10 +9,11 @@ from PySide6.QtCore import Qt, Signal, Slot, QTimer
 from PySide6.QtGui import QAction
 from tabs.project_editor_tab import ProjectEditorTab
 from tabs.rich_text_editor_tab import RichTextEditorTab
+# MODIFIED: Import the new MindmapTab
+from tabs.mindmap_tab import MindmapTab
 
 try:
     from dialogs.add_reading_dialog import AddReadingDialog
-    # MODIFIED: Import the EditInstructionsDialog
     from dialogs.edit_instructions_dialog import EditInstructionsDialog
 except ImportError:
     print("Error: Could not import Dialogs")
@@ -42,12 +43,15 @@ class ProjectDashboardWidget(QWidget):
         # Top button bar (compact)
         button_bar = QWidget()
         button_bar.setStyleSheet("background-color:#f0f0f0; padding:4px;")
-        button_layout = QHBoxLayout(button_bar); button_layout.setContentsMargins(6,2,6,2)
+        button_layout = QHBoxLayout(button_bar);
+        button_layout.setContentsMargins(6, 2, 6, 2)
         btn_return_home = QPushButton("Return to Projects Home Screen")
         btn_add_reading = QPushButton("Add Reading")
         btn_return_home.clicked.connect(self.return_to_home)
         btn_add_reading.clicked.connect(self.add_reading)
-        button_layout.addWidget(btn_return_home); button_layout.addWidget(btn_add_reading); button_layout.addStretch()
+        button_layout.addWidget(btn_return_home);
+        button_layout.addWidget(btn_add_reading);
+        button_layout.addStretch()
         main_layout.addWidget(button_bar)
 
         # Tabs
@@ -55,19 +59,25 @@ class ProjectDashboardWidget(QWidget):
         main_layout.addWidget(self.top_tab_widget)
 
         self.dashboard_tab = QWidget()
-        self.mindmaps_tab = QWidget()
+        # MODIFIED: We no longer create a placeholder QWidget here
+        # self.mindmaps_tab = QWidget()
         self.assignment_tab = QWidget()
 
+        # MODIFIED: Call to the method that was missing
         self._build_dashboard_tab()
 
-        self.mindmaps_tab.setLayout(QVBoxLayout()); self.mindmaps_tab.layout().addWidget(QLabel("Mindmaps will go here."))
-        self.assignment_tab.setLayout(QVBoxLayout()); self.assignment_tab.layout().addWidget(QLabel("Assignment details will go here."))
+        # MODIFIED: We no longer set a layout for a placeholder
+        # self.mindmaps_tab.setLayout(QVBoxLayout()); self.mindmaps_tab.layout().addWidget(QLabel("Mindmaps will go here."))
+        self.assignment_tab.setLayout(QVBoxLayout());
+        self.assignment_tab.layout().addWidget(QLabel("Assignment details will go here."))
 
         self.top_tab_widget.currentChanged.connect(self.save_all_editors)
 
         # Ensure splitter sizes are set after the first paint
+        # MODIFIED: Call to the method that was missing
         QTimer.singleShot(0, self._enforce_equal_splits)
 
+    # MODIFIED: Added missing method
     def _build_dashboard_tab(self):
         """Top/Bottom split, each half left/right split — all equal on show."""
         outer = QVBoxLayout(self.dashboard_tab)
@@ -81,22 +91,32 @@ class ProjectDashboardWidget(QWidget):
 
         # ----- Top half -----
         top_widget = QWidget()
-        top_layout = QVBoxLayout(top_widget); top_layout.setContentsMargins(4,4,4,4); top_layout.setSpacing(4)
+        top_layout = QVBoxLayout(top_widget);
+        top_layout.setContentsMargins(4, 4, 4, 4);
+        top_layout.setSpacing(4)
 
         self.top_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.top_splitter.setHandleWidth(4)
         top_layout.addWidget(self.top_splitter)
 
         # Left: Readings viewer
-        readings_widget = QFrame(); readings_widget.setFrameShape(QFrame.Shape.StyledPanel)
-        rl = QVBoxLayout(readings_widget); rl.setContentsMargins(6,6,6,6); rl.setSpacing(6)
+        readings_widget = QFrame();
+        readings_widget.setFrameShape(QFrame.Shape.StyledPanel)
+        rl = QVBoxLayout(readings_widget);
+        rl.setContentsMargins(6, 6, 6, 6);
+        rl.setSpacing(6)
         rl.addWidget(QLabel("Readings"))
-        self.readings_tree = QTreeWidget(); self.readings_tree.setHeaderLabels(["Title","Author"]); self.readings_tree.setColumnWidth(0, 200)
+        self.readings_tree = QTreeWidget();
+        self.readings_tree.setHeaderLabels(["Title", "Author"]);
+        self.readings_tree.setColumnWidth(0, 200)
         rl.addWidget(self.readings_tree)
 
         # Right: Purpose + Goals (native editors)
-        info_widget = QFrame(); info_widget.setFrameShape(QFrame.Shape.StyledPanel)
-        il = QVBoxLayout(info_widget); il.setContentsMargins(6,6,6,6); il.setSpacing(6)
+        info_widget = QFrame();
+        info_widget.setFrameShape(QFrame.Shape.StyledPanel)
+        il = QVBoxLayout(info_widget);
+        il.setContentsMargins(6, 6, 6, 6);
+        il.setSpacing(6)
         il.addWidget(QLabel("Project Purpose"))
         self.purpose_text_editor = RichTextEditorTab("Project Purpose")
         il.addWidget(self.purpose_text_editor)
@@ -110,8 +130,11 @@ class ProjectDashboardWidget(QWidget):
         self.top_splitter.setStretchFactor(1, 1)
 
         # ----- Bottom half -----
-        bottom_widget = QFrame(); bottom_widget.setFrameShape(QFrame.Shape.StyledPanel)
-        bl = QVBoxLayout(bottom_widget); bl.setContentsMargins(6,6,6,6); bl.setSpacing(6)
+        bottom_widget = QFrame();
+        bottom_widget.setFrameShape(QFrame.Shape.StyledPanel)
+        bl = QVBoxLayout(bottom_widget);
+        bl.setContentsMargins(6, 6, 6, 6);
+        bl.setSpacing(6)
         self.editor_tab_widget = QTabWidget()
         bl.addWidget(self.editor_tab_widget)
         self.editor_tab_widget.currentChanged.connect(self.save_all_editors)
@@ -121,6 +144,7 @@ class ProjectDashboardWidget(QWidget):
         self.main_splitter.setStretchFactor(0, 1)
         self.main_splitter.setStretchFactor(1, 1)
 
+    # MODIFIED: Added missing method
     def _enforce_equal_splits(self):
         """Force true 50/50 splits once widgets have sizes."""
         total_h = max(2, self.main_splitter.size().height())
@@ -128,6 +152,7 @@ class ProjectDashboardWidget(QWidget):
         total_w = max(2, self.top_splitter.size().width())
         self.top_splitter.setSizes([total_w // 2, total_w - total_w // 2])
 
+    # MODIFIED: Added missing method
     def load_project(self, project_details):
         self.project_details = dict(project_details)
         self.project_id = self.project_details['id']
@@ -142,14 +167,17 @@ class ProjectDashboardWidget(QWidget):
         settings_menu.addAction(edit_instr_action)
 
         self.top_tab_widget.addTab(self.dashboard_tab, "Project Dashboard")
+
+        # MODIFIED: Create and add the new MindmapTab class
+        self.mindmaps_tab = MindmapTab(self.db, self.project_id)
         self.top_tab_widget.addTab(self.mindmaps_tab, "Mindmaps")
+
         if self.project_details.get('is_assignment', 0) == 1:
             self.top_tab_widget.addTab(self.assignment_tab, "Assignment")
 
         self.load_readings()
 
         self.bottom_tabs = []
-        # MODIFIED: Use the full database column names
         fields = [
             ("Key Questions", "key_questions_text"),
             ("Thesis/Argument", "thesis_text"),
@@ -163,6 +191,7 @@ class ProjectDashboardWidget(QWidget):
 
         QTimer.singleShot(0, self._enforce_equal_splits)
 
+    # >>> NEW: called by MainWindow after the widget becomes visible
     def load_all_editor_content(self):
         """
         Load HTML into all editors after the dashboard is shown.
@@ -170,24 +199,38 @@ class ProjectDashboardWidget(QWidget):
         """
         if not self.project_details:
             return
+
+        # Load top editors (this part was already working)
         self.purpose_text_editor.set_html(self.project_details.get('project_purpose_text', ''))
         self.goals_text_editor.set_html(self.project_details.get('project_goals_text', ''))
+
+        # MODIFIED: Load bottom editors
+        # We loop through the tabs, get their corresponding field name
+        # (e.g., 'key_questions_text'), pull that data from self.project_details,
+        # and pass it to the tab's new set_html() method.
         for tab in self.bottom_tabs:
-            tab.load_data()
+            html_content = self.project_details.get(tab.text_field, '')
+            if hasattr(tab, 'set_html'):
+                tab.set_html(html_content)
+            else:
+                print(f"Warning: Tab {tab.text_field} has no set_html method.")
 
     def load_readings(self):
         self.readings_tree.clear()
         readings = self.db.get_readings(self.project_id)
         for r in readings:
-            item = QTreeWidgetItem([r['title'], r['author']]); item.setData(0, Qt.ItemDataRole.UserRole, r['id'])
+            item = QTreeWidgetItem([r['title'], r['author']]);
+            item.setData(0, Qt.ItemDataRole.UserRole, r['id'])
             self.readings_tree.addTopLevelItem(item)
 
     def add_reading(self):
         dialog = AddReadingDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            title = dialog.title; author = dialog.author
+            title = dialog.title;
+            author = dialog.author
             new_id = self.db.add_reading(self.project_id, title, author)
-            self.load_readings(); self.addReadingTab.emit(title, new_id)
+            self.load_readings();
+            self.addReadingTab.emit(title, new_id)
 
     @Slot()
     def save_all_editors(self):
@@ -196,16 +239,20 @@ class ProjectDashboardWidget(QWidget):
 
         def save_purpose(html):
             if html is not None: self.db.update_project_text_field(self.project_id, 'project_purpose_text', html)
+
         self.purpose_text_editor.get_html(save_purpose)
 
         def save_goals(html):
             if html is not None: self.db.update_project_text_field(self.project_id, 'project_goals_text', html)
+
         self.goals_text_editor.get_html(save_goals)
 
         for tab in self.bottom_tabs:
             def cb(field):
                 # This 'field' now correctly holds 'key_questions_text', etc.
-                return lambda html: self.db.update_project_text_field(self.project_id, field, html) if html is not None else None
+                return lambda html: self.db.update_project_text_field(self.project_id, field,
+                                                                      html) if html is not None else None
+
             tab.get_editor_content(cb(tab.text_field))
 
     @Slot()
@@ -244,4 +291,5 @@ class ProjectDashboardWidget(QWidget):
     def return_to_home(self):
         self.save_all_editors()
         self.returnToHome.emit()
+
 

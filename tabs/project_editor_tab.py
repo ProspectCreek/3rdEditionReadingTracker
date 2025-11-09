@@ -52,15 +52,11 @@ class ProjectEditorTab(QWidget):
         layout.addWidget(self.editor, 1)
 
     # ---- API used by dashboard ----
-    def load_data(self):
-        html = ""
-        try:
-            # This was already correct
-            if hasattr(self.db, "get_project_text_field"):
-                html = self.db.get_project_text_field(self.project_id, self.text_field) or ""
-        except Exception as e:
-            print(f"[WARN] load_data({self.text_field}): {e}")
-        self.editor.set_html(html)
+    # MODIFIED: Replaced load_data() with a direct set_html() method.
+    # The dashboard will now push the data to this widget.
+    def set_html(self, html: str):
+        """Public method to set the editor's content."""
+        self.editor.set_html(html or "")
 
     def get_editor_content(self, callback):
         self.editor.get_html(callback)
@@ -80,4 +76,5 @@ class ProjectEditorTab(QWidget):
             self.prompt_label.setText(new_text)
             # Hide the label if the instruction text is empty
             self.prompt_label.setVisible(bool(new_text))
+
 
