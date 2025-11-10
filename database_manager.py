@@ -7,7 +7,7 @@ class DatabaseManager:
     def __init__(self, db_file="reading_tracker.db"):
         """Initialize and connect to the SQLite database."""
         self.conn = sqlite3.connect(db_file)
-        # We still use Row; public getters coerce to dicts where needed.
+        # Use Row for name-based access; public getters coerce to dicts where needed.
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.cursor = self.conn.cursor()
@@ -24,6 +24,21 @@ class DatabaseManager:
     def _map_rows(rows):
         """Coerce an iterable of sqlite3.Row to list[dict]."""
         return [dict(r) for r in rows] if rows else []
+
+    # ----------------------- helpers: migrations -----------------------
+
+    def _has_column(self, table_name: str, column_name: str) -> bool:
+        self.cursor.execute(f"PRAGMA table_info({table_name})")
+        return any(row["name"] == column_name for row in self.cursor.fetchall())
+
+    def _ensure_column(self, table_name: str, column_name: str, column_type: str):
+        """
+        Add a column if it does not exist. column_type like 'TEXT', 'INTEGER', etc.
+        """
+        if not self._has_column(table_name, column_name):
+            self.cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+            self.conn.commit()
+            print(f"[DB] Added missing column {table_name}.{column_name} ({column_type})")
 
     # ----------------------------- schema -----------------------------
 
@@ -129,7 +144,7 @@ class DatabaseManager:
         )
         """)
 
-        # --- Mindmaps (tables only; UI methods call their own helpers) ---
+        # --- Mindmaps (tables only) ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS mindmaps (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -187,6 +202,9 @@ class DatabaseManager:
             FOREIGN KEY (parent_id) REFERENCES reading_outline(id) ON DELETE CASCADE
         )
         """)
+        # Ensure columns exist for older DBs that predate these fields
+        self._ensure_column("reading_outline", "notes_html", "TEXT")
+        self._ensure_column("reading_outline", "display_order", "INTEGER")
 
         self.conn.commit()
 
@@ -392,12 +410,12 @@ class DatabaseManager:
                 SET display_order = ?
                 WHERE id = ?
             """, (order, cid))
+            # commit batched after loop to reduce I/O
         self.conn.commit()
 
     # ----------------------- reading outline -----------------------
 
-    # (These return Row to preserve callers that use ['field'].
-    # If you prefer dicts here too, say the word and I’ll flip them.)
+    # These return Row objects (callers use ['field']); change to dicts on request.
 
     def get_reading_outline(self, reading_id, parent_id=None):
         if parent_id is None:
@@ -415,6 +433,7 @@ class DatabaseManager:
         return self.cursor.fetchall()
 
     def add_outline_section(self, reading_id, title, parent_id=None):
+        # compute order
         if parent_id is None:
             self.cursor.execute("""
                 SELECT COALESCE(MAX(display_order), -1) FROM reading_outline
