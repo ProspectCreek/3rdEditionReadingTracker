@@ -21,8 +21,10 @@ from PySide6.QtCore import (
 # --- Constants ---
 NODE_MIN_WIDTH = 80
 NODE_MIN_HEIGHT = 40
-H_PAD = 25
-V_PAD = 15
+# --- FIX: Increased padding ---
+H_PAD = 30  # Was 25
+V_PAD = 20  # Was 15
+# --- END FIX ---
 
 
 class MindmapEdge(QGraphicsLineItem):
@@ -343,11 +345,20 @@ class MindmapNode(QGraphicsItem):
         intersect_points = []
         for line in lines:
             try:
-                intersect_type, intersect_point = center_line.intersects(line)
+                # Use legacy intersect method for compatibility
+                intersect_point = QPointF()
+                intersect_type = line.intersect(center_line, intersect_point)
                 if intersect_type == QLineF.IntersectionType.BoundedIntersection:
                     intersect_points.append(intersect_point)
             except Exception as e:
-                print(f"Error calculating intersection: {e}")
+                # Fallback for older PySide/Qt versions
+                try:
+                    intersect_type, intersect_point = center_line.intersects(line)
+                    if intersect_type == QLineF.IntersectionType.BoundedIntersection:
+                        intersect_points.append(intersect_point)
+                except Exception as e:
+                     print(f"Error calculating intersection: {e}")
+
 
         if intersect_points:
             intersect_points.sort(key=lambda p: QLineF(p, to_point).length())

@@ -3,9 +3,10 @@ import sys
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QTabWidget, QSplitter, QLabel, QTreeWidget,
-    QFrame, QDialog, QTreeWidgetItem, QMenuBar
+    QFrame, QDialog, QTreeWidgetItem, QMenuBar,
+    QMessageBox, QMenu
 )
-from PySide6.QtCore import Qt, Signal, Slot, QTimer
+from PySide6.QtCore import Qt, Signal, Slot, QTimer, QPoint
 from PySide6.QtGui import QAction
 
 # Import all the tab types
@@ -18,6 +19,8 @@ from tabs.reading_notes_tab import ReadingNotesTab
 try:
     from dialogs.add_reading_dialog import AddReadingDialog
     from dialogs.edit_instructions_dialog import EditInstructionsDialog
+    # --- NEW: Import ReorderDialog ---
+    from dialogs.reorder_dialog import ReorderDialog
 except ImportError:
     print("Error: Could not import Dialogs")
     sys.exit(1)
@@ -33,7 +36,7 @@ class ProjectDashboardWidget(QWidget):
         self.project_details = None
         self.project_id = -1
         self.bottom_tabs = []
-        self.reading_tabs = []  # Stores tuples of (ReadingNotesTab, reading_data_dict)
+        self.reading_tabs = {}  # Stores {reading_id: ReadingNotesTab}
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -96,9 +99,16 @@ class ProjectDashboardWidget(QWidget):
         rl.setSpacing(6)
         rl.addWidget(QLabel("Readings"))
         self.readings_tree = QTreeWidget()
-        self.readings_tree.setHeaderLabels(["Title", "Author"])
-        self.readings_tree.setColumnWidth(0, 200)
+        self.readings_tree.setHeaderLabels(["Nickname", "Title", "Author"])
+        self.readings_tree.setColumnWidth(0, 150)
+        self.readings_tree.setColumnWidth(1, 200)
         rl.addWidget(self.readings_tree)
+
+        # --- NEW: Context Menu and Double Click ---
+        self.readings_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.readings_tree.customContextMenuRequested.connect(self.show_readings_context_menu)
+        self.readings_tree.itemDoubleClicked.connect(self.on_reading_double_clicked)
+        # --- END NEW ---
 
         # Right: Purpose + Goals (native editors)
         info_widget = QFrame()
@@ -206,19 +216,18 @@ class ProjectDashboardWidget(QWidget):
             self.assignment_tab.load_data(self.project_details)
 
         # Call load_data() on each reading tab
-        for tab, reading_data in self.reading_tabs:
+        for tab in self.reading_tabs.values():
             tab.load_data()
 
     def load_readings(self):
         self.readings_tree.clear()
         readings = self.db.get_readings(self.project_id)
         for r in readings:
-            nickname = r['nickname'] if 'nickname' in r.keys() else None
-            title = r['title'] if 'title' in r.keys() else "Untitled"
-            display_title = nickname.strip() if (nickname and nickname.strip()) else title
-            author = r['author'] if 'author' in r.keys() else ""
+            nickname = (r['nickname'] or "").strip()
+            title = (r['title'] or "Untitled").strip()
+            author = (r['author'] or "").strip()
 
-            item = QTreeWidgetItem([display_title, author])
+            item = QTreeWidgetItem([nickname, title, author])
             item.setData(0, Qt.ItemDataRole.UserRole, r['id'])
             self.readings_tree.addTopLevelItem(item)
 
@@ -227,19 +236,20 @@ class ProjectDashboardWidget(QWidget):
         Creates a new ReadingNotesTab and adds it to the top tab widget
         and our internal list for tracking.
         """
-        nickname = reading_row['nickname'] if 'nickname' in reading_row.keys() else None
-        title = reading_row['title'] if 'title' in reading_row.keys() else "Untitled"
-        tab_title = nickname.strip() if (nickname and nickname.strip()) else title
+        reading_data = dict(reading_row)
+        nickname = (reading_data.get('nickname') or "").strip()
+        title = (reading_data.get('title') or "Untitled").strip()
+        tab_title = nickname if nickname else title
 
-        reading_id = reading_row['id']
+        reading_id = reading_data['id']
 
         tab = ReadingNotesTab(self.db, reading_id)
         idx = self.top_tab_widget.addTab(tab, tab_title)
 
         # Listen for nickname/title changes from within the tab
-        tab.readingTitleChanged.connect(lambda rid=reading_id, t=tab: self._handle_reading_title_change(rid, t))
+        tab.readingTitleChanged.connect(self._handle_reading_title_change)
 
-        self.reading_tabs.append((tab, dict(reading_row)))
+        self.reading_tabs[reading_id] = tab
 
         if set_current:
             self.top_tab_widget.setCurrentIndex(idx)
@@ -255,6 +265,7 @@ class ProjectDashboardWidget(QWidget):
         nickname = (details['nickname'] or "").strip() if 'nickname' in details.keys() else ""
         title = (details['title'] or "Untitled").strip() if 'title' in details.keys() else "Untitled"
         new_text = nickname if nickname else title
+        author = (details['author'] or "").strip()
 
         # Update tab text
         i = self.top_tab_widget.indexOf(tab_widget)
@@ -265,8 +276,9 @@ class ProjectDashboardWidget(QWidget):
         for j in range(self.readings_tree.topLevelItemCount()):
             item = self.readings_tree.topLevelItem(j)
             if item.data(0, Qt.ItemDataRole.UserRole) == reading_id:
-                item.setText(0, new_text)
-                item.setText(1, (details['author'] or "").strip())
+                item.setText(0, nickname)
+                item.setText(1, title)
+                item.setText(2, author)
                 break
 
     def add_reading(self):
@@ -297,7 +309,7 @@ class ProjectDashboardWidget(QWidget):
                 if reading_row:
                     self._create_and_add_reading_tab(reading_row, set_current=True)
                     # Load data BEFORE we re-enable signals (so fields are not blank)
-                    new_tab_widget, _ = self.reading_tabs[-1]
+                    new_tab_widget = self.reading_tabs[new_id]
                     new_tab_widget.load_data()
                 else:
                     print(f"Error: Could not find new reading with id {new_id}")
@@ -327,7 +339,7 @@ class ProjectDashboardWidget(QWidget):
             tab.get_editor_content(cb(tab.text_field))
 
         # Save open reading tabs ONLY if they are fully loaded
-        for tab, reading_data in self.reading_tabs:
+        for tab in self.reading_tabs.values():
             if getattr(tab, "_is_loaded", False) and hasattr(tab, 'save_all'):
                 tab.save_all()
 
@@ -350,6 +362,123 @@ class ProjectDashboardWidget(QWidget):
                 for tab in self.bottom_tabs:
                     if hasattr(tab, 'update_instructions'):
                         tab.update_instructions()
+
+    # --- NEW: Readings Tree Interactions ---
+
+    @Slot(QTreeWidgetItem, int)
+    def on_reading_double_clicked(self, item, column):
+        """Switches to the corresponding tab when a reading is double-clicked."""
+        reading_id = item.data(0, Qt.ItemDataRole.UserRole)
+        if reading_id in self.reading_tabs:
+            tab_widget = self.reading_tabs[reading_id]
+            self.top_tab_widget.setCurrentWidget(tab_widget)
+        else:
+            print(f"Error: Tab for reading ID {reading_id} not found.")
+
+    @Slot(QPoint)
+    def show_readings_context_menu(self, position):
+        """Shows the right-click menu for the readings tree."""
+        item = self.readings_tree.itemAt(position)
+        if not item:
+            return  # Clicked on empty space
+
+        menu = QMenu(self)
+
+        # Delete Action
+        delete_action = QAction("Delete Reading", self)
+        delete_action.triggered.connect(self.delete_reading)
+        menu.addAction(delete_action)
+
+        # Reorder Action
+        if self.readings_tree.topLevelItemCount() >= 2:
+            reorder_action = QAction("Reorder Readings", self)
+            reorder_action.triggered.connect(self.reorder_readings)
+            menu.addAction(reorder_action)
+
+        menu.exec(self.readings_tree.viewport().mapToGlobal(position))
+
+    @Slot()
+    def delete_reading(self):
+        """Deletes the currently selected reading."""
+        item = self.readings_tree.currentItem()
+        if not item:
+            return
+
+        reading_id = item.data(0, Qt.ItemDataRole.UserRole)
+        nickname = item.text(0)
+        title = item.text(1)
+        display_name = nickname if nickname else title
+
+        reply = QMessageBox.question(
+            self, "Delete Reading",
+            f"Are you sure you want to permanently delete '{display_name}'?\n\nThis will delete the reading, its outline, and all its attachments.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                # 1. Delete from DB (cascading delete handles outline/attachments)
+                self.db.delete_reading(reading_id)
+
+                # 2. Remove tab
+                tab_widget = self.reading_tabs.pop(reading_id, None)
+                if tab_widget:
+                    self.top_tab_widget.removeTab(self.top_tab_widget.indexOf(tab_widget))
+
+                # 3. Remove from tree
+                self.readings_tree.takeTopLevelItem(self.readings_tree.indexOfTopLevelItem(item))
+                del item
+
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Could not delete reading: {e}")
+
+    @Slot()
+    def reorder_readings(self):
+        """Opens the reorder dialog for readings and reloads the project."""
+        if not ReorderDialog:
+            QMessageBox.critical(self, "Error", "Reorder dialog is not available.")
+            return
+
+        try:
+            readings = self.db.get_readings(self.project_id)
+            if not readings or len(readings) < 2:
+                QMessageBox.information(self, "Reorder", "Not enough readings to reorder.")
+                return
+
+            # Use nickname, fallback to title for display in dialog
+            items_to_reorder = []
+            for r in readings:
+                nickname = (r['nickname'] or "").strip()
+                title = (r['title'] or "Untitled").strip()
+                display = nickname if nickname else title
+                items_to_reorder.append((display, r['id']))
+
+            dialog = ReorderDialog(items_to_reorder, self)
+
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                ordered_ids = dialog.ordered_db_ids
+                # 1. Save new order to DB
+                self.db.update_reading_order(ordered_ids)
+
+                # 2. Save all current work
+                self.save_all_editors()
+
+                # 3. Reload the entire project to rebuild tabs in the new order
+                # Block signals to prevent save_all firing again
+                self.top_tab_widget.blockSignals(True)
+                self.editor_tab_widget.blockSignals(True)
+                try:
+                    self.load_project(self.project_details)
+                    self.load_all_editor_content()
+                finally:
+                    self.top_tab_widget.blockSignals(False)
+                    self.editor_tab_widget.blockSignals(False)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not reorder readings: {e}")
+
+    # --- END NEW ---
 
     @Slot()
     def return_to_home(self):

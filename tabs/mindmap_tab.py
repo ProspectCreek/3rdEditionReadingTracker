@@ -4,10 +4,10 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget,
     QPushButton, QInputDialog, QMessageBox, QListWidgetItem,
     QSplitter, QGraphicsView, QGraphicsScene, QFrame,
-    QStackedWidget, QMenu  # <--- IMPORT FIX: Removed QApplication
+    QStackedWidget, QMenu
 )
-from PySide6.QtCore import Qt, Signal, QPointF
-from PySide6.QtGui import QAction, QFont, QPainter
+from PySide6.QtCore import Qt, Signal, QPointF, QTimer
+from PySide6.QtGui import QAction, QFont, QPainter, QColor
 
 try:
     # --- FIX 1: Only import Node and Edge here. EditorWindow is imported locally. ---
@@ -33,6 +33,7 @@ class MindmapTab(QWidget):
         self.preview_nodes = {}
         self.preview_edges = []
         self.preview_default_font = QFont("Times New Roman", 12)
+        self.current_preview_id = None  # <-- Track preview state internally
 
         # Main layout is now a QHBoxLayout to create the splitter directly
         main_layout = QHBoxLayout(self)
@@ -133,13 +134,17 @@ class MindmapTab(QWidget):
                 self.load_preview(mindmap_id)
             else:
                 self.clear_preview()
-        else:
-            self.clear_preview()
+        # --- FIX: Do NOT clear preview if selection becomes None. ---
+        # This preserves self.current_preview_id when the list loses focus.
+        # else:
+        #     self.clear_preview()  <-- THIS WAS THE BUG
+        # --- END FIX ---
 
     def clear_preview(self):
         self.preview_scene.clear()
         self.preview_nodes.clear()
         self.preview_edges.clear()
+        self.current_preview_id = None  # <-- Clear preview state
         self.preview_stack.setCurrentWidget(self.placeholder_label)  # Show placeholder
 
     def load_preview(self, mindmap_id):
@@ -148,8 +153,8 @@ class MindmapTab(QWidget):
             return  # Cannot load preview if editor classes failed to import
 
         self.clear_preview()
+        self.current_preview_id = mindmap_id  # <-- Set the current preview state
 
-        # --- ERROR FIX ---
         # Get details and convert sqlite3.Row to a dict
         details_row = self.db.get_mindmap_details(mindmap_id)
         details = dict(details_row) if details_row else {}
@@ -162,7 +167,6 @@ class MindmapTab(QWidget):
             self.preview_default_font = font
         else:
             self.preview_default_font = QFont("Times New Roman", 12)
-        # --- END FIX ---
 
         # Load nodes and edges
         data = self.db.get_mindmap_data(mindmap_id)
@@ -206,9 +210,13 @@ class MindmapTab(QWidget):
                 placeholder_item.setData(Qt.ItemDataRole.UserRole, None)  # No ID
                 placeholder_item.setFlags(Qt.ItemFlag.NoItemFlags)  # Not selectable
                 placeholder_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                placeholder_item.setStyleSheet("color: #888; font-style: italic;")
+
+                placeholder_item.setForeground(QColor("#888888"))
+                font = placeholder_item.font()
+                font.setItalic(True)
+                placeholder_item.setFont(font)
+
                 self.list_widget.addItem(placeholder_item)
-                self.list_widget.setEnabled(False)
             else:
                 self.list_widget.setEnabled(True)
                 for mm_map in mindmaps:
@@ -241,8 +249,13 @@ class MindmapTab(QWidget):
         """Helper to get the selected list item and its data."""
         selected_items = self.list_widget.selectedItems()
         if not selected_items:
-            QMessageBox.warning(self, "No Selection", "Please select a mindmap from the list first.")
-            return None, None
+            # Fallback to currentItem if no selection (e.g. from context menu)
+            item = self.list_widget.currentItem()
+            if not item:
+                QMessageBox.warning(self, "No Selection", "Please select a mindmap from the list first.")
+                return None, None
+            selected_items = [item]
+
         item = selected_items[0]
         mindmap_id = item.data(Qt.ItemDataRole.UserRole)
 
@@ -286,9 +299,17 @@ class MindmapTab(QWidget):
     def open_selected_mindmap(self, item=None):
         """Opens the editor for the currently selected mindmap."""
         if not item:
-            item, mindmap_id = self.get_selected_item_data()
-            if not item:
-                return
+            # Check current selection if item is not passed (e.g., from context menu)
+            selected_items = self.list_widget.selectedItems()
+            if not selected_items:
+                # Fallback to currentItem if no selection
+                item = self.list_widget.currentItem()
+                if not item:
+                    return  # Nothing selected
+            else:
+                item = selected_items[0]
+
+        if not item: return  # Safety check
 
         mindmap_id = item.data(Qt.ItemDataRole.UserRole)
         if not mindmap_id:
@@ -298,14 +319,12 @@ class MindmapTab(QWidget):
 
     def open_mindmap_editor(self, item):
         """Opens the MindmapEditorWindow."""
-        # --- FIX 2: Locally import QApplication and MindmapEditorWindow ---
         from PySide6.QtWidgets import QApplication
         try:
             from dialogs.mindmap_editor_window import MindmapEditorWindow
         except ImportError as e:
-             QMessageBox.critical(self, "Error", f"Mindmap Editor component could not be loaded: {e}")
-             return
-        # --- END FIX ---
+            QMessageBox.critical(self, "Error", f"Mindmap Editor component could not be loaded: {e}")
+            return
 
         if MindmapEditorWindow is None:
             QMessageBox.critical(self, "Error", "Mindmap Editor component could not be loaded.")
@@ -319,23 +338,16 @@ class MindmapTab(QWidget):
 
         try:
             # Check if an editor for this mindmap is already open
-            # We do this by searching the top-level widgets
             for widget in QApplication.topLevelWidgets():
                 if isinstance(widget, MindmapEditorWindow) and widget.mindmap_id == mindmap_id:
                     widget.activateWindow()
                     widget.raise_()
                     return
 
-            # We pass 'self' (the tab) as the parent
-            # This makes the editor dialog stay on top of the main window
             editor_dialog = MindmapEditorWindow(self, self.db, mindmap_id, mindmap_name)
-
-            # --- MODIFICATION: Show maximized instead of .open() ---
             editor_dialog.showMaximized()
-            # --- END MODIFICATION ---
 
-            # We connect a signal to refresh the preview when the editor is closed
-            # This is a lambda to ensure it re-loads the *correct* ID
+            # Connect to refresh_preview_by_id
             editor_dialog.finished.connect(lambda: self.refresh_preview_by_id(mindmap_id))
 
         except Exception as e:
@@ -344,7 +356,9 @@ class MindmapTab(QWidget):
             traceback.print_exc()
 
     def refresh_preview_by_id(self, mindmap_id):
-        """Refreshes the preview if the closed mindmap is still the selected one."""
-        item = self.list_widget.currentItem()
-        if item and item.data(Qt.ItemDataRole.UserRole) == mindmap_id:
-            self.load_preview(mindmap_id)
+        """Refreshes the preview if the closed mindmap is the one currently being viewed."""
+        # Check against the tab's internal state, not the list selection
+        if self.current_preview_id == mindmap_id:
+            # Use a timer to delay the refresh, allowing OS to finish
+            # file operations from the save.
+            QTimer.singleShot(100, lambda: self.load_preview(mindmap_id))

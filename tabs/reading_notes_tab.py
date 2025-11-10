@@ -3,12 +3,31 @@ import sys
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel, QFrame,
     QTreeWidget, QTreeWidgetItem, QFormLayout, QLineEdit, QComboBox,
-    QPushButton, QMenu, QStackedWidget, QInputDialog, QMessageBox, QDialog
+    QPushButton, QMenu, QStackedWidget, QInputDialog, QMessageBox, QDialog,
+    QTabWidget, QTextEdit, QMenuBar
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction
 
 from tabs.rich_text_editor_tab import RichTextEditorTab
+
+# --- Import New Tabs ---
+try:
+    from tabs.attachments_tab import AttachmentsTab
+except ImportError:
+    print("Error: Could not import AttachmentsTab")
+    AttachmentsTab = None
+try:
+    from tabs.timers_tab import TimersTab
+except ImportError:
+    print("Error: Could not import TimersTab")
+    TimersTab = None
+try:
+    from tabs.driving_question_tab import DrivingQuestionTab
+except ImportError:
+    print("Error: Could not import DrivingQuestionTab")
+    DrivingQuestionTab = None
+# --- END NEW ---
 
 # Import dialogs
 try:
@@ -40,7 +59,8 @@ class ReadingNotesTab(QWidget):
         self.reading_details_row = None  # sqlite3.Row
         self.current_outline_id = None
         self._block_outline_save = False  # prevent save-on-switch loops
-        self._is_loaded = False           # <<< guard to avoid saving blanks
+        self._is_loaded = False  # <<< guard to avoid saving blanks
+        self.reading_sub_tabs = {}  # To store references to the bottom tabs
 
         # Main Layout: A horizontal splitter
         main_layout = QHBoxLayout(self)
@@ -105,6 +125,12 @@ class ReadingNotesTab(QWidget):
         right_panel.setFrameShape(QFrame.Shape.StyledPanel)
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(6, 6, 6, 6)
+        right_layout.setSpacing(0)  # No spacing for menu bar
+
+        # --- Menu Bar ---
+        self.reading_menu_bar = QMenuBar()
+        right_layout.addWidget(self.reading_menu_bar)
+        self._create_reading_menu(self.reading_menu_bar)
 
         # Vertical splitter for notes and bottom tabs
         right_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -113,7 +139,7 @@ class ReadingNotesTab(QWidget):
         # Top-Right Widget (The Notes Editor)
         top_right_widget = QWidget()
         top_right_layout = QVBoxLayout(top_right_widget)
-        top_right_layout.setContentsMargins(0, 0, 0, 0)
+        top_right_layout.setContentsMargins(0, 4, 0, 0)  # Add padding on top
         top_right_layout.setSpacing(4)
 
         notes_label = QLabel("Outline Item Notes")
@@ -143,12 +169,23 @@ class ReadingNotesTab(QWidget):
         citation_btn_layout.addWidget(btn_add_citation)
         top_right_layout.addLayout(citation_btn_layout)
 
-        # Bottom-Right Widget (Placeholder)
-        bottom_right_placeholder = QFrame()
+        # Bottom-Right Widget (Tabbed Editors)
+        bottom_right_widget = QWidget()
+        bottom_right_layout = QVBoxLayout(bottom_right_widget)
+        bottom_right_layout.setContentsMargins(0, 4, 0, 0)
+        bottom_right_layout.setSpacing(4)
+
+        self.bottom_tab_widget = QTabWidget()
+        bottom_right_layout.addWidget(self.bottom_tab_widget)
+        self._create_bottom_tabs()
+
         right_splitter.addWidget(top_right_widget)
-        right_splitter.addWidget(bottom_right_placeholder)
-        right_splitter.setStretchFactor(0, 2)
+        right_splitter.addWidget(bottom_right_widget)
+        # --- FIX: Set stretch factors to 1 for a 50/50 split ---
+        right_splitter.setSizes([self.height() // 2, self.height() // 2])
+        right_splitter.setStretchFactor(0, 1)
         right_splitter.setStretchFactor(1, 1)
+        # --- END FIX ---
 
         # Add panels to main splitter
         splitter.addWidget(left_panel)
@@ -164,6 +201,107 @@ class ReadingNotesTab(QWidget):
         btn_add_section.clicked.connect(self.add_section)
         btn_add_subsection.clicked.connect(self.add_subsection)
         btn_add_citation.clicked.connect(self.open_page_citation_dialog)
+
+    def _create_reading_menu(self, menu_bar: QMenuBar):
+        """Creates the menu bar for the reading tab."""
+        settings_menu = menu_bar.addMenu("Settings")
+        edit_instr_action = QAction("Edit Instructions", self)
+        edit_instr_action.setEnabled(False)  # Disabled for now
+        # edit_instr_action.triggered.connect(self.open_edit_instructions)
+        settings_menu.addAction(edit_instr_action)
+
+    def _create_bottom_tabs(self):
+        """Creates and populates the bottom tab widget."""
+        self.bottom_tab_widget.clear()
+        self.reading_sub_tabs.clear()
+
+        tabs_to_create = [
+            ("driving_question", "Driving Question"),
+            ("leading_propositions", "Leading Propositions"),
+            ("unity", "Unity"),
+            ("elevator_abstract", "Elevator Abstract"),
+            ("parts_order_relation", "Parts: Order and Relation"),
+            ("key_terms", "Key Terms"),
+            ("arguments", "Arguments"),
+            ("gaps", "Gaps"),
+            ("theories", "Theories"),
+            ("personal_dialogue", "Personal Dialogue"),
+            ("attachments", "Attachments"),
+            ("timers", "Timers")
+        ]
+
+        # --- FAKE DATA FOR NOW ---
+        instructions = {
+            "driving_question": "What is the author trying to find out?",
+            "leading_propositions": "What are the key arguments or propositions?",
+            "unity": "How does the author structure the argument?",
+            "elevator_abstract": "A brief abstract of the work.",
+            "parts_order_relation": "How do the parts of the work relate to each other?",
+            "key_terms": "What are the key terms and their definitions?",
+            "arguments": "Detailed breakdown of the author's arguments.",
+            "gaps": "What gaps or unanswered questions remain?",
+            "theories": "What theories or frameworks does the author use or propose?",
+            "personal_dialogue": "Your thoughts, questions, and reactions.",
+            "attachments": "Manage file attachments for this reading.",
+            "timers": "Manage your focus and break timers."
+        }
+        # --- END FAKE DATA ---
+
+        for key, title in tabs_to_create:
+            tab_widget = QWidget()
+            tab_layout = QVBoxLayout(tab_widget)
+            tab_layout.setContentsMargins(6, 6, 6, 6)
+            tab_layout.setSpacing(4)
+
+            # Get instruction text from DB (or use default)
+            instr_text = instructions.get(key, f"Instructions for {title}")
+
+            instr_label = QLabel(instr_text)
+            instr_label.setWordWrap(True)
+            instr_label.setStyleSheet("font-style: italic; color: #555;")
+            instr_label.setVisible(bool(instr_text))  # Hide if empty
+            tab_layout.addWidget(instr_label)
+
+            content_widget = None
+
+            # --- NEW: Refactored Tab Loading ---
+            if key == "driving_question":
+                if DrivingQuestionTab:
+                    content_widget = DrivingQuestionTab(self.db, self.reading_id)
+                else:
+                    content_widget = QLabel("Error: DrivingQuestionTab component could not be loaded.")
+            elif key == "gaps":
+                content_widget = RichTextEditorTab(title)
+            elif key == "personal_dialogue":
+                content_widget = RichTextEditorTab(title)
+            elif key == "attachments":
+                if AttachmentsTab:
+                    content_widget = AttachmentsTab(self.db, self.reading_id)
+                else:
+                    content_widget = QLabel("Error: AttachmentsTab component could not be loaded.")
+            elif key == "timers":
+                if TimersTab:
+                    content_widget = TimersTab()
+                else:
+                    content_widget = QLabel("Error: TimersTab component could not be loaded.")
+            else:
+                # Use QTextEdit as a simple placeholder for other tabs
+                content_widget = QTextEdit()
+                content_widget.setPlaceholderText(f"Notes for {title}...")
+            # --- END NEW ---
+
+            if content_widget:
+                tab_layout.addWidget(content_widget, 1)
+
+            tab_widget.setLayout(tab_layout)
+            self.bottom_tab_widget.addTab(tab_widget, title)
+
+            # Store references
+            self.reading_sub_tabs[key] = {
+                "tab": tab_widget,
+                "editor": content_widget,
+                "instruction_label": instr_label
+            }
 
     def _create_details_form(self, parent_layout):
         """Creates the QFormLayout for reading details."""
@@ -257,7 +395,8 @@ class ReadingNotesTab(QWidget):
 
         except Exception as e:
             QMessageBox.critical(self, "Error Loading Reading", f"An error occurred: {e}")
-            import traceback; traceback.print_exc()
+            import traceback;
+            traceback.print_exc()
 
     def save_all(self):
         """Called by the dashboard to save all data on this tab."""
@@ -266,6 +405,37 @@ class ReadingNotesTab(QWidget):
             return
         self.save_details(show_message=False)
         self.save_current_outline_notes()
+        self.save_bottom_tabs_content()  # <-- NEW: Save bottom tabs
+
+    def save_bottom_tabs_content(self):
+        """Saves the content of all bottom tabs."""
+        if not self._is_loaded: return
+
+        print(f"Saving bottom tabs for reading {self.reading_id}...")
+        # In a real implementation, you'd save each tab's content to its
+        # own field in the database.
+        # For now, this is a placeholder.
+
+        for key, tab_data in self.reading_sub_tabs.items():
+            editor = tab_data["editor"]
+            if isinstance(editor, RichTextEditorTab):
+                # This is an async call, so we define a callback
+                def save_callback(html, editor_key=key):
+                    if html is not None:
+                        print(f"  -> Saving content for: {editor_key}")
+                        # Example: self.db.update_reading_field(self.reading_id, editor_key, html)
+
+                editor.get_html(save_callback)
+            elif isinstance(editor, QTextEdit):
+                # This is sync
+                html = editor.toHtml()
+                print(f"  -> Saving content for: {key}")
+                # Example: self.db.update_reading_field(self.reading_id, key, html)
+            # Add logic for other tab types (like AttachmentsTab) if they need saving
+            elif isinstance(editor, (AttachmentsTab, TimersTab, DrivingQuestionTab)):
+                # These tabs manage their own saving logic,
+                # so we don't need to do anything here.
+                pass
 
     def save_details(self, show_message=True):
         """Saves the data from the 'Reading Details' form and notifies dashboard to rename the tab if needed."""
@@ -343,7 +513,8 @@ class ReadingNotesTab(QWidget):
             prev_id = previous.data(0, Qt.ItemDataRole.UserRole)
             if prev_id is not None and self._is_loaded:
                 self.notes_editor.get_html(
-                    lambda html, pid=prev_id: self.db.update_outline_section_notes(pid, html) if html is not None else None
+                    lambda html, pid=prev_id: self.db.update_outline_section_notes(pid,
+                                                                                   html) if html is not None else None
                 )
 
         if current:
