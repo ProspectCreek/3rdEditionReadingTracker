@@ -1,22 +1,13 @@
 import sys
 import os
-from pathlib import Path  # <-- added
+from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QStackedWidget, QWidget,
     QLabel, QVBoxLayout
 )
-from PySide6.QtCore import Qt, Slot, QUrl  # <-- added QUrl
-# --- NEW: Import for Web Engine ---
+from PySide6.QtCore import Qt, Slot, QUrl
 from PySide6.QtWebEngineCore import QWebEngineProfile
-
-# --- Dependency Checks ---
-try:
-    from PySide6.QtWebEngineWidgets import QWebEngineView
-except ImportError:
-    print("--- FATAL ERROR ---")
-    print("PySide6-WebEngine is not installed.")
-    print("Please install it by running: pip install PySide6")
-    sys.exit(1)
+from PySide6.QtWebEngineWidgets import QWebEngineView
 
 # Add widgets and tabs directories to the Python path
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'widgets'))
@@ -26,6 +17,8 @@ try:
     from database_manager import DatabaseManager
     from widgets.home_screen_widget import HomeScreenWidget
     from widgets.project_dashboard_widget import ProjectDashboardWidget
+    # We only import this for the type hint in closeEvent
+    # from dialogs.mindmap_editor_window import MindmapEditorWindow # <-- REMOVED
 except ImportError as e:
     print(f"Error importing modules: {e}")
     sys.exit(1)
@@ -54,7 +47,6 @@ class MainWindow(QMainWindow):
         # --- Connect Signals ---
         self.home_screen.projectSelected.connect(self.show_project_dashboard)
         self.project_dashboard.returnToHome.connect(self.show_home_screen)
-        self.project_dashboard.addReadingTab.connect(self.add_reading_tab)
 
         self.resize(1200, 800)
         self.center_window()
@@ -63,7 +55,6 @@ class MainWindow(QMainWindow):
     def show_project_dashboard(self, project_details):
         """Switches to the project dashboard and loads its data."""
         try:
-            # --- NEW WORKFLOW ---
             # 1. Load project structure (creates tabs, but doesn't load text)
             self.project_dashboard.load_project(project_details)
             # 2. Switch stack to make dashboard visible
@@ -79,62 +70,12 @@ class MainWindow(QMainWindow):
         """
         Saves data, then switches back to the home screen.
         """
-        # --- NEW: Save data before switching ---
         self.project_dashboard.save_all_editors()
 
         self.stacked_widget.setCurrentIndex(0)
         self.showNormal()
         self.setGeometry(self.initial_geometry)
         self.center_window()
-
-    @Slot(str, int)
-    def add_reading_tab(self, reading_title, reading_id):
-        """
-        Adds a new top-level tab for a reading.
-
-        Change: instead of a placeholder label, embed a QWebEngineView that loads
-        ./editor.html via file:// (so web_resources/quill.js & quill.snow.css work offline).
-        We preserve your original container QWidget + QVBoxLayout structure so any code
-        in ProjectDashboard that expects a QWidget tab still works as before.
-        """
-        # Container (keeps your original structure intact)
-        reading_widget = QWidget()
-        layout = QVBoxLayout(reading_widget)
-
-        # Create the web view
-        view = QWebEngineView(reading_widget)
-
-        # Resolve local editor.html next to main.py
-        html_path = Path(__file__).with_name("editor.html")
-        if not html_path.exists():
-            # If editor.html is missing, fall back to the original label so nothing breaks
-            fallback = QLabel(f"Editor for '{reading_title}' (ID: {reading_id}) will go here.")
-            layout.addWidget(fallback)
-        else:
-            # Load the local HTML (offline)
-            view.setUrl(QUrl.fromLocalFile(str(html_path)))
-
-            # After the page loads, set starter content (you can swap to DB content later)
-            def _on_load_finished(ok: bool):
-                if not ok:
-                    # Graceful fallback: show a simple label if the page failed to load
-                    layout.removeWidget(view)
-                    view.deleteLater()
-                    layout.addWidget(QLabel(
-                        f"Failed to load editor.html for '{reading_title}' (ID: {reading_id})."
-                    ))
-                    return
-
-                # JS bridge defined in editor.html:
-                #   window.setEditorContent(htmlString)
-                starter_html = f"<p><em>{reading_title}</em> — ready to edit.</p>"
-                view.page().runJavaScript(f"setEditorContent({repr(starter_html)})")
-
-            view.loadFinished.connect(_on_load_finished)
-            layout.addWidget(view)
-
-        index = self.project_dashboard.top_tab_widget.addTab(reading_widget, reading_title)
-        self.project_dashboard.top_tab_widget.setCurrentIndex(index)
 
     def center_window(self):
         """Centers the main window on the screen."""
@@ -147,17 +88,40 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"Warning: Could not center window. {e}")
 
+    # --- NEW: Save on Close ---
+    def closeEvent(self, event):
+        """Overrides the main window's close event to save all data."""
+        print("Closing application, saving all data...")
+
+        # 1. Save all editors in the main project dashboard
+        if self.project_dashboard:
+            self.project_dashboard.save_all_editors()
+
+        # 2. Find and save any open Mindmap editor windows
+        # --- FIX: Import locally inside the function ---
+        try:
+            from dialogs.mindmap_editor_window import MindmapEditorWindow
+            # Find all top-level widgets that are mindmap editors
+            for widget in QApplication.topLevelWidgets():
+                if isinstance(widget, MindmapEditorWindow):
+                    print(f"Saving open mindmap: {widget.mindmap_name}...")
+                    widget.save_mindmap(show_message=False)
+                    widget.close()  # Close it
+        except ImportError:
+            print("Could not import MindmapEditorWindow for saving.")
+        except Exception as e:
+            print(f"Error during mindmap save on close: {e}")
+        # --- END FIX ---
+
+        print("Save complete. Exiting.")
+        event.accept()  # Proceed with closing
+    # --- END NEW ---
+
 
 def main():
-    # --- NEW: Enable Remote Debugging ---
-    # This MUST be set before QApplication is created
     os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
-
     app = QApplication(sys.argv)
 
-    # --- NEW: Initialize Web Engine Profile ---
-    # This MUST be done after QApplication is created and
-    # before any QWebEngineView is created.
     profile = QWebEngineProfile.defaultProfile()
     profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.MemoryHttpCache)
 
@@ -169,4 +133,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

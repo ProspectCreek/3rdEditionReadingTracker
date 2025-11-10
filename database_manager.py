@@ -7,15 +7,28 @@ class DatabaseManager:
     def __init__(self, db_file="reading_tracker.db"):
         """Initialize and connect to the SQLite database."""
         self.conn = sqlite3.connect(db_file)
-        self.conn.row_factory = sqlite3.Row  # Access columns by name
-        self.conn.execute("PRAGMA foreign_keys = ON")  # Enable foreign key cascade
+        # We still use Row; public getters coerce to dicts where needed.
+        self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA foreign_keys = ON")
         self.cursor = self.conn.cursor()
         self.setup_database()
 
+    # ----------------------- helpers: row → dict -----------------------
+
+    @staticmethod
+    def _rowdict(row):
+        """Coerce a sqlite3.Row (or None) to a plain dict (or None)."""
+        return dict(row) if row is not None else None
+
+    @staticmethod
+    def _map_rows(rows):
+        """Coerce an iterable of sqlite3.Row to list[dict]."""
+        return [dict(r) for r in rows] if rows else []
+
+    # ----------------------------- schema -----------------------------
+
     def setup_database(self):
-        """
-        Create the necessary tables if they don't exist.
-        """
+        # --- Items / Projects ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -23,42 +36,40 @@ class DatabaseManager:
             type TEXT NOT NULL,
             name TEXT NOT NULL,
             display_order INTEGER,
+            is_assignment INTEGER DEFAULT 0,
+            project_purpose_text TEXT,
+            project_goals_text TEXT,
+            key_questions_text TEXT,
+            thesis_text TEXT,
+            insights_text TEXT,
+            unresolved_text TEXT,
+            assignment_instructions_text TEXT,
+            assignment_draft_text TEXT,
             FOREIGN KEY (parent_id) REFERENCES items(id) ON DELETE CASCADE
         )
         """)
 
-        # --- Schema Migration ---
-        expected_columns = {
+        # Defensive additive migrations
+        self.cursor.execute("PRAGMA table_info(items)")
+        existing_item_cols = {row["name"] for row in self.cursor.fetchall()}
+        for col_name, col_type in {
             "is_assignment": "INTEGER DEFAULT 0",
             "project_purpose_text": "TEXT",
             "project_goals_text": "TEXT",
             "key_questions_text": "TEXT",
             "thesis_text": "TEXT",
             "insights_text": "TEXT",
-            "unresolved_text": "TEXT"
-        }
-        self.cursor.execute("PRAGMA table_info(items)")
-        existing_columns = [row['name'] for row in self.cursor.fetchall()]
-        for col_name, col_type in expected_columns.items():
-            if col_name not in existing_columns:
+            "unresolved_text": "TEXT",
+            "assignment_instructions_text": "TEXT",
+            "assignment_draft_text": "TEXT",
+        }.items():
+            if col_name not in existing_item_cols:
                 try:
-                    print(f"Adding missing column: {col_name}...")
                     self.cursor.execute(f"ALTER TABLE items ADD COLUMN {col_name} {col_type}")
-                except sqlite3.OperationalError as e:
-                    print(f"Warning: Could not add column {col_name}. {e}")
+                except sqlite3.OperationalError:
+                    pass
 
-        self.cursor.execute("""
-        CREATE TABLE IF NOT EXISTS instructions (
-            project_id INTEGER PRIMARY KEY,
-            key_questions_instr TEXT NOT NULL,
-            thesis_instr TEXT NOT NULL,
-            insights_instr TEXT NOT NULL,
-            unresolved_instr TEXT NOT NULL,
-            FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE
-        )
-        """)
-
-        # --- NEW: Readings Table ---
+        # --- Readings ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS readings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,22 +78,63 @@ class DatabaseManager:
             author TEXT,
             display_order INTEGER,
             reading_notes_text TEXT,
+            nickname TEXT,
+            published TEXT,
+            pages TEXT,
+            assignment TEXT,
+            level TEXT,
+            classification TEXT,
             FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE
         )
         """)
-        # --- END NEW ---
+        self.cursor.execute("PRAGMA table_info(readings)")
+        existing_read_cols = {row["name"] for row in self.cursor.fetchall()}
+        for col_name, col_type in {
+            "nickname": "TEXT",
+            "published": "TEXT",
+            "pages": "TEXT",
+            "assignment": "TEXT",
+            "level": "TEXT",
+            "classification": "TEXT",
+        }.items():
+            if col_name not in existing_read_cols:
+                try:
+                    self.cursor.execute(f"ALTER TABLE readings ADD COLUMN {col_name} {col_type}")
+                except sqlite3.OperationalError:
+                    pass
 
-        # --- NEW: Mindmap Tables ---
+        # --- Rubric ---
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS rubric_components (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            component_text TEXT NOT NULL,
+            is_checked INTEGER DEFAULT 0,
+            display_order INTEGER,
+            FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE
+        )
+        """)
+
+        # --- Instructions ---
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS instructions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            key_questions_instr TEXT,
+            thesis_instr TEXT,
+            insights_instr TEXT,
+            unresolved_instr TEXT,
+            FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE,
+            UNIQUE(project_id)
+        )
+        """)
+
+        # --- Mindmaps (tables only; UI methods call their own helpers) ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS mindmaps (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             project_id INTEGER NOT NULL,
-            name TEXT NOT NULL,
-            display_order INTEGER,
-            default_font_family TEXT,
-            default_font_size INTEGER,
-            default_font_weight TEXT,
-            default_font_slant TEXT,
+            title TEXT,
             FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE
         )
         """)
@@ -90,11 +142,8 @@ class DatabaseManager:
         CREATE TABLE IF NOT EXISTS mindmap_nodes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             mindmap_id INTEGER NOT NULL,
-            node_id_text TEXT NOT NULL, -- The text ID we use for linking, e.g., "node_1"
-            x REAL NOT NULL,
-            y REAL NOT NULL,
-            width REAL NOT NULL,
-            height REAL NOT NULL,
+            node_id_text TEXT NOT NULL,
+            x REAL, y REAL, width REAL, height REAL,
             text TEXT,
             shape_type TEXT,
             fill_color TEXT,
@@ -112,301 +161,310 @@ class DatabaseManager:
         CREATE TABLE IF NOT EXISTS mindmap_edges (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             mindmap_id INTEGER NOT NULL,
-            from_node_id_text TEXT NOT NULL,
-            to_node_id_text TEXT NOT NULL,
+            edge_id_text TEXT NOT NULL,
+            from_node_id TEXT NOT NULL,
+            to_node_id TEXT NOT NULL,
             color TEXT,
-            style TEXT,
-            width INTEGER,
-            arrow_style TEXT,
-            FOREIGN KEY (mindmap_id) REFERENCES mindmaps(id) ON DELETE CASCADE
+            thickness REAL,
+            line_style TEXT,
+            arrow_start INTEGER DEFAULT 0,
+            arrow_end INTEGER DEFAULT 0,
+            FOREIGN KEY (mindmap_id) REFERENCES mindmaps(id) ON DELETE CASCADE,
+            UNIQUE(mindmap_id, edge_id_text)
         )
         """)
-        # --- END NEW ---
 
-        self.conn.commit()
-
-    # --- Instructions Functions ---
-    def get_or_create_instructions(self, project_id):
-        """
-        Gets instructions for a project. If they don't exist,
-        creates and returns the default instructions.
-        """
-        self.cursor.execute("SELECT * FROM instructions WHERE project_id = ?", (project_id,))
-        instr = self.cursor.fetchone()
-        if instr:
-            return dict(instr)
-        else:
-            defaults = {
-                "project_id": project_id,
-                "key_questions_instr": "What is the central question this project aims to answer?",
-                "thesis_instr": "State your current working thesis/argument.",
-                "insights_instr": "Capture 3-7 key insights that are shaping your thinking.",
-                "unresolved_instr": "List open questions, unresolved questions, or uncertainties to be revisited."
-            }
-            self.cursor.execute("""
-                INSERT INTO instructions 
-                (project_id, key_questions_instr, thesis_instr, insights_instr, unresolved_instr)
-                VALUES (:project_id, :key_questions_instr, :thesis_instr, :insights_instr, :unresolved_instr)
-            """, defaults)
-            self.conn.commit()
-            self.cursor.execute("SELECT * FROM instructions WHERE project_id = ?", (project_id,))
-            return dict(self.cursor.fetchone())
-
-    def update_instructions(self, project_id, key_questions, thesis, insights, unresolved):
-        """Updates the instruction text for a given project."""
+        # --- Reading Outline ---
         self.cursor.execute("""
-            UPDATE instructions
-            SET key_questions_instr = ?, thesis_instr = ?, insights_instr = ?, unresolved_instr = ?
-            WHERE project_id = ?
-        """, (key_questions, thesis, insights, unresolved, project_id))
-        self.conn.commit()
-
-    # --- Project Text Field Functions ---
-    def update_project_text_field(self, project_id, field_name, content):
-        """
-        Dynamically updates a single text field for a project in the items table.
-        """
-        if field_name not in ['project_purpose_text', 'project_goals_text',
-                              'key_questions_text', 'thesis_text',
-                              'insights_text', 'unresolved_text']:
-            print(f"Error: Invalid field name {field_name}")
-            return
-        query = f"UPDATE items SET {field_name} = ? WHERE id = ?"
-        self.cursor.execute(query, (content, project_id))
-        self.conn.commit()
-
-    def update_assignment_status(self, project_id, new_status):
-        """Updates the is_assignment status for a project."""
-        self.cursor.execute(
-            "UPDATE items SET is_assignment = ? WHERE id = ?",
-            (new_status, project_id)
+        CREATE TABLE IF NOT EXISTS reading_outline (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            reading_id INTEGER NOT NULL,
+            parent_id INTEGER,
+            section_title TEXT NOT NULL,
+            notes_html TEXT,
+            display_order INTEGER,
+            FOREIGN KEY (reading_id) REFERENCES readings(id) ON DELETE CASCADE,
+            FOREIGN KEY (parent_id) REFERENCES reading_outline(id) ON DELETE CASCADE
         )
+        """)
+
         self.conn.commit()
 
-    # --- Item Functions (Projects/Classes) ---
-    def get_items(self, parent_id=None):
-        """
-        Get all items under a specific parent.
-        """
-        query = "SELECT * FROM items WHERE parent_id IS ? ORDER BY display_order"
-        params = (parent_id,)
-        if parent_id is None:
-            query = "SELECT * FROM items WHERE parent_id IS NULL ORDER BY display_order"
-            params = ()
-        self.cursor.execute(query, params)
-        return self.cursor.fetchall()
+    # ---------------------- items / projects ----------------------
 
-    def create_item(self, name, item_type, parent_id=None, is_assignment=1):
-        """
-        Create a new class or project.
-        """
-        query = "SELECT MAX(display_order) FROM items WHERE parent_id IS ?"
-        params = (parent_id,)
+    def _next_item_order(self, parent_id):
         if parent_id is None:
-            query = "SELECT MAX(display_order) FROM items WHERE parent_id IS NULL"
-            params = ()
-        self.cursor.execute(query, params)
-        max_order = self.cursor.fetchone()[0]
-        new_order = 0 if max_order is None else max_order + 1
+            self.cursor.execute("SELECT COALESCE(MAX(display_order), -1) FROM items WHERE parent_id IS NULL")
+        else:
+            self.cursor.execute("SELECT COALESCE(MAX(display_order), -1) FROM items WHERE parent_id = ?", (parent_id,))
+        return (self.cursor.fetchone()[0] or -1) + 1
+
+    def add_item(self, parent_id, type_, name):
+        """Legacy helper used by some UIs."""
+        new_order = self._next_item_order(parent_id)
         self.cursor.execute(
-            "INSERT INTO items (parent_id, type, name, display_order, is_assignment) VALUES (?, ?, ?, ?, ?)",
-            (parent_id, item_type, name, new_order, is_assignment)
+            "INSERT INTO items (parent_id, type, name, display_order) VALUES (?, ?, ?, ?)",
+            (parent_id, type_, name, new_order)
         )
         self.conn.commit()
         return self.cursor.lastrowid
+
+    def create_item(self, name, item_type, parent_db_id=None, is_assignment=0):
+        """UI-facing creator (signature used by ProjectListWidget)."""
+        new_order = self._next_item_order(parent_db_id)
+        self.cursor.execute("""
+            INSERT INTO items (parent_id, type, name, display_order, is_assignment)
+            VALUES (?, ?, ?, ?, ?)
+        """, (parent_db_id, item_type, name, new_order, int(is_assignment)))
+        self.conn.commit()
+        return self.cursor.lastrowid
+
+    def get_items(self, parent_id=None):
+        """Return children as list[dict] (safe for .get usage)."""
+        if parent_id is None:
+            self.cursor.execute("""
+                SELECT * FROM items
+                WHERE parent_id IS NULL
+                ORDER BY display_order, id
+            """)
+        else:
+            self.cursor.execute("""
+                SELECT * FROM items
+                WHERE parent_id = ?
+                ORDER BY display_order, id
+            """, (parent_id,))
+        return self._map_rows(self.cursor.fetchall())
+
+    def get_item_details(self, item_id):
+        """Return a single item as dict (safe for .get usage)."""
+        self.cursor.execute("SELECT * FROM items WHERE id = ?", (item_id,))
+        return self._rowdict(self.cursor.fetchone())
 
     def rename_item(self, item_id, new_name):
         self.cursor.execute("UPDATE items SET name = ? WHERE id = ?", (new_name, item_id))
         self.conn.commit()
 
-    def move_item(self, item_id, new_parent_id=None):
-        query = "SELECT MAX(display_order) FROM items WHERE parent_id IS ?"
-        params = (new_parent_id,)
-        if new_parent_id is None:
-            query = "SELECT MAX(display_order) FROM items WHERE parent_id IS NULL"
-            params = ()
-        self.cursor.execute(query, params)
-        max_order = self.cursor.fetchone()[0]
-        new_order = 0 if max_order is None else max_order + 1
-        self.cursor.execute(
-            "UPDATE items SET parent_id = ?, display_order = ? WHERE id = ?",
-            (new_parent_id, new_order, item_id)
-        )
-        self.conn.commit()
-
-    def update_order(self, ordered_db_ids):
-        for index, item_id in enumerate(ordered_db_ids):
-            self.cursor.execute("UPDATE items SET display_order = ? WHERE id = ?", (index, item_id))
-        self.conn.commit()
-
-    def get_item_details(self, item_id):
-        self.cursor.execute("SELECT * FROM items WHERE id = ?", (item_id,))
-        return self.cursor.fetchone()
-
     def delete_item(self, item_id):
         self.cursor.execute("DELETE FROM items WHERE id = ?", (item_id,))
         self.conn.commit()
 
-    def get_all_classes(self):
-        self.cursor.execute("SELECT id, name FROM items WHERE type = 'class' ORDER BY name")
-        return self.cursor.fetchall()
-
-    def duplicate_item(self, item_id, new_parent_id=None):
-        original = self.get_item_details(item_id)
-        if not original:
-            return
-        parent_id = new_parent_id if new_parent_id is not None else original['parent_id']
-        new_name = f"{original['name']} (Copy)"
-        new_id = self.create_item(
-            new_name,
-            original['type'],
-            parent_id,
-            original['is_assignment']
-        )
-        if original['type'] == 'class':
-            children = self.get_items(original['id'])
-            for child in children:
-                self.duplicate_item(child['id'], new_parent_id=new_id)
-
-    # --- NEW: Reading Functions ---
-    def add_reading(self, project_id, title, author):
-        """Adds a new reading to a project."""
-        query = "SELECT MAX(display_order) FROM readings WHERE project_id = ?"
-        self.cursor.execute(query, (project_id,))
-        max_order = self.cursor.fetchone()[0]
-        new_order = 0 if max_order is None else max_order + 1
-
-        self.cursor.execute(
-            "INSERT INTO readings (project_id, title, author, display_order) VALUES (?, ?, ?, ?)",
-            (project_id, title, author, new_order)
-        )
+    def reorder_items(self, ordered_ids):
+        for order, iid in enumerate(ordered_ids):
+            self.cursor.execute("UPDATE items SET display_order = ? WHERE id = ?", (order, iid))
         self.conn.commit()
-        return self.cursor.lastrowid
+
+    def update_project_text_field(self, project_id, field_name, html_text):
+        self.cursor.execute(f"UPDATE items SET {field_name} = ? WHERE id = ?", (html_text, project_id))
+        self.conn.commit()
+
+    # ------------------------- instructions -------------------------
+
+    def get_or_create_instructions(self, project_id):
+        self.cursor.execute("SELECT * FROM instructions WHERE project_id = ?", (project_id,))
+        row = self.cursor.fetchone()
+        if row:
+            return self._rowdict(row)
+        self.cursor.execute("""
+            INSERT INTO instructions (project_id, key_questions_instr, thesis_instr, insights_instr, unresolved_instr)
+            VALUES (?, '', '', '', '')
+        """, (project_id,))
+        self.conn.commit()
+        self.cursor.execute("SELECT * FROM instructions WHERE project_id = ?", (project_id,))
+        return self._rowdict(self.cursor.fetchone())
+
+    def update_instructions(self, project_id, key_q, thesis, insights, unresolved):
+        self.cursor.execute("""
+            UPDATE instructions
+            SET key_questions_instr = ?, thesis_instr = ?, insights_instr = ?, unresolved_instr = ?
+            WHERE project_id = ?
+        """, (key_q, thesis, insights, unresolved, project_id))
+        self.conn.commit()
+
+    # --------------------------- readings ---------------------------
+
+    def add_reading(self, project_id, title, author, nickname):
+        """Named params + computed display_order + verify presence."""
+        self.cursor.execute(
+            "SELECT COALESCE(MAX(display_order), -1) FROM readings WHERE project_id = ?",
+            (project_id,)
+        )
+        new_order = (self.cursor.fetchone()[0] or -1) + 1
+
+        payload = {
+            "project_id": int(project_id),
+            "title": (title or "").strip(),
+            "author": (author or "").strip(),
+            "nickname": (nickname or "").strip(),
+            "display_order": int(new_order),
+        }
+
+        self.cursor.execute("""
+            INSERT INTO readings (project_id, title, author, nickname, display_order)
+            VALUES (:project_id, :title, :author, :nickname, :display_order)
+        """, payload)
+        self.conn.commit()
+
+        new_id = self.cursor.lastrowid
+        if self.get_reading_details(new_id) is None:
+            raise RuntimeError("Insert verification failed: reading row not found after commit.")
+        return new_id
 
     def get_readings(self, project_id):
-        """Gets all readings for a project, in order."""
-        self.cursor.execute(
-            "SELECT * FROM readings WHERE project_id = ? ORDER BY display_order",
-            (project_id,)
-        )
-        return self.cursor.fetchall()
-
-    def update_reading_order(self, ordered_db_ids):
-        """
-        Updates the display_order for a list of reading IDs.
-        """
-        for index, item_id in enumerate(ordered_db_ids):
-            self.cursor.execute("UPDATE items SET display_order = ? WHERE id = ?", (index, item_id))
-        self.conn.commit()
-
-    # --- END NEW ---
-
-    # --- NEW: Mindmap Functions ---
-
-    def get_mindmaps_for_project(self, project_id):
-        """Gets all mindmaps for a specific project."""
-        self.cursor.execute(
-            "SELECT * FROM mindmaps WHERE project_id = ? ORDER BY display_order, name",
-            (project_id,)
-        )
-        return self.cursor.fetchall()
-
-    def create_mindmap(self, project_id, name):
-        """Creates a new, empty mindmap for a project."""
-        self.cursor.execute(
-            "INSERT INTO mindmaps (project_id, name) VALUES (?, ?)",
-            (project_id, name)
-        )
-        self.conn.commit()
-        return self.cursor.lastrowid
-
-    def rename_mindmap(self, mindmap_id, new_name):
-        self.cursor.execute("UPDATE mindmaps SET name = ? WHERE id = ?", (new_name, mindmap_id))
-        self.conn.commit()
-
-    def delete_mindmap(self, mindmap_id):
-        """Deletes a mindmap and all its nodes/edges (cascade)."""
-        self.cursor.execute("DELETE FROM mindmaps WHERE id = ?", (mindmap_id,))
-        self.conn.commit()
-
-    def get_mindmap_details(self, mindmap_id):
-        """Gets the top-level info for a single mindmap."""
-        self.cursor.execute("SELECT * FROM mindmaps WHERE id = ?", (mindmap_id,))
-        return self.cursor.fetchone()
-
-    def get_mindmap_data(self, mindmap_id):
-        """Gets all nodes and edges for a specific mindmap."""
-        self.cursor.execute("SELECT * FROM mindmap_nodes WHERE mindmap_id = ?", (mindmap_id,))
-        nodes = [dict(row) for row in self.cursor.fetchall()]
-
-        self.cursor.execute("SELECT * FROM mindmap_edges WHERE mindmap_id = ?", (mindmap_id,))
-        edges = [dict(row) for row in self.cursor.fetchall()]
-
-        return {'nodes': nodes, 'edges': edges}
-
-    def update_mindmap_defaults(self, mindmap_id, font_details):
-        """Updates the default font for a mindmap."""
         self.cursor.execute("""
-            UPDATE mindmaps
-            SET default_font_family = ?, default_font_size = ?,
-                default_font_weight = ?, default_font_slant = ?
+            SELECT * FROM readings
+            WHERE project_id = ?
+            ORDER BY display_order ASC, id ASC
+        """, (project_id,))
+        return self._map_rows(self.cursor.fetchall())
+
+    def get_reading_details(self, reading_id):
+        self.cursor.execute("SELECT * FROM readings WHERE id = ?", (reading_id,))
+        return self._rowdict(self.cursor.fetchone())
+
+    def update_reading_details(self, reading_id, details_dict):
+        self.cursor.execute("""
+            UPDATE readings
+            SET title = ?, author = ?, nickname = ?, published = ?, 
+                pages = ?, assignment = ?, level = ?, classification = ?
             WHERE id = ?
         """, (
-            font_details.get('family'), font_details.get('size'),
-            font_details.get('weight'), font_details.get('slant'),
-            mindmap_id
+            details_dict.get('title', ''), details_dict.get('author', ''), details_dict.get('nickname', ''),
+            details_dict.get('published', ''), details_dict.get('pages', ''), details_dict.get('assignment', ''),
+            details_dict.get('level', ''), details_dict.get('classification', ''), reading_id
         ))
         self.conn.commit()
 
-    def save_mindmap_data(self, mindmap_id, nodes_to_save, edges_to_save):
-        """
-        Saves all nodes and edges for a mindmap in a transaction.
-        This deletes old data and inserts the new data.
-        """
-        try:
-            self.cursor.execute("BEGIN TRANSACTION")
+    # --------------------------- rubric ----------------------------
 
-            # Delete old data
-            self.cursor.execute("DELETE FROM mindmap_nodes WHERE mindmap_id = ?", (mindmap_id,))
-            self.cursor.execute("DELETE FROM mindmap_edges WHERE mindmap_id = ?", (mindmap_id,))
+    def get_rubric_components(self, project_id):
+        """Return rubric components for a project as list[dict]."""
+        self.cursor.execute("""
+            SELECT * FROM rubric_components
+            WHERE project_id = ?
+            ORDER BY display_order, id
+        """, (project_id,))
+        return self._map_rows(self.cursor.fetchall())
 
-            # Insert new nodes
-            for node in nodes_to_save:
-                self.cursor.execute("""
-                    INSERT INTO mindmap_nodes (
-                        mindmap_id, node_id_text, x, y, width, height, text,
-                        shape_type, fill_color, outline_color, text_color,
-                        font_family, font_size, font_weight, font_slant
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    mindmap_id, str(node['id']), node['x'], node['y'], node['width'],
-                    node['height'], node['text'], node['shape_type'],
-                    node['fill_color'], node['outline_color'], node['text_color'],
-                    node['font_family'], node['font_size'],
-                    node['font_weight'], node['font_slant']
-                ))
+    def add_rubric_component(self, project_id, text):
+        """Add a rubric component at the end of the current order."""
+        self.cursor.execute("""
+            SELECT COALESCE(MAX(display_order), -1)
+            FROM rubric_components
+            WHERE project_id = ?
+        """, (project_id,))
+        new_order = (self.cursor.fetchone()[0] or -1) + 1
 
-            # Insert new edges
-            for edge in edges_to_save:
-                self.cursor.execute("""
-                    INSERT INTO mindmap_edges (
-                        mindmap_id, from_node_id_text, to_node_id_text,
-                        color, style, width, arrow_style
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    mindmap_id, str(edge['from_node_id']), str(edge['to_node_id']),
-                    edge['color'], edge['style'], edge['width'], edge['arrow_style']
-                ))
+        self.cursor.execute("""
+            INSERT INTO rubric_components (project_id, component_text, is_checked, display_order)
+            VALUES (?, ?, 0, ?)
+        """, (project_id, text, new_order))
+        self.conn.commit()
+        return self.cursor.lastrowid
 
-            self.conn.commit()
-        except Exception as e:
-            self.conn.rollback()
-            print(f"Error saving mindmap: {e}")
-            raise
+    def update_rubric_component_text(self, component_id, text):
+        """Update the visible text of a rubric component."""
+        self.cursor.execute("""
+            UPDATE rubric_components
+            SET component_text = ?
+            WHERE id = ?
+        """, (text, component_id))
+        self.conn.commit()
 
-    # --- END NEW ---
+    def update_rubric_component_checked(self, component_id, is_checked):
+        """Set the checked flag (0/1) on a rubric component."""
+        self.cursor.execute("""
+            UPDATE rubric_components
+            SET is_checked = ?
+            WHERE id = ?
+        """, (int(bool(is_checked)), component_id))
+        self.conn.commit()
+
+    def delete_rubric_component(self, component_id):
+        """Delete a rubric component."""
+        self.cursor.execute("DELETE FROM rubric_components WHERE id = ?", (component_id,))
+        self.conn.commit()
+
+    def update_rubric_component_order(self, ordered_ids):
+        """Reorder rubric components by the given id sequence."""
+        for order, cid in enumerate(ordered_ids):
+            self.cursor.execute("""
+                UPDATE rubric_components
+                SET display_order = ?
+                WHERE id = ?
+            """, (order, cid))
+        self.conn.commit()
+
+    # ----------------------- reading outline -----------------------
+
+    # (These return Row to preserve callers that use ['field'].
+    # If you prefer dicts here too, say the word and I’ll flip them.)
+
+    def get_reading_outline(self, reading_id, parent_id=None):
+        if parent_id is None:
+            self.cursor.execute("""
+                SELECT * FROM reading_outline
+                WHERE reading_id = ? AND parent_id IS NULL
+                ORDER BY display_order, id
+            """, (reading_id,))
+        else:
+            self.cursor.execute("""
+                SELECT * FROM reading_outline
+                WHERE reading_id = ? AND parent_id = ?
+                ORDER BY display_order, id
+            """, (reading_id, parent_id))
+        return self.cursor.fetchall()
+
+    def add_outline_section(self, reading_id, title, parent_id=None):
+        if parent_id is None:
+            self.cursor.execute("""
+                SELECT COALESCE(MAX(display_order), -1) FROM reading_outline
+                WHERE reading_id = ? AND parent_id IS NULL
+            """, (reading_id,))
+        else:
+            self.cursor.execute("""
+                SELECT COALESCE(MAX(display_order), -1) FROM reading_outline
+                WHERE reading_id = ? AND parent_id = ?
+            """, (reading_id, parent_id))
+        new_order = (self.cursor.fetchone()[0] or -1) + 1
+
+        self.cursor.execute("""
+            INSERT INTO reading_outline (reading_id, parent_id, section_title, notes_html, display_order)
+            VALUES (?, ?, ?, ?, ?)
+        """, (reading_id, parent_id, title, "", new_order))
+        self.conn.commit()
+
+    def update_outline_section_title(self, section_id, new_title):
+        self.cursor.execute("UPDATE reading_outline SET section_title = ? WHERE id = ?", (new_title, section_id))
+        self.conn.commit()
+
+    def delete_outline_section(self, section_id):
+        self.cursor.execute("DELETE FROM reading_outline WHERE id = ?", (section_id,))
+        self.conn.commit()
+
+    def update_outline_section_order(self, ordered_ids):
+        for order, sid in enumerate(ordered_ids):
+            self.cursor.execute("UPDATE reading_outline SET display_order = ? WHERE id = ?", (order, sid))
+        self.conn.commit()
+
+    def get_outline_section_notes(self, section_id):
+        self.cursor.execute("SELECT notes_html FROM reading_outline WHERE id = ?", (section_id,))
+        row = self.cursor.fetchone()
+        return row["notes_html"] if row else ""
+
+    def update_outline_section_notes(self, section_id, html):
+        self.cursor.execute("UPDATE reading_outline SET notes_html = ? WHERE id = ?", (html, section_id))
+        self.conn.commit()
+
+    # ---------------------------- utility ----------------------------
+
+    def backup_database(self, dest_path):
+        """Create a copy of the database file at dest_path."""
+        self.conn.commit()
+        src = self.conn.execute("PRAGMA database_list").fetchone()[2]
+        shutil.copyfile(src, dest_path)
 
     def __del__(self):
-        """Close the database connection on object deletion."""
-        self.conn.close()
-
+        try:
+            self.conn.close()
+        except Exception:
+            pass

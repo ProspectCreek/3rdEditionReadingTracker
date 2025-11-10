@@ -7,7 +7,8 @@ from PySide6.QtWidgets import (
     QGraphicsPolygonItem, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsTextItem,
     QDialog, QVBoxLayout, QMenu, QMessageBox, QColorDialog, QFontDialog,
     QInputDialog, QFileDialog, QGraphicsSceneMouseEvent, QGraphicsRectItem,
-    QApplication, QMenuBar
+    QMenuBar, QPushButton
+    # --- FIX: Removed QApplication ---
 )
 from PySide6.QtGui import (
     QPainter, QColor, QFont, QPen, QBrush, QPolygonF, QImage,
@@ -472,6 +473,17 @@ class MindmapEditorWindow(QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
+        # --- NEW: Window Flags and Title Bar ---
+        self.setWindowFlags(
+            Qt.WindowType.Window |
+            Qt.WindowType.CustomizeWindowHint |
+            Qt.WindowType.WindowTitleHint |
+            Qt.WindowType.WindowMinimizeButtonHint |
+            Qt.WindowType.WindowMaximizeButtonHint |
+            Qt.WindowType.WindowCloseButtonHint
+        )
+        # --- END NEW ---
+
         self.setModal(False)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 
@@ -668,7 +680,7 @@ class MindmapEditorWindow(QDialog):
     def closeEvent(self, event):
         """Handle window close event."""
         self.cancel_connection_mode()
-        self.save_mindmap(show_message=False)
+        self.save_mindmap(show_message=False)  # <-- Auto-save on close
         event.accept()
 
     def _create_menus(self):

@@ -4,17 +4,17 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget,
     QPushButton, QInputDialog, QMessageBox, QListWidgetItem,
     QSplitter, QGraphicsView, QGraphicsScene, QFrame,
-    QStackedWidget, QApplication, QMenu  # <--- IMPORT FIX
+    QStackedWidget, QMenu  # <--- IMPORT FIX: Removed QApplication
 )
 from PySide6.QtCore import Qt, Signal, QPointF
 from PySide6.QtGui import QAction, QFont, QPainter
 
 try:
-    from dialogs.mindmap_editor_window import MindmapEditorWindow, MindmapNode, MindmapEdge
+    # --- FIX 1: Only import Node and Edge here. EditorWindow is imported locally. ---
+    from dialogs.mindmap_editor_window import MindmapNode, MindmapEdge
 except ImportError as e:
-    print(f"Could not import MindmapEditorWindow: {e}")
+    print(f"Could not import MindmapEditorWindow components: {e}")
     print("Please ensure 'dialogs/mindmap_editor_window.py' exists.")
-    MindmapEditorWindow = None
     MindmapNode = None
     MindmapEdge = None
 
@@ -298,6 +298,15 @@ class MindmapTab(QWidget):
 
     def open_mindmap_editor(self, item):
         """Opens the MindmapEditorWindow."""
+        # --- FIX 2: Locally import QApplication and MindmapEditorWindow ---
+        from PySide6.QtWidgets import QApplication
+        try:
+            from dialogs.mindmap_editor_window import MindmapEditorWindow
+        except ImportError as e:
+             QMessageBox.critical(self, "Error", f"Mindmap Editor component could not be loaded: {e}")
+             return
+        # --- END FIX ---
+
         if MindmapEditorWindow is None:
             QMessageBox.critical(self, "Error", "Mindmap Editor component could not be loaded.")
             return
@@ -321,9 +330,9 @@ class MindmapTab(QWidget):
             # This makes the editor dialog stay on top of the main window
             editor_dialog = MindmapEditorWindow(self, self.db, mindmap_id, mindmap_name)
 
-            # Use .open() instead of .exec() to make it non-modal
-            # This allows you to interact with the main app while the editor is open
-            editor_dialog.open()
+            # --- MODIFICATION: Show maximized instead of .open() ---
+            editor_dialog.showMaximized()
+            # --- END MODIFICATION ---
 
             # We connect a signal to refresh the preview when the editor is closed
             # This is a lambda to ensure it re-loads the *correct* ID
