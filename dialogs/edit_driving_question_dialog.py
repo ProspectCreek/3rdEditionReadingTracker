@@ -2,65 +2,71 @@
 import sys
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit, QTextEdit,
-    QComboBox, QCheckBox, QDialogButtonBox, QWidget, QHBoxLayout,
-    QRadioButton, QSpacerItem, QSizePolicy, QLabel, QPushButton
+    QComboBox, QRadioButton, QCheckBox, QDialogButtonBox,
+    QWidget, QHBoxLayout, QPushButton, QLabel  # <-- FIX: Added QLabel
 )
 from PySide6.QtCore import Qt
 
 
 class EditDrivingQuestionDialog(QDialog):
     """
-    A dialog for adding or editing a driving question, based on the user's screenshot.
+    Dialog for adding or editing a driving question.
     """
 
-    def __init__(self, current_question_data=None, all_questions=None, outline_items=None, parent=None):
+    def __init__(self, all_questions, outline_items, current_question_data=None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Edit Driving Question" if current_question_data else "Add Driving Question")
-        self.setMinimumWidth(600)
 
-        self.data = current_question_data if current_question_data else {}
-        self.all_questions = all_questions if all_questions else []
-        self.outline_items = outline_items if outline_items else []
+        self.current_data = current_question_data if current_question_data else {}
+        self.all_questions = all_questions
+        self.outline_items = outline_items
+
+        self.setWindowTitle("Edit Driving Question")
+        if not self.current_data:
+            self.setWindowTitle("Add Driving Question")
 
         main_layout = QVBoxLayout(self)
+        form_layout = QFormLayout()
 
-        # Purpose Label
+        # --- Purpose Label ---
         purpose_label = QLabel(
-            "Purpose: If the author never wrote this book, what puzzle would remain unsolved? That's your driving question."
+            "Purpose: If the author never wrote this book, what puzzle would remain unsolved? "
+            "That's your driving question."
         )
         purpose_label.setWordWrap(True)
-        purpose_label.setStyleSheet("font-style: italic; color: #333;")
+        purpose_label.setStyleSheet("font-style: italic; color: #555;")
         main_layout.addWidget(purpose_label)
 
-        # Form Layout
-        form_layout = QFormLayout()
-        form_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
-
+        # --- Question Text ---
         self.question_text_edit = QTextEdit()
-        self.question_text_edit.setPlaceholderText("Enter the driving question...")
         self.question_text_edit.setMinimumHeight(60)
-        self.question_text_edit.setText(self.data.get("question_text", ""))
+        self.question_text_edit.setPlaceholderText("Enter the driving question here...")
+        self.question_text_edit.setText(self.current_data.get("question_text", ""))
         form_layout.addRow("Driving Question:", self.question_text_edit)
 
+        # --- Nickname ---
         self.nickname_edit = QLineEdit()
-        self.nickname_edit.setPlaceholderText("Enter a short nickname for this question")
-        self.nickname_edit.setText(self.data.get("nickname", ""))
+        self.nickname_edit.setPlaceholderText("e.g., 'The Gratitude Puzzle'")
+        self.nickname_edit.setText(self.current_data.get("nickname", ""))
         form_layout.addRow("Nickname:", self.nickname_edit)
 
-        # Type (Radio Buttons)
-        type_layout = QHBoxLayout()
-        self.type_stated_radio = QRadioButton("Stated")
-        self.type_inferred_radio = QRadioButton("Inferred")
-        type_layout.addWidget(self.type_stated_radio)
-        type_layout.addWidget(self.type_inferred_radio)
-        type_layout.addStretch()
-        if self.data.get("type", "Inferred") == "Stated":
-            self.type_stated_radio.setChecked(True)
-        else:
-            self.type_inferred_radio.setChecked(True)
-        form_layout.addRow("Type:", type_layout)
+        # --- Type (Stated/Inferred) ---
+        type_widget = QWidget()
+        type_layout = QHBoxLayout(type_widget)
+        type_layout.setContentsMargins(0, 0, 0, 0)
+        self.radio_stated = QRadioButton("Stated")
+        self.radio_inferred = QRadioButton("Inferred")
 
-        # Question Category
+        if self.current_data.get("type") == "Stated":
+            self.radio_stated.setChecked(True)
+        else:
+            self.radio_inferred.setChecked(True)  # Default
+
+        type_layout.addWidget(self.radio_stated)
+        type_layout.addWidget(self.radio_inferred)
+        type_layout.addStretch()
+        form_layout.addRow("Type:", type_widget)
+
+        # --- Question Category ---
         self.category_combo = QComboBox()
         self.category_combo.addItems([
             "Descriptive (what/which)",
@@ -68,11 +74,12 @@ class EditDrivingQuestionDialog(QDialog):
             "Evaluative (true/good)",
             "Prescriptive (what should we do)"
         ])
-        self.category_combo.setCurrentText(self.data.get("question_category", "Explanatory (why/how)"))
+        self.category_combo.setCurrentText(self.current_data.get("question_category", "Explanatory (why/how)"))
         form_layout.addRow("Question Category:", self.category_combo)
 
-        # Scope
+        # --- Scope ---
         scope_layout = QHBoxLayout()
+        scope_layout.setContentsMargins(0, 0, 0, 0)
         self.scope_combo = QComboBox()
         self.scope_combo.addItems([
             "Global",
@@ -80,125 +87,147 @@ class EditDrivingQuestionDialog(QDialog):
             "Chapter",
             "Section"
         ])
-        self.scope_combo.setCurrentText(self.data.get("scope", "Global"))
+        self.scope_combo.setCurrentText(self.current_data.get("scope", "Global"))
         scope_layout.addWidget(self.scope_combo)
-        # REMOVED: self.reading_has_parts_check
         scope_layout.addStretch()
         form_layout.addRow("Scope:", scope_layout)
 
-        # Parent Question
+        # --- Parent Question ---
         self.parent_combo = QComboBox()
-        self.parent_combo.addItem("None (Root Question)", None)
-        current_id = self.data.get("id")
-        for q in self.all_questions:
-            # Don't allow a question to be its own parent
-            if q["id"] != current_id:
-                # Simple indentation for hierarchy
-                prefix = ""
-                if q["parent_id"]:
-                    prefix = "  - "
-                display_text = q.get('nickname') or q.get('question_text', '')
-                if not display_text:
-                    display_text = f"Question {q['id']}"
-                self.parent_combo.addItem(f"{prefix}{display_text[:50]}...", q["id"])
+        self._populate_parent_combo(self.all_questions, self.current_data.get("id"))
 
-        if self.data.get("parent_id"):
-            self.parent_combo.setCurrentIndex(self.parent_combo.findData(self.data.get("parent_id")))
+        # Set current parent
+        current_parent_id = self.current_data.get("parent_id")
+        if current_parent_id:
+            idx = self.parent_combo.findData(current_parent_id)
+            if idx != -1:
+                self.parent_combo.setCurrentIndex(idx)
         form_layout.addRow("Parent:", self.parent_combo)
 
-        # Where in Reading
+        # --- Where in Reading (Outline) ---
         where_layout = QHBoxLayout()
+        where_layout.setContentsMargins(0, 0, 0, 0)
         self.where_combo = QComboBox()
-        self.where_combo.addItem("Reading-Level Notes (Default)", None)  # Use None as ID for default
+        self._populate_where_combo(self.outline_items)
 
-        # Populate outline
-        self._populate_outline_combo(self.outline_items, self.where_combo)
-
-        self.where_combo.setEnabled(True)
-
-        # Set current item
-        current_outline_id = self.data.get("outline_id")
+        # Set current location
+        current_outline_id = self.current_data.get("outline_id")
         if current_outline_id:
             idx = self.where_combo.findData(current_outline_id)
             if idx != -1:
                 self.where_combo.setCurrentIndex(idx)
 
+        self.page_edit = QLineEdit()
+        self.page_edit.setPlaceholderText("e.g., 10-12")
+        self.page_edit.setFixedWidth(60)
+        self.page_edit.setText(self.current_data.get("pages", ""))
+
         where_layout.addWidget(self.where_combo)
         where_layout.addWidget(QLabel("Page(s):"))
-        self.pages_edit = QLineEdit()
-        self.pages_edit.setPlaceholderText("e.g., 12-15")
-        self.pages_edit.setFixedWidth(80)
-        self.pages_edit.setText(self.data.get("pages", ""))
-        where_layout.addWidget(self.pages_edit)
-        where_layout.addStretch()
-        form_layout.addRow("Where in Reading:", where_layout)  # Label Changed
+        where_layout.addWidget(self.page_edit)
+        form_layout.addRow("Where in Reading:", where_layout)
 
-        # Why this question
-        self.why_question_edit = QTextEdit()
-        self.why_question_edit.setPlaceholderText("Explain why you think this is the driving question...")
-        self.why_question_edit.setMinimumHeight(80)
-        self.why_question_edit.setText(self.data.get("why_question", ""))
-        form_layout.addRow("Why I think this is the question:", self.why_question_edit)
+        # --- Why this question ---
+        self.why_edit = QTextEdit()
+        self.why_edit.setMinimumHeight(60)
+        self.why_edit.setPlaceholderText("Why do you think this is the question?")
+        self.why_edit.setText(self.current_data.get("why_question", ""))
+        form_layout.addRow("Why I think this is the question:", self.why_edit)
 
-        # Synthesis Tags (as requested, placeholders)
+        # --- Synthesis Tags ---
         tags_layout = QHBoxLayout()
-        self.tags_edit = QTextEdit()
-        self.tags_edit.setPlaceholderText("Tags separated by commas")
-        self.tags_edit.setEnabled(False)  # Placeholder
-        self.tags_edit.setFixedHeight(60)
-        tags_layout.addWidget(self.tags_edit)
+        tags_layout.setContentsMargins(0, 0, 0, 0)
+        self.tags_edit = QLineEdit()
+        self.tags_edit.setPlaceholderText("e.g., #gratitude, #leadership")
+        self.tags_edit.setText(self.current_data.get("synthesis_tags", ""))
         connect_btn = QPushButton("Connect...")
         connect_btn.setEnabled(False)  # Placeholder
+        tags_layout.addWidget(self.tags_edit)
         tags_layout.addWidget(connect_btn)
         form_layout.addRow("Synthesis Tags:", tags_layout)
 
-        # Checkboxes
-        check_layout = QVBoxLayout()
-        self.is_working_question_check = QCheckBox("Mark as Working Question")
-        self.is_working_question_check.setChecked(self.data.get("is_working_question", False))
-        # REMOVED: self.include_in_summary_check
-        check_layout.addWidget(self.is_working_question_check)
-        form_layout.addRow("", check_layout)
-
         main_layout.addLayout(form_layout)
 
-        # Standard OK/Cancel buttons
+        # --- Checkboxes ---
+        self.is_working_check = QCheckBox("Mark as Working Question")
+        if self.current_data.get("is_working_question"):
+            self.is_working_check.setChecked(True)
+        main_layout.addWidget(self.is_working_check)
+
+        # --- Standard OK/Cancel buttons ---
         self.button_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
         main_layout.addWidget(self.button_box)
 
-    def _populate_outline_combo(self, outline_items, combo_widget, indent_level=0):
-        """Recursively populates the QComboBox with indented outline items."""
-        indent = "  " * indent_level
-        for item in outline_items:
-            # Add this item
-            combo_widget.addItem(f"{indent}{item['section_title']}", item['id'])
+    def _get_all_descendant_ids(self, all_questions, parent_id):
+        """Recursively finds all children and grandchildren IDs."""
+        descendant_ids = set()
+        # Find direct children
+        children = [q for q in all_questions if q.get('parent_id') == parent_id]
 
-            # Recursively add its children
-            children = item.get('children', [])  # We need to modify get_reading_outline to fetch children
-            if children:
-                self._populate_outline_combo(children, combo_widget, indent_level + 1)
+        for child in children:
+            child_id = child['id']
+            if child_id not in descendant_ids:
+                descendant_ids.add(child_id)
+                # Recursively find children of this child
+                descendant_ids.update(self._get_all_descendant_ids(all_questions, child_id))
+        return descendant_ids
+
+    def _populate_parent_combo(self, all_questions, current_question_id=None):
+        """Populates the parent dropdown, excluding self and descendants."""
+        self.parent_combo.addItem("[No Parent]", None)
+
+        # --- FIX: Exclude self and all descendants ---
+        ids_to_exclude = set()
+        if current_question_id:
+            ids_to_exclude.add(current_question_id)
+            # Find all children, grandchildren, etc.
+            ids_to_exclude.update(self._get_all_descendant_ids(all_questions, current_question_id))
+        # --- END FIX ---
+
+        # For now, we only show root-level questions as potential parents
+        # A more complex hierarchy might be needed later
+        for q in all_questions:
+            if q['id'] not in ids_to_exclude:
+                display_text = q.get('nickname') or q.get('question_text', 'Untitled Question')
+                display_text = display_text[:70] + "..." if len(display_text) > 70 else display_text
+                self.parent_combo.addItem(display_text, q['id'])
+
+        # --- Disable if we are editing a root question's children ---
+        # This is a simple (but incomplete) safety check.
+        # The real safety is the exclude list.
+        # if current_question_id and not self.current_data.get("parent_id"):
+        #     self.parent_combo.setEnabled(False)
+        #     self.parent_combo.setToolTip("Cannot change parent of a root question (for now).")
+
+    def _populate_where_combo(self, outline_items, indent=0):
+        """Recursively populates the 'Where in Reading' dropdown."""
+        if indent == 0:
+            self.where_combo.addItem("[Reading-Level Notes]", None)  # Top-level
+
+        for item in outline_items:
+            prefix = "  " * indent
+            display_text = f"{prefix} {item['section_title']}"
+            self.where_combo.addItem(display_text, item['id'])
+
+            if 'children' in item:
+                self._populate_where_combo(item['children'], indent + 1)
 
     def get_data(self):
-        """Returns the collected data in a dictionary."""
-        parent_data = self.parent_combo.currentData()
-        outline_data = self.where_combo.currentData()
-
+        """Returns all data from the dialog fields in a dictionary."""
         return {
             "question_text": self.question_text_edit.toPlainText().strip(),
             "nickname": self.nickname_edit.text().strip(),
-            "type": "Stated" if self.type_stated_radio.isChecked() else "Inferred",
+            "type": "Stated" if self.radio_stated.isChecked() else "Inferred",
             "question_category": self.category_combo.currentText(),
             "scope": self.scope_combo.currentText(),
-            # "reading_has_parts": (removed)
-            "parent_id": parent_data,
-            "outline_id": outline_data,  # Changed from where_in_book
-            "pages": self.pages_edit.text().strip(),
-            "why_question": self.why_question_edit.toPlainText().strip(),
-            "synthesis_tags": self.tags_edit.toPlainText().strip(),  # Placeholder
-            "is_working_question": self.is_working_question_check.isChecked(),
-            # "include_in_summary": (removed)
+            "parent_id": self.parent_combo.currentData(),
+            "outline_id": self.where_combo.currentData(),
+            "pages": self.page_edit.text().strip(),
+            "why_question": self.why_edit.toPlainText().strip(),
+            "synthesis_tags": self.tags_edit.text().strip(),
+            "is_working_question": self.is_working_check.isChecked()
         }

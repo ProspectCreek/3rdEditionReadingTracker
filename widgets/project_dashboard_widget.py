@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QTabWidget, QSplitter, QLabel, QTreeWidget,
     QFrame, QDialog, QTreeWidgetItem, QMenuBar,
-    QMessageBox, QMenu
+    QMessageBox, QMenu, QApplication
 )
 from PySide6.QtCore import Qt, Signal, Slot, QTimer, QPoint
 from PySide6.QtGui import QAction
@@ -15,6 +15,7 @@ from tabs.rich_text_editor_tab import RichTextEditorTab
 from tabs.mindmap_tab import MindmapTab
 from tabs.assignment_tab import AssignmentTab
 from tabs.reading_notes_tab import ReadingNotesTab
+from tabs.synthesis_tab import SynthesisTab  # <-- IMPORT NEW TAB
 
 try:
     from dialogs.add_reading_dialog import AddReadingDialog
@@ -37,6 +38,7 @@ class ProjectDashboardWidget(QWidget):
         self.project_id = -1
         self.bottom_tabs = []
         self.reading_tabs = {}  # Stores {reading_id: ReadingNotesTab}
+        self.synthesis_tab = None  # --- NEW ---
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -67,7 +69,8 @@ class ProjectDashboardWidget(QWidget):
         self.dashboard_tab = QWidget()
         self._build_dashboard_tab()
 
-        self.top_tab_widget.currentChanged.connect(self.save_all_editors)
+        # --- FIX: Connect to tab changed *after* building tabs ---
+        # self.top_tab_widget.currentChanged.connect(self.save_all_editors)
         QTimer.singleShot(0, self._enforce_equal_splits)
 
     def _build_dashboard_tab(self):
@@ -102,6 +105,7 @@ class ProjectDashboardWidget(QWidget):
         self.readings_tree.setHeaderLabels(["Nickname", "Title", "Author"])
         self.readings_tree.setColumnWidth(0, 150)
         self.readings_tree.setColumnWidth(1, 200)
+        self.readings_tree.setSortingEnabled(False)  # --- FIX: Disable sorting ---
         rl.addWidget(self.readings_tree)
 
         # --- NEW: Context Menu and Double Click ---
@@ -136,6 +140,8 @@ class ProjectDashboardWidget(QWidget):
         bl.setSpacing(6)
         self.editor_tab_widget = QTabWidget()
         bl.addWidget(self.editor_tab_widget)
+
+        # --- FIX: Connect save signal ---
         self.editor_tab_widget.currentChanged.connect(self.save_all_editors)
 
         self.main_splitter.addWidget(top_widget)
@@ -145,12 +151,22 @@ class ProjectDashboardWidget(QWidget):
 
     def _enforce_equal_splits(self):
         """Force true 50/50 splits once widgets have sizes."""
-        total_h = max(2, self.main_splitter.size().height())
-        self.main_splitter.setSizes([total_h // 2, total_h - total_h // 2])
-        total_w = max(2, self.top_splitter.size().width())
-        self.top_splitter.setSizes([total_w // 2, total_w - total_w // 2])
+        try:
+            total_h = max(2, self.main_splitter.size().height())
+            self.main_splitter.setSizes([total_h // 2, total_h - total_h // 2])
+            total_w = max(2, self.top_splitter.size().width())
+            self.top_splitter.setSizes([total_w // 2, total_w - total_w // 2])
+        except Exception as e:
+            print(f"Warning: Could not enforce splits: {e}")
 
     def load_project(self, project_details):
+        # --- Disconnect signals to prevent premature saves ---
+        try:
+            self.top_tab_widget.currentChanged.disconnect()
+        except RuntimeError:
+            pass  # Already disconnected
+        # ---
+
         self.project_details = dict(project_details)
         self.project_id = self.project_details['id']
 
@@ -159,6 +175,7 @@ class ProjectDashboardWidget(QWidget):
         self.menu_bar.clear()
         self.bottom_tabs.clear()
         self.reading_tabs.clear()
+        self.synthesis_tab = None  # --- NEW ---
 
         settings_menu = self.menu_bar.addMenu("Settings")
         edit_instr_action = QAction("Edit Dashboard Instructions", self)
@@ -173,6 +190,13 @@ class ProjectDashboardWidget(QWidget):
         if self.project_details.get('is_assignment', 0) == 1:
             self.assignment_tab = AssignmentTab(self.db, self.project_id)
             self.top_tab_widget.addTab(self.assignment_tab, "Assignment")
+
+        # --- NEW: Add Synthesis Tab ---
+        self.synthesis_tab = SynthesisTab(self.db, self.project_id)
+        self.synthesis_tab.openReading.connect(self.open_reading_tab)
+        self.synthesis_tab.tagsUpdated.connect(self._on_tags_updated)
+        self.top_tab_widget.addTab(self.synthesis_tab, "Synthesis")
+        # --- END NEW ---
 
         self.load_readings()  # This populates the tree
 
@@ -194,6 +218,9 @@ class ProjectDashboardWidget(QWidget):
 
         QTimer.singleShot(0, self._enforce_equal_splits)
 
+        # --- Reconnect signals ---
+        self.top_tab_widget.currentChanged.connect(self.on_top_tab_changed)
+
     def load_all_editor_content(self):
         """
         Load HTML into all editors after the dashboard is shown.
@@ -201,23 +228,35 @@ class ProjectDashboardWidget(QWidget):
         if not self.project_details:
             return
 
-        # Load top editors
-        self.purpose_text_editor.set_html(self.project_details.get('project_purpose_text', ''))
-        self.goals_text_editor.set_html(self.project_details.get('project_goals_text', ''))
+        print("Loading all editor content...")
+        try:
+            # Load top editors
+            self.purpose_text_editor.set_html(self.project_details.get('project_purpose_text', ''))
+            self.goals_text_editor.set_html(self.project_details.get('project_goals_text', ''))
 
-        # Load bottom editors
-        for tab in self.bottom_tabs:
-            html_content = self.project_details.get(tab.text_field, '')
-            if hasattr(tab, 'set_html'):
-                tab.set_html(html_content)
+            # Load bottom editors
+            for tab in self.bottom_tabs:
+                html_content = self.project_details.get(tab.text_field, '')
+                if hasattr(tab, 'set_html'):
+                    tab.set_html(html_content)
 
-        # Load data for AssignmentTab
-        if hasattr(self, 'assignment_tab') and isinstance(self.assignment_tab, AssignmentTab):
-            self.assignment_tab.load_data(self.project_details)
+            # Load data for AssignmentTab
+            if hasattr(self, 'assignment_tab') and isinstance(self.assignment_tab, AssignmentTab):
+                self.assignment_tab.load_data(self.project_details)
 
-        # Call load_data() on each reading tab
-        for tab in self.reading_tabs.values():
-            tab.load_data()
+            # --- NEW: Load Synthesis Tab Data ---
+            if self.synthesis_tab:
+                self.synthesis_tab.load_tab_data()
+            # --- END NEW ---
+
+            # Call load_data() on each reading tab
+            for tab in self.reading_tabs.values():
+                tab.load_data()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error Loading Content", f"Error: {e}")
+            import traceback
+            traceback.print_exc()
 
     def load_readings(self):
         self.readings_tree.clear()
@@ -243,7 +282,15 @@ class ProjectDashboardWidget(QWidget):
 
         reading_id = reading_data['id']
 
-        tab = ReadingNotesTab(self.db, reading_id)
+        # --- Avoid duplicates ---
+        if reading_id in self.reading_tabs:
+            tab = self.reading_tabs[reading_id]
+            idx = self.top_tab_widget.indexOf(tab)
+            if set_current:
+                self.top_tab_widget.setCurrentIndex(idx)
+            return tab
+
+        tab = ReadingNotesTab(self.db, self.project_id, reading_id)
         idx = self.top_tab_widget.addTab(tab, tab_title)
 
         # Listen for nickname/title changes from within the tab
@@ -253,6 +300,8 @@ class ProjectDashboardWidget(QWidget):
 
         if set_current:
             self.top_tab_widget.setCurrentIndex(idx)
+
+        return tab
 
     def _handle_reading_title_change(self, reading_id, tab_widget):
         """
@@ -265,7 +314,7 @@ class ProjectDashboardWidget(QWidget):
         nickname = (details['nickname'] or "").strip() if 'nickname' in details.keys() else ""
         title = (details['title'] or "Untitled").strip() if 'title' in details.keys() else "Untitled"
         new_text = nickname if nickname else title
-        author = (details['author'] or "").strip()
+        author = (details.get('author') or "").strip()
 
         # Update tab text
         i = self.top_tab_widget.indexOf(tab_widget)
@@ -307,14 +356,31 @@ class ProjectDashboardWidget(QWidget):
             try:
                 reading_row = self.db.get_reading_details(new_id)
                 if reading_row:
-                    self._create_and_add_reading_tab(reading_row, set_current=True)
+                    new_tab = self._create_and_add_reading_tab(reading_row, set_current=True)
                     # Load data BEFORE we re-enable signals (so fields are not blank)
-                    new_tab_widget = self.reading_tabs[new_id]
-                    new_tab_widget.load_data()
+                    new_tab.load_data()
                 else:
                     print(f"Error: Could not find new reading with id {new_id}")
             finally:
                 self.top_tab_widget.blockSignals(False)
+
+    # --- NEW: Tab Switching Logic ---
+    @Slot(int)
+    def on_top_tab_changed(self, index):
+        """Called when the main tab (Dashboard, Mindmap, Reading, etc) changes."""
+        # First, save everything
+        self.save_all_editors()
+
+        # Next, check if we switched *to* the Synthesis tab
+        current_widget = self.top_tab_widget.widget(index)
+        if current_widget == self.synthesis_tab:
+            # Reload synthesis data in case anchors were added
+            self.synthesis_tab.load_tab_data()
+        elif current_widget == self.mindmaps_tab:
+            # Reload mindmap list
+            self.mindmaps_tab.load_mindmaps()
+
+    # --- END NEW ---
 
     @Slot()
     def save_all_editors(self):
@@ -326,22 +392,30 @@ class ProjectDashboardWidget(QWidget):
         def save_purpose(html):
             if html is not None:
                 self.db.update_project_text_field(self.project_id, 'project_purpose_text', html)
+
         self.purpose_text_editor.get_html(save_purpose)
 
         def save_goals(html):
             if html is not None:
                 self.db.update_project_text_field(self.project_id, 'project_goals_text', html)
+
         self.goals_text_editor.get_html(save_goals)
 
         for tab in self.bottom_tabs:
             def cb(field):
-                return lambda html: self.db.update_project_text_field(self.project_id, field, html) if html is not None else None
+                return lambda html: self.db.update_project_text_field(self.project_id, field,
+                                                                      html) if html is not None else None
+
             tab.get_editor_content(cb(tab.text_field))
 
         # Save open reading tabs ONLY if they are fully loaded
         for tab in self.reading_tabs.values():
             if getattr(tab, "_is_loaded", False) and hasattr(tab, 'save_all'):
                 tab.save_all()
+
+        # Save assignment tab
+        if hasattr(self, 'assignment_tab') and isinstance(self.assignment_tab, AssignmentTab):
+            self.assignment_tab.save_editors()
 
     @Slot()
     def open_edit_instructions(self):
@@ -369,11 +443,19 @@ class ProjectDashboardWidget(QWidget):
     def on_reading_double_clicked(self, item, column):
         """Switches to the corresponding tab when a reading is double-clicked."""
         reading_id = item.data(0, Qt.ItemDataRole.UserRole)
-        if reading_id in self.reading_tabs:
-            tab_widget = self.reading_tabs[reading_id]
-            self.top_tab_widget.setCurrentWidget(tab_widget)
+
+        tab_widget = self.reading_tabs.get(reading_id)
+        if not tab_widget:
+            # Tab doesn't exist, create it
+            reading_row = self.db.get_reading_details(reading_id)
+            if not reading_row:
+                QMessageBox.critical(self, "Error", f"Could not find reading data for ID {reading_id}")
+                return
+            tab_widget = self._create_and_add_reading_tab(reading_row, set_current=True)
+            tab_widget.load_data()
         else:
-            print(f"Error: Tab for reading ID {reading_id} not found.")
+            # Tab exists, just switch to it
+            self.top_tab_widget.setCurrentWidget(tab_widget)
 
     @Slot(QPoint)
     def show_readings_context_menu(self, position):
@@ -469,18 +551,88 @@ class ProjectDashboardWidget(QWidget):
                 self.top_tab_widget.blockSignals(True)
                 self.editor_tab_widget.blockSignals(True)
                 try:
-                    self.load_project(self.project_details)
+                    # --- FIX: Must re-fetch details *after* save ---
+                    current_project_details = self.db.get_item_details(self.project_id)
+                    self.load_project(current_project_details)
+                    # --- END FIX ---
                     self.load_all_editor_content()
                 finally:
                     self.top_tab_widget.blockSignals(False)
                     self.editor_tab_widget.blockSignals(False)
+                    # Re-connect the tab changed signal
+                    self.top_tab_widget.currentChanged.connect(self.on_top_tab_changed)
+
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not reorder readings: {e}")
 
     # --- END NEW ---
 
+    # --- NEW: Slots for Synthesis Tab ---
+    @Slot(int, int)
+    def open_reading_tab(self, reading_id, outline_id):
+        """
+        Finds or creates a reading tab, switches to it,
+        and tells it to select a specific outline item.
+        """
+        tab_widget = self.reading_tabs.get(reading_id)
+
+        if not tab_widget:
+            # Tab doesn't exist, create it
+            reading_row = self.db.get_reading_details(reading_id)
+            if not reading_row:
+                QMessageBox.critical(self, "Error", f"Could not find reading data for ID {reading_id}")
+                return
+            tab_widget = self._create_and_add_reading_tab(reading_row, set_current=True)
+            # Need to load data *before* trying to select item
+            tab_widget.load_data()
+        else:
+            # Tab exists, just switch to it
+            self.top_tab_widget.setCurrentWidget(tab_widget)
+
+        # Tell the tab to select the outline item
+        if hasattr(tab_widget, 'set_outline_selection'):
+            # Use QTimer to ensure this runs *after* the tab switch is complete
+            QTimer.singleShot(0, lambda: tab_widget.set_outline_selection(outline_id))
+
+    @Slot()
+    def _on_tags_updated(self):
+        """
+        Called when the SynthesisTab emits a tagsUpdated signal
+        (e.g., a tag was deleted or renamed).
+        This forces all open reading tabs to refresh their anchor formatting.
+        """
+        print("Project Dashboard: Detected tag update. Refreshing UI...")
+        # Refresh the synthesis tab itself (for counts)
+        if self.synthesis_tab:
+            self.synthesis_tab.load_tags_list()
+
+        # Refresh all open reading tabs
+        for reading_tab in self.reading_tabs.values():
+            if hasattr(reading_tab, 'refresh_anchor_formatting'):
+                reading_tab.refresh_anchor_formatting()
+
+    # --- END NEW ---
+
     @Slot()
     def return_to_home(self):
+        # --- FIX: Close all open mindmap windows ---
+        try:
+            from dialogs.mindmap_editor_window import MindmapEditorWindow
+            # Find all top-level widgets that are mindmap editors for *this* project
+            for widget in QApplication.topLevelWidgets():
+                if isinstance(widget, MindmapEditorWindow):
+                    # We need to check if it belongs to this project.
+                    # This requires the editor to store project_id, or we check its parent.
+                    # For now, let's just save and close all of them.
+                    print(f"Saving open mindmap: {widget.mindmap_name}...")
+                    widget.save_mindmap(show_message=False)
+                    widget.close()  # Close it
+        except ImportError:
+            pass  # MindmapEditorWindow not available
+        except Exception as e:
+            print(f"Error closing mindmap windows: {e}")
+        # --- END FIX ---
+
         self.save_all_editors()
         self.returnToHome.emit()

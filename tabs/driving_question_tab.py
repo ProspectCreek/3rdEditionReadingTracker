@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTreeWidget,
     QTreeWidgetItem, QMenu, QMessageBox, QDialog, QLabel, QFrame
 )
-from PySide6.QtCore import Qt, Signal, QPoint
+from PySide6.QtCore import Qt, Signal, QPoint, Slot
 from PySide6.QtGui import QAction, QFont, QColor
 
 try:
@@ -80,14 +80,31 @@ class DrivingQuestionTab(QWidget):
         self.tree_widget.clear()
         try:
             root_questions = self.db.get_driving_questions(self.reading_id, parent_id=None)
+            # --- FIX: Add loop protection ---
+            visited_ids = set()
+            # --- END FIX ---
             for q_data in root_questions:
-                self._add_question_to_tree(self.tree_widget, q_data)
+                self._add_question_to_tree(self.tree_widget, q_data, visited_ids)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not load driving questions: {e}")
         self._update_button_states()
 
-    def _add_question_to_tree(self, parent_widget, q_data):
-        """Recursive helper to build the tree."""
+    def _add_question_to_tree(self, parent_widget, q_data, visited_ids):
+        """Recursive helper to build the tree. Includes loop protection."""
+
+        q_id = q_data["id"]
+
+        # --- FIX: Loop protection ---
+        if q_id in visited_ids:
+            print(f"Error: Detected recursion loop in driving questions! Question ID: {q_id}")
+            # Add a placeholder item to show the error
+            item = QTreeWidgetItem(parent_widget, [f"Error: Loop detected on item {q_id}"])
+            item.setForeground(0, QColor("red"))
+            return
+
+        visited_ids.add(q_id)
+        # --- END FIX ---
+
         # Format display text
         nickname = q_data.get("nickname", "")
         question_text = q_data.get("question_text", "No question text")
@@ -115,15 +132,16 @@ class DrivingQuestionTab(QWidget):
         # Recursively add children
         child_questions = self.db.get_driving_questions(self.reading_id, parent_id=q_data["id"])
         for child_data in child_questions:
-            self._add_question_to_tree(item, child_data)
+            # --- FIX: Pass a copy of the visited set for this branch ---
+            self._add_question_to_tree(item, child_data, visited_ids.copy())
 
         item.setExpanded(True)
 
     def _get_all_questions_flat(self):
         """Fetches all questions for this reading as a flat list for the parent dropdown."""
-        # This is a simple flat list. A more complex implementation
-        # could fetch recursively to build a hierarchical list.
-        return self.db.get_driving_questions(self.reading_id, parent_id=None)  # Just root for now
+        # --- FIX: Use parent_id=True to get ALL questions for loop checking ---
+        return self.db.get_driving_questions(self.reading_id, parent_id=True)
+        # --- END FIX ---
 
     def _get_outline_items(self, parent_id=None):
         """Recursively fetches outline items to build a nested list for the dialog."""
@@ -193,21 +211,19 @@ class DrivingQuestionTab(QWidget):
 
         menu.exec(self.tree_widget.viewport().mapToGlobal(position))
 
+    @Slot()
     def _handle_save(self, data, question_id=None):
         """Central logic for saving a question (add or edit)."""
         # --- Working Question Check ---
         if data.get("is_working_question"):
             current_working_q = self.db.find_current_working_question(self.reading_id)
-            is_new_question = (question_id is None)
-            is_different_question = (current_working_q and current_working_q['id'] != question_id)
 
-            if is_new_question or is_different_question:
-                # We are marking a *new* question as primary.
-                msg = "This will replace the current working question. Continue?"
-                if current_working_q:
-                    wq_name = current_working_q.get('nickname') or current_working_q.get('question_text',
-                                                                                         'another question')
-                    msg = f"This will replace '{wq_name[:50]}...' as the working question. Continue?"
+            # Check if we are trying to set a *different* question as the working one
+            if current_working_q and current_working_q['id'] != question_id:
+                # A different question is already the working question. Ask to replace.
+                wq_name = current_working_q.get('nickname') or current_working_q.get('question_text',
+                                                                                     'another question')
+                msg = f"This will replace '{wq_name[:50]}...' as the working question. Continue?"
 
                 reply = QMessageBox.question(
                     self, "Replace Working Question?", msg,
@@ -219,6 +235,15 @@ class DrivingQuestionTab(QWidget):
 
                 # Unset all others
                 self.db.clear_all_working_questions(self.reading_id)
+
+            elif not current_working_q:
+                # No working question exists, so no need to clear anything.
+                # This check handles the first-time case.
+                pass
+
+            # If current_working_q['id'] == question_id, we are just re-saving
+            # the same question as working, so no action is needed.
+
         # --- End Working Question Check ---
 
         try:
@@ -233,9 +258,10 @@ class DrivingQuestionTab(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not save question: {e}")
 
+    @Slot()
     def _add_question(self):
         """Adds a new root-level question."""
-        all_questions = self.db.get_driving_questions(self.reading_id, parent_id=None)
+        all_questions = self._get_all_questions_flat()
         outline_items = self._get_outline_items()
 
         dialog = EditDrivingQuestionDialog(
@@ -247,6 +273,7 @@ class DrivingQuestionTab(QWidget):
             data = dialog.get_data()
             self._handle_save(data, question_id=None)
 
+    @Slot()
     def _add_child_question(self):
         """Adds a child question to the selected item."""
         item = self.tree_widget.currentItem()
@@ -254,7 +281,7 @@ class DrivingQuestionTab(QWidget):
             return
 
         parent_id = item.data(0, Qt.ItemDataRole.UserRole)
-        all_questions = self.db.get_driving_questions(self.reading_id, parent_id=None)
+        all_questions = self._get_all_questions_flat()
         outline_items = self._get_outline_items()
 
         # Pre-set parent in data
@@ -270,6 +297,7 @@ class DrivingQuestionTab(QWidget):
             data = dialog.get_data()
             self._handle_save(data, question_id=None)
 
+    @Slot()
     def _edit_question(self):
         """Edits the selected question."""
         item = self.tree_widget.currentItem()
@@ -277,7 +305,7 @@ class DrivingQuestionTab(QWidget):
             return
 
         question_id = item.data(0, Qt.ItemDataRole.UserRole)
-        all_questions = self.db.get_driving_questions(self.reading_id, parent_id=None)
+        all_questions = self._get_all_questions_flat()
         outline_items = self._get_outline_items()
         current_data = self.db.get_driving_question_details(question_id)
 
@@ -293,8 +321,10 @@ class DrivingQuestionTab(QWidget):
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             data = dialog.get_data()
+            self.load_questions()  # Refresh tree before save to get fresh data for check
             self._handle_save(data, question_id=question_id)
 
+    @Slot()
     def _delete_question(self):
         """Deletes the selected question and its children."""
         item = self.tree_widget.currentItem()
@@ -315,11 +345,13 @@ class DrivingQuestionTab(QWidget):
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not delete question: {e}")
 
+    @Slot()
     def _move_up(self):
         item = self.tree_widget.currentItem()
         if not item: return
         self._move_item(item, -1)
 
+    @Slot()
     def _move_down(self):
         item = self.tree_widget.currentItem()
         if not item: return
@@ -347,6 +379,7 @@ class DrivingQuestionTab(QWidget):
 
         self._update_button_states()
 
+    @Slot()
     def _reorder_questions(self):
         """Opens the full reorder dialog."""
         item = self.tree_widget.currentItem()
