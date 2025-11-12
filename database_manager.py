@@ -1389,6 +1389,38 @@ class DatabaseManager:
             print(f"Error deleting tag and anchors: {e}")
             raise
 
+    # --- NEW (PHASE 2): Function to get connections for an outline item ---
+    def get_connections_for_outline_item(self, outline_id):
+        """
+        Finds all items that link to a specific reading_outline id.
+        """
+        if outline_id is None:
+            return {'driving_questions': [], 'anchors': []}
+
+        # 1. Find Driving Questions
+        dq_sql = """
+            SELECT id, question_text, nickname
+            FROM reading_driving_questions
+            WHERE outline_id = ?
+            ORDER BY display_order
+        """
+        self.cursor.execute(dq_sql, (outline_id,))
+        questions = self._map_rows(self.cursor.fetchall())
+
+        # 2. Find Synthesis Anchors
+        anchor_sql = """
+            SELECT a.id, a.selected_text, t.name as tag_name
+            FROM synthesis_anchors a
+            LEFT JOIN synthesis_tags t ON a.tag_id = t.id
+            WHERE a.outline_id = ?
+            ORDER BY a.id
+        """
+        self.cursor.execute(anchor_sql, (outline_id,))
+        anchors = self._map_rows(self.cursor.fetchall())
+
+        return {'driving_questions': questions, 'anchors': anchors}
+    # --- END NEW (PHASE 2) ---
+
     # ---------------------------- utility ----------------------------
 
     def backup_database(self, dest_path):

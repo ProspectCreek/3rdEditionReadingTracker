@@ -6,10 +6,11 @@ from PySide6.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QFormLayout, QLineEdit, QComboBox,
     QPushButton, QMenu, QStackedWidget, QInputDialog, QMessageBox, QDialog,
     QTabWidget, QMenuBar, QTextEdit, QApplication, QAbstractItemView,
-    QTreeWidgetItemIterator
+    QTreeWidgetItemIterator,
+    QTextBrowser  # <-- NEW: Added for Connections tab
 )
-from PySide6.QtCore import Qt, Signal, QPoint, Slot
-from PySide6.QtGui import QAction, QTextCharFormat, QColor, QTextCursor  # <-- FIX: Added QTextCursor
+from PySide6.QtCore import Qt, Signal, QPoint, Slot, QTimer, QUrl  # <-- NEW: Added QTimer and QUrl
+from PySide6.QtGui import QAction, QTextCharFormat, QColor, QTextCursor
 
 from tabs.rich_text_editor_tab import (
     RichTextEditorTab, AnchorIDProperty, AnchorTagNameProperty,
@@ -56,8 +57,6 @@ try:
 except ImportError:
     print("Error: Could not import CreateAnchorDialog")
     CreateAnchorDialog = None
-
-
 # --- END NEW ---
 
 
@@ -354,6 +353,20 @@ class ReadingNotesTab(QWidget):
         dialogue_layout.addWidget(self.personal_dialogue_editor)
         self.bottom_right_tabs.addTab(dialogue_widget, "Personal Dialogue")
 
+        # --- NEW: Connections (Backlinks) Tab (PHASE 2) ---
+        connections_widget = QWidget()
+        connections_layout = QVBoxLayout(connections_widget)
+        connections_layout.setContentsMargins(4, 4, 4, 4)
+        connections_layout.addWidget(QLabel("Items linked to this section:"))
+
+        self.connections_display = QTextBrowser()
+        self.connections_display.setOpenExternalLinks(False)  # We will handle links
+        # self.connections_display.anchorClicked.connect(self.on_connection_link_clicked) # TODO: Add this handler
+        connections_layout.addWidget(self.connections_display)
+
+        self.bottom_right_tabs.addTab(connections_widget, "Connections")
+        # --- END NEW (PHASE 2) ---
+
         # --- Attachments ---
         if AttachmentsTab:
             self.attachments_tab = AttachmentsTab(self.db, self.reading_id)
@@ -556,6 +569,17 @@ class ReadingNotesTab(QWidget):
                     notes_html = self.db.get_outline_section_notes(self.current_outline_id)
                     self.notes_editor.set_html(notes_html or "")
                     self.notes_stack.setCurrentWidget(self.notes_editor)
+
+                    # --- BUG FIX: Add call to refresh formatting ---
+                    # Use a timer to run the refresh *after* the UI has settled
+                    # This cleans stale anchors every time notes are loaded.
+                    QTimer.singleShot(50, self.refresh_anchor_formatting)
+                    # --- END BUG FIX ---
+
+                    # --- PHASE 2: Load Connections ---
+                    self.load_connections_for_outline(self.current_outline_id)
+                    # --- END PHASE 2 ---
+
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"Could not load notes: {e}")
                     self.notes_stack.setCurrentWidget(self.notes_placeholder)
@@ -564,9 +588,13 @@ class ReadingNotesTab(QWidget):
             else:
                 self.current_outline_id = None
                 self.notes_stack.setCurrentWidget(self.notes_placeholder)
+                if hasattr(self, 'connections_display'):  # PHASE 2
+                    self.connections_display.clear()    # PHASE 2
         else:
             self.current_outline_id = None
             self.notes_stack.setCurrentWidget(self.notes_placeholder)
+            if hasattr(self, 'connections_display'):  # PHASE 2
+                self.connections_display.clear()    # PHASE 2
 
     def show_outline_context_menu(self, position):
         """Shows the right-click menu for the outline tree."""
@@ -731,9 +759,14 @@ class ReadingNotesTab(QWidget):
         Iterates through the document and removes highlighting from
         any anchors that no longer exist in the database.
         """
+        # --- BUG FIX: Only run if the editor is visible ---
+        if not self._is_loaded or self.notes_stack.currentWidget() != self.notes_editor:
+            return
+        # --- END BUG FIX ---
+
         print(f"Reading {self.reading_id}: Refreshing anchor formatting...")
         doc = self.notes_editor.editor.document()
-        cursor = QTextCursor(doc)  # <-- FIX: Added import for this
+        cursor = QTextCursor(doc)
         cursor.setPosition(0)
 
         current_pos = 0
@@ -786,15 +819,23 @@ class ReadingNotesTab(QWidget):
                             break
 
                     # 'cursor' now selects the entire stale anchor
-                    # Clear its formatting
-                    clear_fmt = QTextCharFormat()
-                    clear_fmt.clearBackground()
-                    clear_fmt.clearProperty(AnchorIDProperty)
-                    clear_fmt.clearProperty(AnchorTagIDProperty)
-                    clear_fmt.clearProperty(AnchorTagNameProperty)
-                    clear_fmt.clearProperty(AnchorCommentProperty)
-                    clear_fmt.setToolTip("")
-                    cursor.setCharFormat(clear_fmt)
+
+                    # --- BUG FIX 2: Preserve existing font formatting ---
+                    # Get the existing format of the selection
+                    existing_fmt = cursor.charFormat()
+
+                    # Clear only the anchor-related properties
+                    existing_fmt.clearBackground()
+                    existing_fmt.clearProperty(AnchorIDProperty)
+                    existing_fmt.clearProperty(AnchorTagIDProperty)
+                    existing_fmt.clearProperty(AnchorTagNameProperty)
+                    existing_fmt.clearProperty(AnchorCommentProperty)
+                    existing_fmt.clearProperty(AnchorUUIDProperty)  # <-- Also clear this
+                    existing_fmt.setToolTip("")
+
+                    # Re-apply the modified format, preserving font, size, etc.
+                    cursor.setCharFormat(existing_fmt)
+                    # --- END BUG FIX 2 ---
 
                     current_pos = cursor.position()
                 else:
@@ -808,6 +849,48 @@ class ReadingNotesTab(QWidget):
         self.save_current_outline_notes()
 
     # --- END NEW ---
+
+    # --- NEW (PHASE 2): Method to load connections ---
+    def load_connections_for_outline(self, outline_id):
+        """Fetches and displays connections for the selected outline item."""
+        if not hasattr(self, 'connections_display'):
+            return  # Tab hasn't been fully initialized
+
+        try:
+            data = self.db.get_connections_for_outline_item(outline_id)
+            html = ""
+
+            # Format Driving Questions
+            if data['driving_questions']:
+                html += "<h4>Driving Questions:</h4><ul>"
+                for dq in data['driving_questions']:
+                    display_text = dq['nickname'] or dq['question_text']
+                    if len(display_text) > 100:
+                        display_text = display_text[:100] + "..."
+                    # TODO: Add a link to jump to the DQ tab
+                    html += f"<li>{display_text}</li>"
+                html += "</ul>"
+
+            # Format Synthesis Anchors
+            if data['anchors']:
+                html += "<h4>Synthesis Anchors:</h4><ul>"
+                for anchor in data['anchors']:
+                    tag = anchor['tag_name'] or "Uncategorized"
+                    text = anchor['selected_text']
+                    if len(text) > 100:
+                        text = text[:100] + "..."
+                    # TODO: Add a link to jump to the Synthesis tab
+                    html += f"<li>(<i>{tag}</i>) – \"{text}\"</li>"
+                html += "</ul>"
+
+            if not html:
+                html = "<i>No connections found for this section.</i>"
+
+            self.connections_display.setHtml(html)
+
+        except Exception as e:
+            self.connections_display.setHtml(f"<b>Error loading connections:</b><br>{e}")
+    # --- END NEW (PHASE 2) ---
 
     # --- NEW: Synthesis Anchor Handlers ---
 
