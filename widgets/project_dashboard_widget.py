@@ -15,7 +15,8 @@ from tabs.rich_text_editor_tab import RichTextEditorTab
 from tabs.mindmap_tab import MindmapTab
 from tabs.assignment_tab import AssignmentTab
 from tabs.reading_notes_tab import ReadingNotesTab
-from tabs.synthesis_tab import SynthesisTab  # <-- IMPORT NEW TAB
+from tabs.synthesis_tab import SynthesisTab
+from tabs.graph_view_tab import GraphViewTab
 
 try:
     from dialogs.add_reading_dialog import AddReadingDialog
@@ -38,7 +39,8 @@ class ProjectDashboardWidget(QWidget):
         self.project_id = -1
         self.bottom_tabs = []
         self.reading_tabs = {}  # Stores {reading_id: ReadingNotesTab}
-        self.synthesis_tab = None  # --- NEW ---
+        self.synthesis_tab = None
+        self.graph_view_tab = None
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -175,7 +177,8 @@ class ProjectDashboardWidget(QWidget):
         self.menu_bar.clear()
         self.bottom_tabs.clear()
         self.reading_tabs.clear()
-        self.synthesis_tab = None  # --- NEW ---
+        self.synthesis_tab = None
+        self.graph_view_tab = None
 
         settings_menu = self.menu_bar.addMenu("Settings")
         edit_instr_action = QAction("Edit Dashboard Instructions", self)
@@ -191,12 +194,19 @@ class ProjectDashboardWidget(QWidget):
             self.assignment_tab = AssignmentTab(self.db, self.project_id)
             self.top_tab_widget.addTab(self.assignment_tab, "Assignment")
 
-        # --- NEW: Add Synthesis Tab ---
+        # --- Add Synthesis Tab ---
         self.synthesis_tab = SynthesisTab(self.db, self.project_id)
         self.synthesis_tab.openReading.connect(self.open_reading_tab)
         self.synthesis_tab.tagsUpdated.connect(self._on_tags_updated)
         self.top_tab_widget.addTab(self.synthesis_tab, "Synthesis")
-        # --- END NEW ---
+
+        # --- Add Graph View Tab ---
+        self.graph_view_tab = GraphViewTab(self.db, self.project_id)
+        # --- FIX: Connect interactivity signals to the correct slots ---
+        self.graph_view_tab.readingDoubleClicked.connect(self.open_reading_from_graph)
+        self.graph_view_tab.tagDoubleClicked.connect(self.open_tag_from_graph)
+        # --- END FIX ---
+        self.top_tab_widget.addTab(self.graph_view_tab, "Graph View")
 
         self.load_readings()  # This populates the tree
 
@@ -379,6 +389,10 @@ class ProjectDashboardWidget(QWidget):
         elif current_widget == self.mindmaps_tab:
             # Reload mindmap list
             self.mindmaps_tab.load_mindmaps()
+        # --- NEW: Load graph when tab is clicked (PHASE 3) ---
+        elif current_widget == self.graph_view_tab:
+            self.graph_view_tab.load_graph()
+        # --- END NEW ---
 
     # --- END NEW ---
 
@@ -443,19 +457,9 @@ class ProjectDashboardWidget(QWidget):
     def on_reading_double_clicked(self, item, column):
         """Switches to the corresponding tab when a reading is double-clicked."""
         reading_id = item.data(0, Qt.ItemDataRole.UserRole)
-
-        tab_widget = self.reading_tabs.get(reading_id)
-        if not tab_widget:
-            # Tab doesn't exist, create it
-            reading_row = self.db.get_reading_details(reading_id)
-            if not reading_row:
-                QMessageBox.critical(self, "Error", f"Could not find reading data for ID {reading_id}")
-                return
-            tab_widget = self._create_and_add_reading_tab(reading_row, set_current=True)
-            tab_widget.load_data()
-        else:
-            # Tab exists, just switch to it
-            self.top_tab_widget.setCurrentWidget(tab_widget)
+        # --- NEW: Use the shared function ---
+        self.open_reading_from_graph(reading_id)
+        # --- END NEW ---
 
     @Slot(QPoint)
     def show_readings_context_menu(self, position):
@@ -611,6 +615,29 @@ class ProjectDashboardWidget(QWidget):
         for reading_tab in self.reading_tabs.values():
             if hasattr(reading_tab, 'refresh_anchor_formatting'):
                 reading_tab.refresh_anchor_formatting()
+
+    # --- END NEW ---
+
+    # --- NEW: Slots for Graph View Tab ---
+    @Slot(int)
+    def open_reading_from_graph(self, reading_id):
+        """Slot to open a reading tab from the graph view."""
+        # This re-uses the logic from the Synthesis tab's "jump to"
+        # We pass 0 for outline_id to just open the reading.
+        self.open_reading_tab(reading_id, 0)
+
+    @Slot(int)
+    def open_tag_from_graph(self, tag_id):
+        """Slot to open the Synthesis tab from the graph view."""
+        if not self.synthesis_tab:
+            return
+
+        # 1. Switch to the Synthesis tab
+        self.top_tab_widget.setCurrentWidget(self.synthesis_tab)
+
+        # 2. Tell the synthesis tab to select the tag
+        if hasattr(self.synthesis_tab, 'select_tag_by_id'):
+            self.synthesis_tab.select_tag_by_id(tag_id)
 
     # --- END NEW ---
 

@@ -334,3 +334,15 @@ class SynthesisTab(QWidget):
         else:
             self.anchor_display.clear()
     # --- END NEW ---
+
+    # --- NEW: Public slot for Graph View interactivity ---
+    @Slot(int)
+    def select_tag_by_id(self, tag_id_to_select):
+        """Finds and selects a tag in the list by its ID."""
+        for i in range(self.tag_list.count()):
+            item = self.tag_list.item(i)
+            tag_id = item.data(Qt.ItemDataRole.UserRole)
+            if tag_id == tag_id_to_select:
+                self.tag_list.setCurrentItem(item)
+                return
+    # --- END NEW ---

@@ -1389,37 +1389,35 @@ class DatabaseManager:
             print(f"Error deleting tag and anchors: {e}")
             raise
 
-    # --- NEW (PHASE 2): Function to get connections for an outline item ---
-    def get_connections_for_outline_item(self, outline_id):
+    # --- NEW (PHASE 3): Function to get graph data ---
+    def get_graph_data(self, project_id):
         """
-        Finds all items that link to a specific reading_outline id.
+        Gets all readings, tags, and the connections between them
+        for a specific project.
         """
-        if outline_id is None:
-            return {'driving_questions': [], 'anchors': []}
+        # 1. Get all readings for this project
+        readings_sql = "SELECT id, COALESCE(nickname, title) as name FROM readings WHERE project_id = ?"
+        self.cursor.execute(readings_sql, (project_id,))
+        readings = self._map_rows(self.cursor.fetchall())  # For Reading Nodes
 
-        # 1. Find Driving Questions
-        dq_sql = """
-            SELECT id, question_text, nickname
-            FROM reading_driving_questions
-            WHERE outline_id = ?
-            ORDER BY display_order
-        """
-        self.cursor.execute(dq_sql, (outline_id,))
-        questions = self._map_rows(self.cursor.fetchall())
+        # 2. Get all tags for this project
+        tags_sql = "SELECT id, name FROM synthesis_tags WHERE project_id = ?"
+        self.cursor.execute(tags_sql, (project_id,))
+        tags = self._map_rows(self.cursor.fetchall())  # For Tag Nodes
 
-        # 2. Find Synthesis Anchors
-        anchor_sql = """
-            SELECT a.id, a.selected_text, t.name as tag_name
-            FROM synthesis_anchors a
-            LEFT JOIN synthesis_tags t ON a.tag_id = t.id
-            WHERE a.outline_id = ?
-            ORDER BY a.id
+        # 3. Get all connections (edges)
+        # This query finds all unique pairs of (reading_id, tag_id)
+        # linked through the synthesis_anchors table.
+        edges_sql = """
+            SELECT DISTINCT reading_id, tag_id
+            FROM synthesis_anchors
+            WHERE project_id = ? AND tag_id IS NOT NULL
         """
-        self.cursor.execute(anchor_sql, (outline_id,))
-        anchors = self._map_rows(self.cursor.fetchall())
+        self.cursor.execute(edges_sql, (project_id,))
+        edges = self._map_rows(self.cursor.fetchall())  # For Edges
 
-        return {'driving_questions': questions, 'anchors': anchors}
-    # --- END NEW (PHASE 2) ---
+        return {"readings": readings, "tags": tags, "edges": edges}
+    # --- END NEW (PHASE 3) ---
 
     # ---------------------------- utility ----------------------------
 
