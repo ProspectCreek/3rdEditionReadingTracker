@@ -5,7 +5,9 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QStackedWidget, QWidget,
     QLabel, QVBoxLayout
 )
-from PySide6.QtCore import Qt, Slot, QUrl
+# --- FIX: Import QSize ---
+from PySide6.QtCore import Qt, Slot, QUrl, QTimer, QSize
+# --- END FIX ---
 from PySide6.QtWebEngineCore import QWebEngineProfile
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
@@ -41,15 +43,24 @@ class MainWindow(QMainWindow):
         self.project_dashboard = ProjectDashboardWidget(self.db)
         self.stacked_widget.addWidget(self.project_dashboard)
 
-        self.initial_geometry = self.geometry()
         self.stacked_widget.setCurrentIndex(0)
+
+        # --- FIX: Store the "correct" home screen size ---
+        # 300px (list) + 650px (logo panel) = 950px width
+        self.setMinimumSize(950, 750)
+        self.home_screen_size = QSize(950, 750)  # <-- Store the correct size
+        self.resize(self.home_screen_size)  # <-- Apply it
+        # --- END FIX ---
+
+        self.center_window()
 
         # --- Connect Signals ---
         self.home_screen.projectSelected.connect(self.show_project_dashboard)
         self.project_dashboard.returnToHome.connect(self.show_home_screen)
 
-        # --- FIX: Removed self.resize(1200, 800) ---
-        self.center_window()
+        # --- NEW: Connect home screen's jump request ---
+        self.home_screen.globalJumpRequested.connect(self.open_project_from_global)
+        # --- END NEW ---
 
     @Slot(dict)
     def show_project_dashboard(self, project_details):
@@ -73,9 +84,17 @@ class MainWindow(QMainWindow):
         self.project_dashboard.save_all_editors()
 
         self.stacked_widget.setCurrentIndex(0)
+
+        # --- FIX: Explicitly resize to the "correct" smaller size ---
         self.showNormal()
-        self.setGeometry(self.initial_geometry)
+        self.resize(self.home_screen_size)  # <-- Force the size back
+        # --- END FIX ---
+
         self.center_window()
+
+        # --- FIX 2: Reset the splitter sizes ---
+        QTimer.singleShot(0, self.home_screen.reset_splitter_sizes)
+        # --- END FIX 2 ---
 
     def center_window(self):
         """Centers the main window on the screen."""
@@ -87,6 +106,30 @@ class MainWindow(QMainWindow):
             )
         except Exception as e:
             print(f"Warning: Could not center window. {e}")
+
+    # --- NEW: Slot for Global Connections jump ---
+    @Slot(int, int, int)
+    def open_project_from_global(self, project_id, reading_id, outline_id):
+        """
+        Receives a signal from the Global Connections graph and jumps to
+        the specified project/reading/anchor.
+        """
+        try:
+            project_details = self.db.get_item_details(project_id)
+            if not project_details:
+                print(f"Error in open_project_from_global: Could not find project {project_id}")
+                return
+
+            # Switch to dashboard
+            self.show_project_dashboard(project_details)
+
+            # Tell dashboard to open the tab
+            # Use QTimer to run *after* the dashboard is fully loaded and visible
+            QTimer.singleShot(150, lambda: self.project_dashboard.open_reading_tab(reading_id, outline_id))
+        except Exception as e:
+            print(f"Error in open_project_from_global: {e}")
+
+    # --- END NEW ---
 
     # --- NEW: Save on Close ---
     def closeEvent(self, event):

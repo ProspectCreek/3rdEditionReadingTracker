@@ -25,6 +25,11 @@ class HomeScreenWidget(QWidget):
     # Relay the projectSelected signal up to the MainWindow
     projectSelected = Signal(dict)
 
+    # --- FIX: Add the missing signal definition ---
+    globalJumpRequested = Signal(int, int, int)  # project_id, reading_id, outline_id
+
+    # --- END FIX ---
+
     def __init__(self, db_manager, parent=None):
         super().__init__(parent)
         self.db = db_manager  # --- NEW: Store db_manager ---
@@ -118,11 +123,22 @@ class HomeScreenWidget(QWidget):
 
         self.splitter.addWidget(self.welcome_widget)
 
-        # Set initial sizes from your main.py
-        self.splitter.setSizes([300, 500])
+        # --- FIX: Set correct splitter size ---
+        # 300 for list + 650 for logo panel (600px logo + 50px padding)
+        self.splitter.setSizes([300, 650])
+        # --- END FIX ---
 
         # --- Connect the signal ---
         self.project_list.projectSelected.connect(self.projectSelected.emit)
+
+    # --- NEW: Public method to fix splitter ---
+    def reset_splitter_sizes(self):
+        """Forces the splitter back to its default 300:650 ratio."""
+        # --- FIX: Set correct splitter size ---
+        self.splitter.setSizes([300, 650])
+        # --- END FIX ---
+
+    # --- END NEW ---
 
     # --- NEW: Slot to open global graph ---
     @Slot()
@@ -136,6 +152,11 @@ class HomeScreenWidget(QWidget):
 
             # Pass the db manager to the dialog
             dialog = GlobalGraphDialog(self.db, self)
+
+            # --- FIX: Connect the jumpToAnchor signal ---
+            dialog.jumpToAnchor.connect(self.globalJumpRequested.emit)
+            # --- END FIX ---
+
             dialog.exec()  # Open as a modal dialog
 
         except ImportError:
