@@ -5,7 +5,7 @@ import random
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QSplitter, QGraphicsView,
     QGraphicsScene, QGraphicsItem, QLabel, QTextBrowser,
-    QMessageBox, QWidget, QGraphicsDropShadowEffect
+    QMessageBox, QWidget, QGraphicsDropShadowEffect, QApplication
 )
 from PySide6.QtCore import Qt, QTimer, QRectF, QPointF, QLineF, Signal, Slot, QUrl
 from PySide6.QtGui import QPainter, QColor, QFont, QPen, QBrush, QPainterPath, QFontMetrics  # <-- Import QFontMetrics
@@ -218,13 +218,15 @@ class GlobalGraphDialog(QDialog):
 
         # --- Physics Timer ---
         self.timer = QTimer(self)
-        self.timer.timeout.connect(self._update_forces)
+        self.timer.timeout.connect(self._update_forces)  # <-- RENAMED
         self._simulation_steps = 0
-        self.REPULSION = 15000  # More repulsion for a global graph
-        # --- MODIFIED (Step 3.2): Added ATTRACTION ---
-        self.ATTRACTION = 0.01  # Spring force for edges
+        # --- MODIFIED: Use constants from the working graph tab ---
+        self.K_REPEL = 80000
+        self.K_ATTRACT = 0.03
+        self.DAMPING = 0.85
+        self.CENTER_PULL = 0.002
+        self.MIN_DIST = 50.0
         # --- END MODIFIED ---
-        self.DAMPING = 0.95
 
         # --- Connect Internal Signal ---
         self._tagDoubleClicked.connect(self.load_anchors_for_tag)
@@ -298,6 +300,12 @@ class GlobalGraphDialog(QDialog):
 
                 from_node.add_edge(edge_item)
                 to_node.add_edge(edge_item)
+
+                # --- THIS IS THE FIX ---
+                # Call update_position() immediately to draw the initial line.
+                # The physics timer will update it from here.
+                edge_item.update_position()
+                # --- END FIX ---
         # --- END MODIFIED ---
 
         # --- NEW: Update scaling *after* edges are added ---
@@ -311,86 +319,74 @@ class GlobalGraphDialog(QDialog):
 
     @Slot()
     def _update_forces(self):
-        """One tick of the physics simulation (repulsion only)."""
+        """
+        One tick of the physics simulation.
+        This logic is copied from the working graph_view_tab.py.
+        """
         if not self.nodes:
             self.timer.stop()
             return
 
-        all_nodes = list(self.nodes.values())
+        node_list = list(self.nodes.values())
 
-        # Reset forces
-        for node in all_nodes:
-            node.force_x = 0.0
-            node.force_y = 0.0
-
-        # Calculate all forces
-        for node in all_nodes:
-            # Center pull
-            center_dx = -node.pos().x()
-            center_dy = -node.pos().y()
-            node.force_x += center_dx * 0.005  # Use a smaller center pull
-            node.force_y += center_dy * 0.005
-
-            # Repulsion
-            for other_node in all_nodes:
-                if node is other_node:
-                    continue
-
-                dx = node.pos().x() - other_node.pos().x()
-                dy = node.pos().y() - other_node.pos().y()
-                distance = math.hypot(dx, dy) + 0.1
-
-                if distance < (300 * math.sqrt(len(all_nodes))):
-                    repulsion = self.REPULSION / (distance * distance)  # F = k / r^2
-                    node.force_x += (dx / distance) * repulsion
-                    node.force_y += (dy / distance) * repulsion
-
-            # --- NEW: Attraction from edges ---
-            for edge in node.edges:
-                other_node = edge.from_node if edge.to_node == node else edge.to_node
-
-                dx = other_node.pos().x() - node.pos().x()
-                dy = other_node.pos().y() - node.pos().y()
-                distance = math.hypot(dx, dy) + 0.1
-
-                # F = k * x (Hooke's Law)
-                attract_force = self.ATTRACTION * distance
-
-                node.force_x += dx * attract_force
-                node.force_y += dy * attract_force
-            # --- END NEW ---
-
-        # Apply all forces
-        has_moved = False
-        for node in all_nodes:
-            if node.isSelected() and self.view.underMouse():  # Don't move selected node
-                if not hasattr(node, 'velocity'):
-                    node.velocity = QPointF(0, 0)
-                node.velocity = QPointF(0, 0)
-                node.force_x = 0.0
-                node.force_y = 0.0
+        for i, node_a in enumerate(node_list):
+            # Don't apply physics to a node being dragged
+            if node_a.isSelected() and self.view.underMouse():
+                if hasattr(node_a, 'velocity'):
+                    node_a.velocity = QPointF(0, 0)
                 continue
 
-            if not hasattr(node, 'velocity'):
-                node.velocity = QPointF(0, 0)
+            force = QPointF(0, 0)
 
-            node.velocity = (node.velocity + QPointF(node.force_x, node.force_y)) * self.DAMPING
+            # 1. Repulsion from all other nodes
+            for j, node_b in enumerate(node_list):
+                if i == j:
+                    continue
 
-            if QPointF.dotProduct(node.velocity, node.velocity) > 0.1:
-                node.setPos(node.pos() + node.velocity)
-                has_moved = True
+                delta = node_a.pos() - node_b.pos()
+                dist_sq = max(self.MIN_DIST, QPointF.dotProduct(delta, delta))
+                repel_force = self.K_REPEL / dist_sq
+                dist = math.sqrt(dist_sq)
+                force += (delta / dist) * repel_force
 
-        # --- NEW (Step 3.2): Update edges ---
+            # 2. Attraction from connected nodes (edges)
+            for edge in node_a.edges:
+                other_node = edge.from_node if edge.to_node == node_a else edge.to_node
+
+                if other_node.isSelected():
+                    continue
+
+                delta = other_node.pos() - node_a.pos()
+                dist_sq = max(self.MIN_DIST, QPointF.dotProduct(delta, delta))
+                dist = math.sqrt(dist_sq)
+                attract_force = dist * self.K_ATTRACT
+                force += (delta / dist) * attract_force
+
+            # 3. Pull towards center
+            center_delta = -node_a.pos()
+            force += center_delta * self.CENTER_PULL
+
+            if not hasattr(node_a, 'velocity'):
+                node_a.velocity = QPointF(0, 0)
+
+            # Apply force and damping
+            node_a.velocity = (node_a.velocity + force) * self.DAMPING
+
+            # Apply velocity
+            if not (node_a.isUnderMouse() and QApplication.mouseButtons() & Qt.MouseButton.LeftButton):
+                node_a.setPos(node_a.pos() + node_a.velocity)
+
+        # Update all edge positions after nodes have moved
         for edge in self.edges:
             edge.update_position()
-        # --- END NEW ---
 
-        # Stop simulation
-        self._simulation_steps += 1
-        if not has_moved or self._simulation_steps > 200:
-            self.timer.stop()
-            self._center_graph()
-            print("Global connections simulation complete.")  # <-- RENAMED
+        # --- REMOVED STOP CONDITION ---
+        # The timer now runs continuously, just like the project graph.
+        # self._simulation_steps += 1
+        # if not has_moved or self._simulation_steps > 200:
+        #     self.timer.stop()
+        #     self._center_graph()
+        #     print("Global connections simulation complete.")
 
     def _center_graph(self):
         try:

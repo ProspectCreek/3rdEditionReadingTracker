@@ -224,13 +224,14 @@ class BaseGraphNode(QGraphicsItem):
                     if intersect_type == QLineF.IntersectionType.BoundedIntersection:
                         intersect_points.append(intersect_point)
                 except Exception as e:
-                    print(f"Error calculating intersection: {e}")
+                     print(f"Error calculating intersection: {e}")
+
 
         if intersect_points:
             intersect_points.sort(key=lambda p: QLineF(p, to_point).length())
             return intersect_points[0]
 
-        return center_point
+        return center_point  # Fallback
 
     def itemChange(self, change, value):
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
@@ -244,9 +245,13 @@ class BaseGraphNode(QGraphicsItem):
 
         return super().itemChange(change, value)
 
-    def mouseDoubleClickEvent(self, event):
-        """Allows editing node text on double-click."""
+    # --- FIX 2: Create a dedicated rename starter ---
+    def start_rename_editor(self):
+        """Starts the inline QLineEdit editor for renaming."""
         if isinstance(self, TagNodeItem) or isinstance(self, ReadingNodeItem):
+            if hasattr(self, 'line_edit'):
+                return  # Already editing
+
             self.line_edit = QLineEdit()
             self.line_edit.setText(self.name.strip())
             self.line_edit.selectAll()
@@ -261,9 +266,29 @@ class BaseGraphNode(QGraphicsItem):
             self.line_edit.setFocus()
 
             self.line_edit.editingFinished.connect(self._on_rename_finished)
-        else:
-            if event:
-                super().mouseDoubleClickEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        """Allows editing node text on double-click."""
+        # --- FIX 1: This logic is now handled by subclasses ---
+        # if isinstance(self, TagNodeItem) or isinstance(self, ReadingNodeItem):
+        #     self.line_edit = QLineEdit()
+        #     self.line_edit.setText(self.name.strip())
+        #     self.line_edit.selectAll()
+        #
+        #     self.proxy = self.scene().addWidget(self.line_edit)
+        #     self.proxy.setParentItem(self)
+        #
+        #     self.proxy.setPos(self.text_item.pos())
+        #     self.proxy.resize(self.text_item.boundingRect().width(), self.text_item.boundingRect().height())
+        #
+        #     self.text_item.hide()
+        #     self.line_edit.setFocus()
+        #
+        #     self.line_edit.editingFinished.connect(self._on_rename_finished)
+        # else:
+        if event:
+            super().mouseDoubleClickEvent(event)
+    # --- END FIX 1 & 2 ---
 
     @Slot()
     def _on_rename_finished(self):
@@ -336,9 +361,11 @@ class ReadingNodeItem(BaseGraphNode):
 
     def mouseDoubleClickEvent(self, event):
         print(f"Reading node '{self.name}' double-clicked")
-        # --- MODIFIED: Pass event to super() ---
-        super().mouseDoubleClickEvent(event)
-        # --- END MODIFIED ---
+        # --- FIX 1: Emit signal to open reading tab ---
+        self.graph_view.emit_reading_double_clicked(self.reading_id)
+        if event:
+            event.accept()
+        # --- END FIX 1 ---
 
 
 class TagNodeItem(BaseGraphNode):
@@ -370,9 +397,11 @@ class TagNodeItem(BaseGraphNode):
 
     def mouseDoubleClickEvent(self, event):
         print(f"Tag node '{self.name}' double-clicked")
-        # --- MODIFIED: Pass event to super() ---
-        super().mouseDoubleClickEvent(event)
-        # --- END MODIFIED ---
+        # --- FIX 1: Emit signal to open synthesis tab ---
+        self.graph_view.emit_tag_double_clicked(self.tag_id)
+        if event:
+            event.accept()
+        # --- END FIX 1 ---
 
 
 class GraphViewScene(QGraphicsScene):
@@ -539,11 +568,12 @@ class GraphViewTab(QWidget):
             node.update_node_scale_and_tooltip()
 
         if self.nodes:
-            # --- MODIFIED: Center view on load ---
-            bounds = self.scene.itemsBoundingRect().adjusted(-50, -50, 50, 50)
+            # --- FIX 3: Zoom out more by default ---
+            # Add more padding to the bounding box before fitting
+            bounds = self.scene.itemsBoundingRect().adjusted(-200, -200, 200, 200)
+            # --- END FIX 3 ---
             self.view.setSceneRect(bounds)
             self.view.fitInView(bounds, Qt.AspectRatioMode.KeepAspectRatio)
-            # --- END MODIFIED ---
 
     def update_physics(self):
         """Simple physics simulation for the graph."""
@@ -652,9 +682,9 @@ class GraphViewTab(QWidget):
             if not node.isSelected():
                 self.scene.clearSelection()
                 node.setSelected(True)
-            # --- MODIFIED: Pass None to mouseDoubleClickEvent ---
-            menu.addAction("Rename", lambda: node.mouseDoubleClickEvent(None))
-            # --- END MODIFIED ---
+            # --- FIX 2: Call the new safe rename method ---
+            menu.addAction("Rename", lambda: node.start_rename_editor())
+            # --- END FIX 2 ---
             menu.addAction("Delete", lambda: self.delete_node(node))
 
         elif isinstance(item, GraphEdgeItem):

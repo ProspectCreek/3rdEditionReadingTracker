@@ -1538,7 +1538,7 @@ class DatabaseManager:
                 "DELETE FROM anchor_tag_links WHERE tag_id = ?", (source_tag_id,)
             )
             self.cursor.execute(
-                "UPDATE OR IGNORE project_tag_links SET tag_id = ? WHERE tag_id = ?",
+                "UPDATE OR IGIGNORE project_tag_links SET tag_id = ? WHERE tag_id = ?",
                 (target_tag_id, source_tag_id)
             )
             self.cursor.execute(
