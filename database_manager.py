@@ -521,11 +521,6 @@ class DatabaseManager:
         )
         """)
 
-        # ---
-        # THIS IS THE FIX:
-        # Run an idempotent, one-time migration based on user_version
-        # to populate project_tag_links from synthesis_anchors.
-        # ---
         self.cursor.execute("PRAGMA user_version")
         user_version = self.cursor.fetchone()[0]
         if user_version < 1:
@@ -545,7 +540,6 @@ class DatabaseManager:
             except Exception as e:
                 print(f"MIGRATION ERROR (user_version 1): {e}")
                 self.conn.rollback()
-        # --- END FIX ---
 
         self.conn.commit()
 
@@ -633,7 +627,6 @@ class DatabaseManager:
             (int(new_status_val), project_id)
         )
         if int(new_status_val) == 0:
-            # Clear associated data as warned in the UI
             self.cursor.execute("DELETE FROM rubric_components WHERE project_id = ?", (project_id,))
             self.cursor.execute(
                 "UPDATE items SET assignment_instructions_text = NULL, assignment_draft_text = NULL WHERE id = ?",

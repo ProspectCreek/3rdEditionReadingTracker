@@ -115,9 +115,7 @@ class BaseGraphNode(QGraphicsItem):
         self.setZValue(1)
 
         self.setAcceptHoverEvents(True)
-        # --- NEW: Accept right-clicks for context menu ---
         self.setAcceptedMouseButtons(Qt.MouseButton.RightButton | Qt.MouseButton.LeftButton)
-        # --- END NEW ---
 
     def update_geometry(self):
         """Calculates the node's bounds based on its text."""
@@ -146,10 +144,8 @@ class BaseGraphNode(QGraphicsItem):
         """Sets the node's scale and tooltip based on its connection count."""
         connection_count = len(self.edges)
 
-        # --- MODIFIED: More aggressive scaling ---
         scale_factor = 1.0 + (math.sqrt(connection_count) / 2.5)
         self.setScale(scale_factor)
-        # --- END MODIFIED ---
 
         tooltip_parts = [f"Name: {self.name}"]
 
@@ -266,12 +262,13 @@ class BaseGraphNode(QGraphicsItem):
 
             self.line_edit.editingFinished.connect(self._on_rename_finished)
         else:
-            super().mouseDoubleClickEvent(event)
+            if event:
+                super().mouseDoubleClickEvent(event)
 
     @Slot()
     def _on_rename_finished(self):
         """Handles when editing is finished."""
-        if not hasattr(self, 'line_edit'):  # Check if already cleaned up
+        if not hasattr(self, 'line_edit'):
             return
 
         new_name = self.line_edit.text().strip()
@@ -339,7 +336,9 @@ class ReadingNodeItem(BaseGraphNode):
 
     def mouseDoubleClickEvent(self, event):
         print(f"Reading node '{self.name}' double-clicked")
+        # --- MODIFIED: Pass event to super() ---
         super().mouseDoubleClickEvent(event)
+        # --- END MODIFIED ---
 
 
 class TagNodeItem(BaseGraphNode):
@@ -371,7 +370,9 @@ class TagNodeItem(BaseGraphNode):
 
     def mouseDoubleClickEvent(self, event):
         print(f"Tag node '{self.name}' double-clicked")
+        # --- MODIFIED: Pass event to super() ---
         super().mouseDoubleClickEvent(event)
+        # --- END MODIFIED ---
 
 
 class GraphViewScene(QGraphicsScene):
@@ -502,12 +503,9 @@ class GraphViewTab(QWidget):
         for reading in data['readings']:
             node_id = f"r_{reading['id']}"
 
-            # --- MODIFIED: Use full reading details ---
-            # 'name' is COALESCE(nickname, title)
             node_item = ReadingNodeItem(reading['id'], reading['name'], self)
             node_item.full_title = reading.get('title', reading['name'])
             node_item.author = reading.get('author', '')
-            # --- END MODIFIED ---
 
             node_item.setPos(pos_x, pos_y)
             self.scene.add_node(node_item)
@@ -541,7 +539,11 @@ class GraphViewTab(QWidget):
             node.update_node_scale_and_tooltip()
 
         if self.nodes:
-            self.view.setSceneRect(self.scene.itemsBoundingRect().adjusted(-50, -50, 50, 50))
+            # --- MODIFIED: Center view on load ---
+            bounds = self.scene.itemsBoundingRect().adjusted(-50, -50, 50, 50)
+            self.view.setSceneRect(bounds)
+            self.view.fitInView(bounds, Qt.AspectRatioMode.KeepAspectRatio)
+            # --- END MODIFIED ---
 
     def update_physics(self):
         """Simple physics simulation for the graph."""
@@ -549,11 +551,11 @@ class GraphViewTab(QWidget):
             return
 
         # --- THIS IS THE FIX for overlapping project nodes ---
-        K_REPEL = 150000  # Repulsion force (was 50000)
-        K_ATTRACT = 0.02  # Attraction force (spring) (was 0.01)
+        K_REPEL = 80000  # Repulsion force (was 150000, orig 50000)
+        K_ATTRACT = 0.03  # Attraction force (spring) (was 0.02)
         DAMPING = 0.85  # Damping factor
         CENTER_PULL = 0.002  # Force pulling nodes to center
-        MIN_DIST = 50.0  # Minimum distance (was 10.0)
+        MIN_DIST = 50.0  # Minimum distance
         # --- END FIX ---
 
         node_list = list(self.nodes.values())
@@ -650,7 +652,9 @@ class GraphViewTab(QWidget):
             if not node.isSelected():
                 self.scene.clearSelection()
                 node.setSelected(True)
+            # --- MODIFIED: Pass None to mouseDoubleClickEvent ---
             menu.addAction("Rename", lambda: node.mouseDoubleClickEvent(None))
+            # --- END MODIFIED ---
             menu.addAction("Delete", lambda: self.delete_node(node))
 
         elif isinstance(item, GraphEdgeItem):
@@ -658,8 +662,10 @@ class GraphViewTab(QWidget):
 
         else:
             try:
-                # self (GraphViewTab) -> QStackedWidget -> QWidget -> QSplitter -> ... -> ProjectDashboardWidget
+                # self (GraphViewTab) -> QStackedWidget -> QWidget -> ProjectDashboardWidget
+                # --- MODIFIED: Simpler parent finding ---
                 dashboard = self.parentWidget().parentWidget()
+                # --- END MODIFIED ---
                 if hasattr(dashboard, 'add_reading'):
                     menu.addAction("Add New Reading...", dashboard.add_reading)
                 else:
@@ -683,8 +689,6 @@ class GraphViewTab(QWidget):
                 try:
                     self.db.delete_reading(node.reading_id)
                     self.load_graph()
-                    # Also tell the dashboard to close the tab if it's open
-                    # (This is complex, skip for now)
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"Could not delete reading: {e}")
 
