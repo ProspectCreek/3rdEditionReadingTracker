@@ -106,6 +106,16 @@ class DatabaseManager:
             """)
             print("MIGRATION: Tag links re-mapped.")
 
+            self.cursor.execute("""
+                INSERT OR IGNORE INTO project_tag_links (project_id, tag_id)
+                SELECT DISTINCT 
+                    a.project_id, 
+                    a.tag_id
+                FROM synthesis_anchors a
+                WHERE a.tag_id IS NOT NULL
+            """)
+            print("MIGRATION: Populated project_tag_links from existing anchors.")
+
             # 8. Drop old tables
             self.cursor.execute("DROP TABLE _tags_old")
             self.cursor.execute("DROP TABLE _anchors_old")
@@ -188,6 +198,13 @@ class DatabaseManager:
             assignment TEXT,
             level TEXT,
             classification TEXT,
+            propositions_html TEXT,
+            unity_html TEXT,
+            key_terms_html TEXT,
+            arguments_html TEXT,
+            gaps_html TEXT,
+            theories_html TEXT,
+            personal_dialogue_html TEXT,
             FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE
         )
         """)
@@ -200,6 +217,13 @@ class DatabaseManager:
             "assignment": "TEXT",
             "level": "TEXT",
             "classification": "TEXT",
+            "propositions_html": "TEXT",
+            "unity_html": "TEXT",
+            "key_terms_html": "TEXT",
+            "arguments_html": "TEXT",
+            "gaps_html": "TEXT",
+            "theories_html": "TEXT",
+            "personal_dialogue_html": "TEXT",
         }.items():
             if col_name not in existing_read_cols:
                 try:
@@ -297,16 +321,14 @@ class DatabaseManager:
         )
         """)
 
-        # --- Fix potential old bad schema for edges ---
         self.cursor.execute("PRAGMA table_info(mindmap_edges)")
         edge_cols = {row["name"] for row in self.cursor.fetchall()}
         if "from_node_id" in edge_cols:
-            # This looks like the old, incorrect schema. Rebuild it.
             print("Detected old mindmap_edges schema, attempting to rebuild...")
             try:
                 self.cursor.execute("DROP TABLE mindmap_edges")
                 self.cursor.execute("""
-                CREATE TABLE mindmap_edges (
+                CREATE TABLE IF NOT EXISTS mindmap_edges (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     mindmap_id INTEGER NOT NULL,
                     from_node_id_text TEXT NOT NULL,
@@ -370,18 +392,15 @@ class DatabaseManager:
         )
         """)
 
-        # --- Migration: Drop old columns if they exist ---
         self.cursor.execute("PRAGMA foreign_keys = OFF")
         try:
             self.cursor.execute("PRAGMA table_info(reading_driving_questions)")
             existing_dq_cols = {row["name"] for row in self.cursor.fetchall()}
 
-            # Use a temporary table for complex alterations
             if "reading_has_parts" in existing_dq_cols or "include_in_summary" in existing_dq_cols or "where_in_book" in existing_dq_cols:
 
                 self.cursor.execute("ALTER TABLE reading_driving_questions RENAME TO _dq_old")
 
-                # Create the new, correct table
                 self.cursor.execute("""
                 CREATE TABLE IF NOT EXISTS reading_driving_questions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -404,35 +423,28 @@ class DatabaseManager:
                 )
                 """)
 
-                # Get columns from old table to copy
                 self.cursor.execute("PRAGMA table_info(_dq_old)")
                 old_cols = [row["name"] for row in self.cursor.fetchall()]
 
-                # Build list of columns that exist in both old and new tables
                 new_cols = [
                     "id", "reading_id", "parent_id", "display_order", "question_text", "nickname",
                     "type", "question_category", "scope", "pages", "why_question",
                     "synthesis_tags", "is_working_question", "outline_id"
                 ]
 
-                # Special handling for renamed column
                 if "where_in_book" in old_cols:
-                    # Find the index of 'where_in_book'
                     try:
                         idx = old_cols.index("where_in_book")
-                        # Check if 'outline_id' is already a column (from a failed migration)
                         if 'outline_id' not in old_cols:
                             old_cols[idx] = "outline_id"
                         else:
-                            # 'outline_id' already exists, just remove 'where_in_book' from copy list
                             old_cols.pop(idx)
                     except ValueError:
-                        pass  # 'where_in_book' not in list
+                        pass
 
                 cols_to_copy = [col for col in new_cols if col in old_cols]
                 cols_str = ", ".join(cols_to_copy)
 
-                # Copy data
                 self.cursor.execute(
                     f"INSERT INTO reading_driving_questions ({cols_str}) SELECT {cols_str} FROM _dq_old")
                 self.cursor.execute("DROP TABLE _dq_old")
@@ -440,7 +452,6 @@ class DatabaseManager:
 
         except Exception as e:
             print(f"Warning: Could not perform migration on reading_driving_questions. {e}")
-            # Attempt to restore from backup if it exists
             try:
                 self.cursor.execute("DROP TABLE IF EXISTS reading_driving_questions")
                 self.cursor.execute("ALTER TABLE _dq_old RENAME TO reading_driving_questions")
@@ -458,13 +469,10 @@ class DatabaseManager:
         )
         """)
 
-        # --- MIGRATION to global tags ---
         self.cursor.execute("PRAGMA table_info(synthesis_tags)")
         tag_cols = {row["name"] for row in self.cursor.fetchall()}
         if "project_id" in tag_cols:
-            # Found the old schema, need to migrate
             self._migrate_to_global_tags()
-        # --- END MIGRATION ---
 
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS synthesis_anchors (
@@ -483,7 +491,6 @@ class DatabaseManager:
         )
         """)
 
-        # --- MIGRATION: Add tag_id to synthesis_anchors if missing (legacy) ---
         self.cursor.execute("PRAGMA table_info(synthesis_anchors)")
         anchor_cols = {row["name"] for row in self.cursor.fetchall()}
         if "tag_id" not in anchor_cols:
@@ -504,7 +511,6 @@ class DatabaseManager:
         )
         """)
 
-        # --- NEW: project_tag_links Table ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS project_tag_links (
             project_id INTEGER NOT NULL,
@@ -514,7 +520,32 @@ class DatabaseManager:
             PRIMARY KEY (project_id, tag_id)
         )
         """)
-        # --- END NEW ---
+
+        # ---
+        # THIS IS THE FIX:
+        # Run an idempotent, one-time migration based on user_version
+        # to populate project_tag_links from synthesis_anchors.
+        # ---
+        self.cursor.execute("PRAGMA user_version")
+        user_version = self.cursor.fetchone()[0]
+        if user_version < 1:
+            try:
+                print("MIGRATION (v1): Populating project_tag_links from existing anchors...")
+                self.cursor.execute("""
+                    INSERT OR IGNORE INTO project_tag_links (project_id, tag_id)
+                    SELECT DISTINCT 
+                        a.project_id, 
+                        a.tag_id
+                    FROM synthesis_anchors a
+                    WHERE a.tag_id IS NOT NULL
+                """)
+                self.cursor.execute("PRAGMA user_version = 1")
+                self.conn.commit()
+                print("MIGRATION (v1): project_tag_links population complete.")
+            except Exception as e:
+                print(f"MIGRATION ERROR (user_version 1): {e}")
+                self.conn.rollback()
+        # --- END FIX ---
 
         self.conn.commit()
 
@@ -574,7 +605,6 @@ class DatabaseManager:
 
     def move_item(self, item_id, new_parent_id):
         """Moves an item to a new parent."""
-        # Get new display order
         new_order = self._next_item_order(new_parent_id)
 
         self.cursor.execute("""
@@ -596,14 +626,27 @@ class DatabaseManager:
             )
         self.conn.commit()
 
+    def update_assignment_status(self, project_id, new_status_val):
+        """Updates the is_assignment flag and clears data if set to 0."""
+        self.cursor.execute(
+            "UPDATE items SET is_assignment = ? WHERE id = ?",
+            (int(new_status_val), project_id)
+        )
+        if int(new_status_val) == 0:
+            # Clear associated data as warned in the UI
+            self.cursor.execute("DELETE FROM rubric_components WHERE project_id = ?", (project_id,))
+            self.cursor.execute(
+                "UPDATE items SET assignment_instructions_text = NULL, assignment_draft_text = NULL WHERE id = ?",
+                (project_id,)
+            )
+        self.conn.commit()
+
     def duplicate_item(self, item_id):
         """Duplicates an item (project) and its children (readings, etc.)."""
-        # 1. Get original project
         original_project = self.get_item_details(item_id)
         if not original_project:
             return
 
-        # 2. Create new project (copy)
         new_name = f"{original_project['name']} (Copy)"
         new_project_id = self.create_item(
             new_name,
@@ -612,30 +655,25 @@ class DatabaseManager:
             original_project['is_assignment']
         )
 
-        # 3. Copy simple fields from original to new project
         fields_to_copy = [
             'project_purpose_text', 'project_goals_text', 'key_questions_text',
             'thesis_text', 'insights_text', 'unresolved_text',
             'assignment_instructions_text', 'assignment_draft_text'
         ]
-        # Use str.join for safe field names
         set_clause = ", ".join([f"{field} = ?" for field in fields_to_copy])
         values = [original_project[field] for field in fields_to_copy]
         values.append(new_project_id)
 
         self.cursor.execute(f"UPDATE items SET {set_clause} WHERE id = ?", tuple(values))
 
-        # 4. Copy children (readings)
         original_readings = self.get_readings(item_id)
         for reading in original_readings:
-            # 4a. Add new reading
             new_reading_id = self.add_reading(
                 new_project_id,
                 reading['title'],
                 reading['author'],
                 reading['nickname']
             )
-            # 4b. Copy reading details
             reading_details = {
                 'title': reading['title'], 'author': reading['author'], 'nickname': reading['nickname'],
                 'published': reading['published'], 'pages': reading['pages'], 'assignment': reading['assignment'],
@@ -643,18 +681,12 @@ class DatabaseManager:
             }
             self.update_reading_details(new_reading_id, reading_details)
 
-            # 4c. Copy outline
             self._copy_reading_outline(reading['id'], new_reading_id, None, None)
 
-            # 4d. Copy attachments
-            # This would involve file copying, skipping for now
-
-        # 5. Copy rubric
         original_rubric = self.get_rubric_components(item_id)
         for comp in original_rubric:
             self.add_rubric_component(new_project_id, comp['component_text'])
 
-        # 6. Copy instructions
         original_instr = self.get_or_create_instructions(item_id)
         if original_instr:
             self.update_instructions(
@@ -665,24 +697,18 @@ class DatabaseManager:
                 original_instr['unresolved_instr']
             )
 
-        # 7. Copy mindmaps
-        # This is complex, involves copying nodes/edges. Skipping for now.
-
         self.conn.commit()
 
     def _copy_reading_outline(self, old_reading_id, new_reading_id, old_parent_id, new_parent_id):
         """Recursive helper to duplicate reading outline."""
         original_items = self.get_reading_outline(old_reading_id, old_parent_id)
         for item in original_items:
-            # Add new section
             self.cursor.execute("""
                 INSERT INTO reading_outline (reading_id, parent_id, section_title, notes_html, display_order)
                 VALUES (?, ?, ?, ?, ?)
             """, (new_reading_id, new_parent_id, item['section_title'], item['notes_html'], item['display_order']))
 
             new_item_id = self.cursor.lastrowid
-
-            # Recurse for children
             self._copy_reading_outline(old_reading_id, new_reading_id, item['id'], new_item_id)
 
     def get_item_details(self, item_id):
@@ -710,7 +736,6 @@ class DatabaseManager:
         if row:
             return self._rowdict(row)
 
-        # Check if it's a legacy project (no row)
         self.cursor.execute("SELECT COUNT(*) FROM instructions WHERE project_id = ?", (project_id,))
         count = self.cursor.fetchone()[0]
         if count == 0:
@@ -721,16 +746,14 @@ class DatabaseManager:
                 """, (project_id,))
                 self.conn.commit()
             except sqlite3.IntegrityError:
-                # Race condition, another process inserted it. Ignore.
                 pass
             except Exception as e:
                 print(f"Error creating default instructions: {e}")
-                return {}  # Return empty dict on error
+                return {}
 
-        # Try fetching again
         self.cursor.execute("SELECT * FROM instructions WHERE project_id = ?", (project_id,))
         row = self.cursor.fetchone()
-        return self._rowdict(row) if row else {}  # Return dict or empty dict
+        return self._rowdict(row) if row else {}
 
     def update_instructions(self, project_id, key_q, thesis, insights, unresolved):
         self.cursor.execute("""
@@ -793,6 +816,27 @@ class DatabaseManager:
             details_dict.get('assignment', ''), details_dict.get('level', ''),
             details_dict.get('classification', ''), reading_id
         ))
+        self.conn.commit()
+
+    def update_reading_nickname(self, reading_id, new_name):
+        self.cursor.execute("UPDATE readings SET nickname = ? WHERE id = ?", (new_name, reading_id))
+        self.conn.commit()
+
+    def update_reading_field(self, reading_id, field_name, html):
+        """Updates a single text field for a reading, using a whitelist."""
+        allowed_fields = [
+            'propositions_html', 'unity_html', 'key_terms_html',
+            'arguments_html', 'gaps_html', 'theories_html',
+            'personal_dialogue_html'
+        ]
+        if field_name not in allowed_fields:
+            print(f"Error: Attempt to update invalid field {field_name}")
+            return
+
+        self.cursor.execute(
+            f"UPDATE readings SET {field_name} = ? WHERE id = ?",
+            (html, reading_id)
+        )
         self.conn.commit()
 
     def delete_reading(self, reading_id):
@@ -885,7 +929,6 @@ class DatabaseManager:
                 WHERE reading_id = ? AND parent_id = ?
                 ORDER BY display_order, id
             """, (reading_id, parent_id))
-        # Return as list[dict] for dialogs
         return self._map_rows(self.cursor.fetchall())
 
     def add_outline_section(self, reading_id, title, parent_id=None):
@@ -1060,8 +1103,6 @@ class DatabaseManager:
     def save_mindmap_data(self, mindmap_id, nodes, edges):
         """Saves a complete snapshot of a mindmap (nodes and edges)."""
         try:
-            # --- Nodes ---
-            # Get existing node IDs from DB
             self.cursor.execute("SELECT node_id_text FROM mindmap_nodes WHERE mindmap_id = ?", (mindmap_id,))
             existing_node_ids = {row[0] for row in self.cursor.fetchall()}
 
@@ -1071,7 +1112,6 @@ class DatabaseManager:
                 node_id_text = str(node_data['id'])
                 node_ids_to_keep.add(node_id_text)
 
-                # Prep data for insertion/update
                 params = {
                     'mindmap_id': mindmap_id,
                     'node_id_text': node_id_text,
@@ -1089,7 +1129,6 @@ class DatabaseManager:
                 }
 
                 if node_id_text in existing_node_ids:
-                    # Update
                     self.cursor.execute("""
                         UPDATE mindmap_nodes SET
                         x=:x, y=:y, width=:width, height=:height, text=:text, shape_type=:shape_type,
@@ -1098,7 +1137,6 @@ class DatabaseManager:
                         WHERE mindmap_id=:mindmap_id AND node_id_text=:node_id_text
                     """, params)
                 else:
-                    # Insert
                     self.cursor.execute("""
                         INSERT INTO mindmap_nodes (
                         mindmap_id, node_id_text, x, y, width, height, text, shape_type,
@@ -1111,7 +1149,6 @@ class DatabaseManager:
                         )
                     """, params)
 
-            # Delete nodes that are in the DB but not in the save data
             nodes_to_delete = existing_node_ids - node_ids_to_keep
             if nodes_to_delete:
                 for node_id_text in nodes_to_delete:
@@ -1120,8 +1157,6 @@ class DatabaseManager:
                         (mindmap_id, node_id_text)
                     )
 
-            # --- Edges ---
-            # Simple approach: delete all existing edges and add the new ones.
             self.cursor.execute("DELETE FROM mindmap_edges WHERE mindmap_id = ?", (mindmap_id,))
 
             edge_insert_params = []
@@ -1158,21 +1193,14 @@ class DatabaseManager:
     # ----------------------- reading driving questions -----------------------
 
     def get_driving_questions(self, reading_id, parent_id=None):
-        """
-        Gets all driving questions for a reading, ordered.
-        If parent_id is None, gets root questions.
-        If parent_id is an integer, gets children of that parent.
-        If parent_id is True (boolean), gets *all* questions for the reading.
-        """
         sql = "SELECT * FROM reading_driving_questions WHERE reading_id = ?"
         params = [reading_id]
 
         if parent_id is None:
             sql += " AND parent_id IS NULL"
         elif parent_id is True:
-            pass  # Get all questions, no parent filter
+            pass
         else:
-            # parent_id is an integer
             sql += " AND parent_id = ?"
             params.append(parent_id)
 
@@ -1181,7 +1209,6 @@ class DatabaseManager:
         return self._map_rows(self.cursor.fetchall())
 
     def get_driving_question_details(self, question_id):
-        """Gets all details for a single driving question."""
         self.cursor.execute("SELECT * FROM reading_driving_questions WHERE id = ?", (question_id,))
         return self._rowdict(self.cursor.fetchone())
 
@@ -1199,7 +1226,6 @@ class DatabaseManager:
         return (self.cursor.fetchone()[0] or -1) + 1
 
     def add_driving_question(self, reading_id, data):
-        """Adds a new driving question."""
         parent_id = data.get("parent_id")
         new_order = self._next_driving_question_order(reading_id, parent_id)
 
@@ -1221,7 +1247,6 @@ class DatabaseManager:
         return self.cursor.lastrowid
 
     def update_driving_question(self, question_id, data):
-        """Updates an existing driving question."""
         self.cursor.execute("""
             UPDATE reading_driving_questions SET
                 parent_id = ?, question_text = ?, nickname = ?, type = ?, 
@@ -1240,12 +1265,10 @@ class DatabaseManager:
         self.conn.commit()
 
     def delete_driving_question(self, question_id):
-        """Deletes a driving question (and children, via cascade)."""
         self.cursor.execute("DELETE FROM reading_driving_questions WHERE id = ?", (question_id,))
         self.conn.commit()
 
     def update_driving_question_order(self, ordered_ids):
-        """Reorders sibling driving questions based on a list of IDs."""
         for order, q_id in enumerate(ordered_ids):
             self.cursor.execute(
                 "UPDATE reading_driving_questions SET display_order = ? WHERE id = ?",
@@ -1254,7 +1277,6 @@ class DatabaseManager:
         self.conn.commit()
 
     def find_current_working_question(self, reading_id):
-        """Finds the one (if any) question marked as the working question."""
         self.cursor.execute(
             "SELECT * FROM reading_driving_questions WHERE reading_id = ? AND is_working_question = 1 LIMIT 1",
             (reading_id,)
@@ -1262,7 +1284,6 @@ class DatabaseManager:
         return self._rowdict(self.cursor.fetchone())
 
     def clear_all_working_questions(self, reading_id):
-        """Sets is_working_question = 0 for all questions for a specific reading."""
         self.cursor.execute(
             "UPDATE reading_driving_questions SET is_working_question = 0 WHERE reading_id = ?",
             (reading_id,)
@@ -1271,17 +1292,16 @@ class DatabaseManager:
 
     # --- Synthesis Functions (NOW GLOBAL) ---
 
+    def get_all_tags(self):
+        """Gets all tags from the global table."""
+        self.cursor.execute("SELECT id, name FROM synthesis_tags ORDER BY name")
+        return self._map_rows(self.cursor.fetchall())
+
     def get_or_create_tag(self, tag_name, project_id=None):
-        """
-        Finds a tag by name. If it doesn't exist, creates it.
-        Returns the tag's ID and name.
-        If project_id is provided, links the tag to the project.
-        """
         tag_name = tag_name.strip()
         if not tag_name:
             return None
 
-        # Try to find it
         self.cursor.execute(
             "SELECT * FROM synthesis_tags WHERE name = ?",
             (tag_name,)
@@ -1289,7 +1309,6 @@ class DatabaseManager:
         tag = self._rowdict(self.cursor.fetchone())
 
         if not tag:
-            # Not found, so create it
             try:
                 self.cursor.execute(
                     "INSERT INTO synthesis_tags (name) VALUES (?)",
@@ -1299,8 +1318,6 @@ class DatabaseManager:
                 new_id = self.cursor.lastrowid
                 tag = {'id': new_id, 'name': tag_name}
             except sqlite3.IntegrityError:
-                # Race condition: it was created by another process
-                # between our SELECT and INSERT. Let's just get it.
                 self.cursor.execute(
                     "SELECT * FROM synthesis_tags WHERE name = ?",
                     (tag_name,)
@@ -1311,9 +1328,8 @@ class DatabaseManager:
                 return None
 
         if not tag:
-            return None  # Should not happen, but safety check
+            return None
 
-        # --- NEW: Link to project if project_id is given ---
         if project_id:
             try:
                 self.cursor.execute(
@@ -1323,14 +1339,10 @@ class DatabaseManager:
                 self.conn.commit()
             except Exception as e:
                 print(f"Error linking tag {tag['id']} to project {project_id}: {e}")
-        # --- END NEW ---
 
         return tag
 
     def get_project_tags(self, project_id):
-        """
-        Gets all tags *used by* or *explicitly linked to* a specific project.
-        """
         self.cursor.execute("""
             SELECT DISTINCT t.id, t.name 
             FROM synthesis_tags t
@@ -1349,7 +1361,6 @@ class DatabaseManager:
         return self._map_rows(self.cursor.fetchall())
 
     def create_anchor(self, project_id, reading_id, outline_id, tag_id, selected_text, comment, unique_doc_id):
-        """Creates a new synthesis anchor and links it to one tag."""
         try:
             self.cursor.execute("""
                 INSERT INTO synthesis_anchors 
@@ -1360,18 +1371,15 @@ class DatabaseManager:
             ))
             anchor_id = self.cursor.lastrowid
 
-            # Link the anchor to the tag
             self.cursor.execute(
                 "INSERT OR IGNORE INTO anchor_tag_links (anchor_id, tag_id) VALUES (?, ?)",
                 (anchor_id, tag_id)
             )
 
-            # --- NEW: Also link the tag to the project ---
             self.cursor.execute(
                 "INSERT OR IGNORE INTO project_tag_links (project_id, tag_id) VALUES (?, ?)",
                 (project_id, tag_id)
             )
-            # --- END NEW ---
 
             self.conn.commit()
             return anchor_id
@@ -1381,25 +1389,19 @@ class DatabaseManager:
             return None
 
     def update_anchor(self, anchor_id, new_tag_id, new_comment):
-        """Updates an anchor's comment and changes its tag."""
         try:
-            # 1. Update the anchor's comment and primary tag_id
             self.cursor.execute(
                 "UPDATE synthesis_anchors SET comment = ?, tag_id = ? WHERE id = ?",
                 (new_comment, new_tag_id, anchor_id)
             )
 
-            # 2. Remove all old tag links
             self.cursor.execute("DELETE FROM anchor_tag_links WHERE anchor_id = ?", (anchor_id,))
 
-            # 3. Add the new (or same) tag link
             self.cursor.execute(
                 "INSERT OR IGNORE INTO anchor_tag_links (anchor_id, tag_id) VALUES (?, ?)",
                 (anchor_id, new_tag_id)
             )
 
-            # --- NEW: Also link the new tag to the project ---
-            # Get project_id from anchor
             self.cursor.execute("SELECT project_id FROM synthesis_anchors WHERE id = ?", (anchor_id,))
             res = self.cursor.fetchone()
             if res:
@@ -1408,7 +1410,6 @@ class DatabaseManager:
                     "INSERT OR IGNORE INTO project_tag_links (project_id, tag_id) VALUES (?, ?)",
                     (project_id, new_tag_id)
                 )
-            # --- END NEW ---
 
             self.conn.commit()
         except Exception as e:
@@ -1416,12 +1417,10 @@ class DatabaseManager:
             print(f"Error updating anchor: {e}")
 
     def delete_anchor(self, anchor_id):
-        """Deletes an anchor. Links are deleted by cascade."""
         self.cursor.execute("DELETE FROM synthesis_anchors WHERE id = ?", (anchor_id,))
         self.conn.commit()
 
     def get_anchor_details(self, anchor_id):
-        """Gets all info for one anchor, including its primary tag."""
         self.cursor.execute("""
             SELECT a.*, t.name as tag_name, t.id as tag_id
             FROM synthesis_anchors a
@@ -1431,19 +1430,16 @@ class DatabaseManager:
         return self._rowdict(self.cursor.fetchone())
 
     def get_anchor_by_id(self, anchor_id):
-        """Simple check to see if an anchor still exists."""
         self.cursor.execute("SELECT id FROM synthesis_anchors WHERE id = ?", (anchor_id,))
         return self._rowdict(self.cursor.fetchone())
 
     def get_anchors_for_project(self, project_id):
-        """Gets all anchors for a project."""
         self.cursor.execute(
             "SELECT * FROM synthesis_anchors WHERE project_id = ?", (project_id,)
         )
         return self._map_rows(self.cursor.fetchall())
 
     def get_anchors_for_tag(self, tag_id):
-        """Gets all anchors linked to a specific tag."""
         self.cursor.execute("""
             SELECT a.* FROM synthesis_anchors a
             JOIN anchor_tag_links l ON a.id = l.anchor_id
@@ -1454,10 +1450,6 @@ class DatabaseManager:
     # --- Synthesis Tab Functions ---
 
     def get_tags_with_counts(self, project_id):
-        """
-        Gets all tags *used by* or *linked to* a project, along with a count of
-        how many anchors in *this project* are linked to each tag.
-        """
         sql = """
             SELECT 
                 t.id, 
@@ -1474,10 +1466,6 @@ class DatabaseManager:
         return self._map_rows(self.cursor.fetchall())
 
     def get_anchors_for_tag_with_context(self, tag_id):
-        """
-        Gets all anchors for a tag, joining with reading and outline
-        tables to provide context for the Synthesis Hub.
-        """
         sql = """
             SELECT 
                 a.id, 
@@ -1499,10 +1487,6 @@ class DatabaseManager:
         return self._map_rows(self.cursor.fetchall())
 
     def get_anchors_for_tag_simple(self, tag_id):
-        """
-        Gets all anchors for a tag, but only the anchor's own data,
-        not the full context.
-        """
         sql = """
             SELECT a.id, a.selected_text, a.comment
             FROM synthesis_anchors a
@@ -1523,32 +1507,21 @@ class DatabaseManager:
             )
             self.conn.commit()
         except sqlite3.IntegrityError:
-            # Re-raise a more specific error
             raise Exception(f"A tag named '{new_name}' already exists.")
 
     def delete_tag_and_anchors(self, tag_id):
-        """
-        Deletes a tag globally and all associated anchors
-        from all projects. Also unlinks it from projects.
-        """
         try:
-            # 1. Find all anchors linked to this tag
             self.cursor.execute("SELECT anchor_id FROM anchor_tag_links WHERE tag_id = ?", (tag_id,))
             anchor_ids = [row[0] for row in self.cursor.fetchall()]
 
             if anchor_ids:
-                # 2. Delete those anchors (which cascades to anchor_tag_links)
                 self.cursor.executemany(
                     "DELETE FROM synthesis_anchors WHERE id = ?",
                     [(aid,) for aid in anchor_ids]
                 )
 
-            # 3. Delete links from project_tag_links (cascade)
-            # This step isn't strictly necessary if the tag is
-            # deleted, but it's good practice.
             self.cursor.execute("DELETE FROM project_tag_links WHERE tag_id = ?", (tag_id,))
 
-            # 4. Delete the tag itself
             self.cursor.execute("DELETE FROM synthesis_tags WHERE id = ?", (tag_id,))
 
             self.conn.commit()
@@ -1557,18 +1530,43 @@ class DatabaseManager:
             print(f"Error deleting tag and anchors: {e}")
             raise
 
+    def merge_tags(self, source_tag_id, target_tag_id):
+        """Merges one tag into another, updating all anchors and links."""
+        try:
+            self.cursor.execute(
+                "UPDATE synthesis_anchors SET tag_id = ? WHERE tag_id = ?",
+                (target_tag_id, source_tag_id)
+            )
+            self.cursor.execute(
+                "UPDATE OR IGNORE anchor_tag_links SET tag_id = ? WHERE tag_id = ?",
+                (target_tag_id, source_tag_id)
+            )
+            self.cursor.execute(
+                "DELETE FROM anchor_tag_links WHERE tag_id = ?", (source_tag_id,)
+            )
+            self.cursor.execute(
+                "UPDATE OR IGNORE project_tag_links SET tag_id = ? WHERE tag_id = ?",
+                (target_tag_id, source_tag_id)
+            )
+            self.cursor.execute(
+                "DELETE FROM project_tag_links WHERE tag_id = ?", (source_tag_id,)
+            )
+            self.cursor.execute("DELETE FROM synthesis_tags WHERE id = ?", (source_tag_id,))
+            self.conn.commit()
+        except Exception as e:
+            self.conn.rollback()
+            raise Exception(f"Failed to merge tags: {e}")
+
     # --- Graph Data Functions ---
     def get_graph_data(self, project_id):
         """
         Gets all readings, tags, and the connections between them
         for a specific project.
         """
-        # 1. Get all readings for this project
-        readings_sql = "SELECT id, COALESCE(nickname, title) as name FROM readings WHERE project_id = ?"
+        readings_sql = "SELECT id, title, author, COALESCE(nickname, title) as name FROM readings WHERE project_id = ?"
         self.cursor.execute(readings_sql, (project_id,))
-        readings = self._map_rows(self.cursor.fetchall())  # For Reading Nodes
+        readings = self._map_rows(self.cursor.fetchall())
 
-        # 2. Get all tags *linked to this project* (used or unused)
         tags_sql = """
             SELECT DISTINCT t.id, t.name 
             FROM synthesis_tags t
@@ -1577,38 +1575,60 @@ class DatabaseManager:
             WHERE ptl.project_id = ? OR a.project_id = ?
         """
         self.cursor.execute(tags_sql, (project_id, project_id, project_id))
-        tags = self._map_rows(self.cursor.fetchall())  # For Tag Nodes
+        tags = self._map_rows(self.cursor.fetchall())
 
-        # 3. Get all connections (edges)
         edges_sql = """
             SELECT DISTINCT reading_id, tag_id
             FROM synthesis_anchors
             WHERE project_id = ? AND tag_id IS NOT NULL
         """
         self.cursor.execute(edges_sql, (project_id,))
-        edges = self._map_rows(self.cursor.fetchall())  # For Edges
+        edges = self._map_rows(self.cursor.fetchall())
 
         return {"readings": readings, "tags": tags, "edges": edges}
 
-    def get_global_graph_tags(self):
+    # --- THIS IS THE FIX ---
+    def get_global_graph_data(self):
         """
-        Gets all unique tag names across all projects and counts
-        how many distinct projects use each tag.
+        Gets all tags, projects, and the links between them for the
+        global connections graph.
+        This bypasses the project_tag_links table and queries
+        the anchors directly for maximum reliability.
         """
-        # --- FIX: Select t.id ---
-        sql = """
-            SELECT 
-                t.id, 
-                t.name, 
-                COUNT(DISTINCT ptl.project_id) as project_count
-            FROM synthesis_tags t
-            LEFT JOIN project_tag_links ptl ON t.id = ptl.tag_id
-            GROUP BY t.id, t.name
-            ORDER BY t.name
-        """
-        # --- END FIX ---
-        self.cursor.execute(sql)
-        return self._map_rows(self.cursor.fetchall())
+        # 1. Get all tags
+        self.cursor.execute("""
+            SELECT id, name FROM synthesis_tags
+        """)
+        tags = self._map_rows(self.cursor.fetchall())
+
+        # Get project counts for tags (for scaling)
+        self.cursor.execute("""
+            SELECT tag_id, COUNT(DISTINCT project_id) as project_count
+            FROM synthesis_anchors
+            WHERE tag_id IS NOT NULL
+            GROUP BY tag_id
+        """)
+        counts = {row['tag_id']: row['project_count'] for row in self.cursor.fetchall()}
+
+        # Add project_count to tag data
+        for tag in tags:
+            tag['project_count'] = counts.get(tag['id'], 0)
+
+        # 2. Get all projects
+        self.cursor.execute("SELECT id, name FROM items WHERE type = 'project' ORDER BY name")
+        projects = self._map_rows(self.cursor.fetchall())
+
+        # 3. Get all edges by querying the source of truth: synthesis_anchors
+        self.cursor.execute("""
+            SELECT DISTINCT project_id, tag_id 
+            FROM synthesis_anchors
+            WHERE tag_id IS NOT NULL
+        """)
+        edges = self._map_rows(self.cursor.fetchall())
+
+        return {"tags": tags, "projects": projects, "edges": edges}
+
+    # --- END FIX ---
 
     def get_global_anchors_for_tag_name(self, tag_name):
         """

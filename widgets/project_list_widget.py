@@ -294,11 +294,10 @@ class ProjectListWidget(QWidget):
                     if reply == QMessageBox.StandardButton.No:
                         return
 
-                # We need a new DB method for this
-                # self.db.update_assignment_status(db_id, new_status_val)
-                print(f"DB: Update project {db_id} assignment status to {new_status_val}")
-                QMessageBox.information(self, "TODO",
-                                        "This needs 'update_assignment_status' in database_manager.py")
+                # --- MODIFIED (Step 5.1) ---
+                self.db.update_assignment_status(db_id, new_status_val)
+                self.load_data_to_tree()
+                # --- END MODIFIED ---
 
     def reorder_items(self):
         """
@@ -338,4 +337,3 @@ class ProjectListWidget(QWidget):
     def open_connections_window(self):
         """Placeholder for opening the connections management window."""
         QMessageBox.information(self, "Connections", "This feature is not yet implemented.")
-

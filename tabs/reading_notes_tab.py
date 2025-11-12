@@ -57,6 +57,8 @@ try:
 except ImportError:
     print("Error: Could not import CreateAnchorDialog")
     CreateAnchorDialog = None
+
+
 # --- END NEW ---
 
 
@@ -81,6 +83,10 @@ class ReadingNotesTab(QWidget):
         self.current_outline_id = None
         self._block_outline_save = False  # prevent save-on-switch loops
         self._is_loaded = False  # <<< guard to avoid saving blanks
+
+        # --- NEW (Step 5.2): Store all bottom editors ---
+        self.bottom_editors = {}
+        # --- END NEW ---
 
         # Main Layout: A horizontal splitter
         main_layout = QHBoxLayout(self)
@@ -288,72 +294,55 @@ class ReadingNotesTab(QWidget):
         else:
             self.bottom_right_tabs.addTab(QLabel("Driving Question (Failed to load)"), "Driving Question")
 
+        # --- MODIFIED (Step 5.2): Activate all placeholder tabs ---
+
+        # Helper function to create a standard editor tab
+        def create_editor_tab(title, instructions, field_name):
+            widget = QWidget()
+            layout = QVBoxLayout(widget)
+            layout.setContentsMargins(4, 4, 4, 4)
+            layout.setSpacing(4)
+            if instructions:
+                layout.addWidget(QLabel(instructions))
+
+            editor = RichTextEditorTab(title)
+            self.bottom_editors[field_name] = editor  # Store editor
+            layout.addWidget(editor)
+
+            self.bottom_right_tabs.addTab(widget, title)
+
         # --- Leading Propositions ---
-        prop_widget = QWidget()
-        prop_layout = QVBoxLayout(prop_widget)
-        prop_layout.addWidget(QLabel("Instructions for Leading Propositions go here."))
-        prop_layout.addWidget(QTextEdit("Leading Propositions content..."))
-        self.bottom_right_tabs.addTab(prop_widget, "Leading Propositions")
+        create_editor_tab("Leading Propositions", "Instructions for Leading Propositions go here.", "propositions_html")
 
         # --- Unity ---
-        unity_widget = QWidget()
-        unity_layout = QVBoxLayout(unity_widget)
-        unity_layout.addWidget(QLabel("Instructions for Unity go here."))
-        unity_layout.addWidget(QTextEdit("Unity content..."))
-        self.bottom_right_tabs.addTab(unity_widget, "Unity")
+        create_editor_tab("Unity", "Instructions for Unity go here.", "unity_html")
 
         # --- Elevator Abstract ---
-        elevator_widget = QWidget()
-        elevator_layout = QVBoxLayout(elevator_widget)
-        elevator_layout.addWidget(QLabel("Instructions for Elevator Abstract go here."))
-        elevator_layout.addWidget(QTextEdit("Elevator Abstract content..."))
-        self.bottom_right_tabs.addTab(elevator_widget, "Elevator Abstract")
+        create_editor_tab("Elevator Abstract", "Instructions for Elevator Abstract go here.",
+                          "personal_dialogue_html")  # Re-using personal_dialogue
 
         # --- Parts: Order and Relation ---
-        parts_widget = QWidget()
-        parts_layout = QVBoxLayout(parts_widget)
-        parts_layout.addWidget(QLabel("Instructions for Parts: Order and Relation go here."))
-        parts_layout.addWidget(QTextEdit("Parts: Order and Relation content..."))
-        self.bottom_right_tabs.addTab(parts_widget, "Parts: Order and Relation")
+        # Note: This tab is complex, for now we make it a simple notes tab.
+        # We will reuse the 'personal_dialogue_html' field as a placeholder.
+        # In a future step, this could be a tree editor.
+        create_editor_tab("Parts", "Instructions for Parts: Order and Relation go here.", "personal_dialogue_html")
 
         # --- Key Terms ---
-        key_terms_widget = QWidget()
-        key_terms_layout = QVBoxLayout(key_terms_widget)
-        key_terms_layout.addWidget(QLabel("Instructions for Key Terms go here."))
-        key_terms_layout.addWidget(QTextEdit("Key Terms content..."))
-        self.bottom_right_tabs.addTab(key_terms_widget, "Key Terms")
+        create_editor_tab("Key Terms", "Instructions for Key Terms go here.", "key_terms_html")
 
         # --- Arguments ---
-        arguments_widget = QWidget()
-        arguments_layout = QVBoxLayout(arguments_widget)
-        arguments_layout.addWidget(QLabel("Instructions for Arguments go here."))
-        arguments_layout.addWidget(QTextEdit("Arguments content..."))
-        self.bottom_right_tabs.addTab(arguments_widget, "Arguments")
+        create_editor_tab("Arguments", "Instructions for Arguments go here.", "arguments_html")
 
         # --- Gaps ---
-        self.gaps_editor = RichTextEditorTab("Gaps")
-        gaps_widget = QWidget()
-        gaps_layout = QVBoxLayout(gaps_widget)
-        gaps_layout.addWidget(QLabel("Instructions for Gaps go here."))
-        gaps_layout.addWidget(self.gaps_editor)
-        self.bottom_right_tabs.addTab(gaps_widget, "Gaps")
+        create_editor_tab("Gaps", "Instructions for Gaps go here.", "gaps_html")
 
         # --- Theories ---
-        theories_widget = QWidget()
-        theories_layout = QVBoxLayout(theories_widget)
-        theories_layout.addWidget(QLabel("Instructions for Theories go here."))
-        theories_layout.addWidget(QTextEdit("Theories content..."))
-        self.bottom_right_tabs.addTab(theories_widget, "Theories")
+        create_editor_tab("Theories", "Instructions for Theories go here.", "theories_html")
 
         # --- Personal Dialogue ---
-        self.personal_dialogue_editor = RichTextEditorTab("Personal Dialogue")
-        dialogue_widget = QWidget()
-        dialogue_layout = QVBoxLayout(dialogue_widget)
-        dialogue_layout.addWidget(QLabel("Instructions for Personal Dialogue go here."))
-        dialogue_layout.addWidget(self.personal_dialogue_editor)
-        self.bottom_right_tabs.addTab(dialogue_widget, "Personal Dialogue")
+        create_editor_tab("Personal Dialogue", "Instructions for Personal Dialogue go here.", "personal_dialogue_html")
 
-        # --- REMOVED: Connections (Backlinks) Tab (PHASE 2) ---
+        # --- END MODIFIED ---
 
         # --- Attachments ---
         if AttachmentsTab:
@@ -422,9 +411,9 @@ class ReadingNotesTab(QWidget):
             # Mark as fully loaded so autosave is allowed
             self._is_loaded = True
 
-            # --- NEW: Load bottom tab data ---
+            # --- MODIFIED (Step 5.2): Load bottom tab data ---
             self.load_bottom_tabs_content()
-            # --- END NEW ---
+            # --- END MODIFIED ---
 
             print(f"Loading details for reading {self.reading_id}: {dict(self.reading_details_row)}")
 
@@ -433,27 +422,27 @@ class ReadingNotesTab(QWidget):
             import traceback;
             traceback.print_exc()
 
-    # --- NEW: Bottom Tab Load/Save ---
+    # --- NEW: Bottom Tab Load/Save (Step 5.2) ---
     def load_bottom_tabs_content(self):
         """Loads data into the bottom-right tabs."""
-        print(f"Placeholder: Loading all bottom tabs for reading {self.reading_id}")
-        # TODO: Load data from new DB fields for each tab
-        # Example for 'gaps' tab:
-        # gaps_html = self.db.get_reading_field(self.reading_id, 'gaps_html')
-        # self.gaps_editor.set_html(gaps_html or "")
-        pass
+        if not self.reading_details_row:
+            return
+        for field_name, editor in self.bottom_editors.items():
+            html = self._get_detail(field_name, default="")
+            editor.set_html(html)
 
     def save_bottom_tabs_content(self):
         """Saves data from the bottom-right tabs."""
-        print(f"Placeholder: Saving all bottom tabs for reading {self.reading_id}")
-        # TODO: Save data to new DB fields for each tab
-        # Example for 'gaps' tab:
-        # self.gaps_editor.get_html(
-        #     lambda html: self.db.update_reading_field(
-        #         self.reading_id, 'gaps_html', html
-        #     ) if html is not None else None
-        # )
-        pass
+        if not self._is_loaded:
+            return
+        for field_name, editor in self.bottom_editors.items():
+            # Use a closure to capture the field_name
+            def create_callback(fname):
+                return lambda html: self.db.update_reading_field(
+                    self.reading_id, fname, html
+                ) if html is not None else None
+
+            editor.get_html(create_callback(field_name))
 
     # --- END NEW ---
 
@@ -464,7 +453,9 @@ class ReadingNotesTab(QWidget):
             return
         self.save_details(show_message=False)
         self.save_current_outline_notes()
+        # --- MODIFIED (Step 5.2): Save bottom tabs ---
         self.save_bottom_tabs_content()
+        # --- END MODIFIED ---
 
     def save_details(self, show_message=True):
         """Saves the data from the 'Reading Details' form and notifies dashboard to rename the tab if needed."""
@@ -839,8 +830,9 @@ class ReadingNotesTab(QWidget):
             QMessageBox.critical(self, "Error", "CreateAnchorDialog not loaded.")
             return
 
-        # Get all tags for the project
-        tags = self.db.get_project_tags(self.project_id)
+        # --- MODIFIED (Step 2.1): Get ALL tags ---
+        tags = self.db.get_all_tags()
+        # --- END MODIFIED ---
 
         dialog = CreateAnchorDialog(selected_text, project_tags_list=tags, parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -853,9 +845,9 @@ class ReadingNotesTab(QWidget):
 
             try:
                 # 1. Get or create the tag ID
-                # --- FIX: Pass project_id to link the new tag ---
+                # --- MODIFIED (Step 2.2): Pass project_id to link the new tag ---
                 tag_data = self.db.get_or_create_tag(tag_name, self.project_id)
-                # --- END FIX ---
+                # --- END MODIFIED ---
                 if not tag_data:
                     raise Exception(f"Could not get or create tag '{tag_name}'")
 
@@ -903,8 +895,9 @@ class ReadingNotesTab(QWidget):
                 QMessageBox.critical(self, "Error", "Could not find anchor data to edit.")
                 return
 
-            # 2. Get all project tags
-            tags = self.db.get_project_tags(self.project_id)
+            # --- MODIFIED (Step 2.1): Get ALL tags ---
+            tags = self.db.get_all_tags()
+            # --- END MODIFIED ---
 
             # 3. Open dialog
             dialog = CreateAnchorDialog(
@@ -923,9 +916,9 @@ class ReadingNotesTab(QWidget):
                     return
 
                 # 4. Get/Create new tag
-                # --- FIX: Pass project_id to link the new tag ---
+                # --- MODIFIED (Step 2.2): Pass project_id to link the new tag ---
                 tag_data = self.db.get_or_create_tag(new_tag_name, self.project_id)
-                # --- END FIX ---
+                # --- END MODIFIED ---
                 if not tag_data:
                     raise Exception(f"Could not get or create tag '{new_tag_name}'")
 

@@ -1,14 +1,25 @@
 # tabs/graph_view_tab.py
 import sys
 import math
+import sqlite3
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QGraphicsView, QGraphicsScene,
     QGraphicsItem, QGraphicsLineItem, QGraphicsTextItem,
     QGraphicsEllipseItem, QGraphicsRectItem, QMenu, QGraphicsSceneMouseEvent,
-    QMessageBox, QApplication
+    QMessageBox, QApplication, QGraphicsDropShadowEffect, QLineEdit,
+    QGraphicsProxyWidget
 )
-from PySide6.QtCore import Qt, QPointF, QRectF, QTimer, Signal, Slot, QLineF
-from PySide6.QtGui import QPainter, QBrush, QColor, QPen, QFont, QPainterPath
+from PySide6.QtCore import (
+    Qt, QPointF, QRectF, QTimer, Signal, Slot, QLineF,
+    QPoint
+)
+from PySide6.QtGui import QPainter, QBrush, QColor, QPen, QFont, QPainterPath, QFontMetrics
+
+try:
+    from dialogs.edit_tag_dialog import EditTagDialog
+except ImportError:
+    print("Error: Could not import EditTagDialog for GraphViewTab")
+    EditTagDialog = None
 
 # --- Constants for dynamic node sizing ---
 NODE_MIN_WIDTH = 100
@@ -17,7 +28,38 @@ H_PAD = 20  # Horizontal padding
 V_PAD = 10  # Vertical padding
 
 
-# --- END ---
+class ZoomableGraphicsView(QGraphicsView):
+    """A QGraphicsView that zooms with Ctrl+Wheel."""
+
+    def __init__(self, scene, parent=None):
+        super().__init__(scene, parent)
+        self.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        self.setMouseTracking(True)
+
+    def wheelEvent(self, event):
+        """Zooms the view on Ctrl+Mouse Wheel."""
+        if event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+            zoom_in_factor = 1.15
+            zoom_out_factor = 1 / zoom_in_factor
+
+            old_pos = self.mapToScene(event.position().toPoint())
+
+            if event.angleDelta().y() > 0:
+                self.scale(zoom_in_factor, zoom_in_factor)
+            else:
+                self.scale(zoom_out_factor, zoom_out_factor)
+
+            new_pos = self.mapToScene(event.position().toPoint())
+
+            delta = new_pos - old_pos
+            self.translate(delta.x(), delta.y())
+
+            event.accept()
+        else:
+            super().wheelEvent(event)
 
 
 class GraphEdgeItem(QGraphicsLineItem):
@@ -61,12 +103,10 @@ class BaseGraphNode(QGraphicsItem):
         self.graph_view = graph_view
         self.edges = []
 
-        # --- DYNAMIC SIZING ---
-        self.text_item = QGraphicsTextItem(self.name, self)
+        self.text_item = QGraphicsTextItem(self)
         font = QFont("Arial", 10)
         self.text_item.setFont(font)
         self.update_geometry()
-        # --- END DYNAMIC SIZING ---
 
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
@@ -74,9 +114,19 @@ class BaseGraphNode(QGraphicsItem):
         self.setCacheMode(QGraphicsItem.CacheMode.DeviceCoordinateCache)
         self.setZValue(1)
 
+        self.setAcceptHoverEvents(True)
+        # --- NEW: Accept right-clicks for context menu ---
+        self.setAcceptedMouseButtons(Qt.MouseButton.RightButton | Qt.MouseButton.LeftButton)
+        # --- END NEW ---
+
     def update_geometry(self):
         """Calculates the node's bounds based on its text."""
         self.prepareGeometryChange()
+
+        font = QFont("Arial", 10)
+        self.text_item.setFont(font)
+
+        self.text_item.setPlainText(self.name)
 
         self.text_item.setTextWidth(-1)
         text_rect = self.text_item.boundingRect()
@@ -91,6 +141,39 @@ class BaseGraphNode(QGraphicsItem):
         text_x = -text_rect.width() / 2
         text_y = -text_rect.height() / 2
         self.text_item.setPos(text_x, text_y)
+
+    def update_node_scale_and_tooltip(self):
+        """Sets the node's scale and tooltip based on its connection count."""
+        connection_count = len(self.edges)
+
+        # --- MODIFIED: More aggressive scaling ---
+        scale_factor = 1.0 + (math.sqrt(connection_count) / 2.5)
+        self.setScale(scale_factor)
+        # --- END MODIFIED ---
+
+        tooltip_parts = [f"Name: {self.name}"]
+
+        if isinstance(self, ReadingNodeItem):
+            if hasattr(self, 'full_title') and self.full_title != self.name:
+                tooltip_parts.append(f"Title: {self.full_title}")
+            if hasattr(self, 'author') and self.author:
+                tooltip_parts.append(f"Author: {self.author}")
+
+        if isinstance(self, TagNodeItem):
+            tooltip_parts = [f"Tag: {self.name}"]
+
+        tooltip_parts.append(f"Connections: {connection_count}")
+        self.setToolTip("\n".join(tooltip_parts))
+
+    def hoverEnterEvent(self, event):
+        """Enlarge slightly on hover to show interactivity."""
+        self.setZValue(10)
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        """Reset size and z-value on hover leave."""
+        self.setZValue(1)
+        super().hoverLeaveEvent(event)
 
     def boundingRect(self):
         """Returns the dynamically calculated bounding rect."""
@@ -135,14 +218,17 @@ class BaseGraphNode(QGraphicsItem):
         intersect_points = []
         for line in lines:
             try:
-                intersect_type, intersect_point = center_line.intersects(line)
-                if intersect_type == QLineF.IntersectionType.BoundedIntersection:
-                    intersect_points.append(intersect_point)
-            except Exception:
                 intersect_point = QPointF()
                 intersect_type = line.intersect(center_line, intersect_point)
                 if intersect_type == QLineF.IntersectionType.BoundedIntersection:
                     intersect_points.append(intersect_point)
+            except Exception as e:
+                try:
+                    intersect_type, intersect_point = center_line.intersects(line)
+                    if intersect_type == QLineF.IntersectionType.BoundedIntersection:
+                        intersect_points.append(intersect_point)
+                except Exception as e:
+                    print(f"Error calculating intersection: {e}")
 
         if intersect_points:
             intersect_points.sort(key=lambda p: QLineF(p, to_point).length())
@@ -163,9 +249,47 @@ class BaseGraphNode(QGraphicsItem):
         return super().itemChange(change, value)
 
     def mouseDoubleClickEvent(self, event):
-        """Placeholder for subclasses to implement."""
-        print(f"Node '{self.name}' double-clicked (Base)")
-        super().mouseDoubleClickEvent(event)
+        """Allows editing node text on double-click."""
+        if isinstance(self, TagNodeItem) or isinstance(self, ReadingNodeItem):
+            self.line_edit = QLineEdit()
+            self.line_edit.setText(self.name.strip())
+            self.line_edit.selectAll()
+
+            self.proxy = self.scene().addWidget(self.line_edit)
+            self.proxy.setParentItem(self)
+
+            self.proxy.setPos(self.text_item.pos())
+            self.proxy.resize(self.text_item.boundingRect().width(), self.text_item.boundingRect().height())
+
+            self.text_item.hide()
+            self.line_edit.setFocus()
+
+            self.line_edit.editingFinished.connect(self._on_rename_finished)
+        else:
+            super().mouseDoubleClickEvent(event)
+
+    @Slot()
+    def _on_rename_finished(self):
+        """Handles when editing is finished."""
+        if not hasattr(self, 'line_edit'):  # Check if already cleaned up
+            return
+
+        new_name = self.line_edit.text().strip()
+
+        self.proxy.setParentItem(None)
+        self.scene().removeItem(self.proxy)
+        del self.proxy
+        del self.line_edit
+        self.text_item.show()
+
+        if new_name and new_name != self.name:
+            self.name = new_name
+            self.update_geometry()
+
+            if isinstance(self, ReadingNodeItem):
+                self.graph_view.rename_reading(self.reading_id, new_name)
+            elif isinstance(self, TagNodeItem):
+                self.graph_view.rename_tag(self.tag_id, new_name)
 
     def paint(self, painter, option, widget):
         """Overridden by subclasses to draw specific shapes."""
@@ -193,25 +317,28 @@ class ReadingNodeItem(BaseGraphNode):
         self.reading_id = reading_id
         super().__init__(name, graph_view, parent)
 
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(15)
+        shadow.setColor(QColor(0, 0, 0, 60))
+        shadow.setOffset(3, 3)
+        self.setGraphicsEffect(shadow)
+
     def shape(self):
         path = QPainterPath()
-        path.addEllipse(self.boundingRect())
+        path.addRoundedRect(self.boundingRect(), 10, 10)
         return path
 
     def paint(self, painter, option, widget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         path = self.shape()
-
         brush = QBrush(QColor("#cce0f5"))
         painter.fillPath(path, brush)
-
-        pen = QPen(QColor("#0047b2"), 2)
+        pen = QPen(QColor("#0047b2"), 1)
         painter.setPen(pen)
         painter.drawPath(path)
 
     def mouseDoubleClickEvent(self, event):
         print(f"Reading node '{self.name}' double-clicked")
-        self.graph_view.emit_reading_double_clicked(self.reading_id)
         super().mouseDoubleClickEvent(event)
 
 
@@ -222,6 +349,12 @@ class TagNodeItem(BaseGraphNode):
         self.tag_id = tag_id
         super().__init__(name, graph_view, parent)
 
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(15)
+        shadow.setColor(QColor(0, 0, 0, 60))
+        shadow.setOffset(3, 3)
+        self.setGraphicsEffect(shadow)
+
     def shape(self):
         path = QPainterPath()
         path.addRoundedRect(self.boundingRect(), 5, 5)
@@ -230,17 +363,14 @@ class TagNodeItem(BaseGraphNode):
     def paint(self, painter, option, widget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         path = self.shape()
-
         brush = QBrush(QColor("#cce8cc"))
         painter.fillPath(path, brush)
-
-        pen = QPen(QColor("#006100"), 2)
+        pen = QPen(QColor("#006100"), 1)
         painter.setPen(pen)
         painter.drawPath(path)
 
     def mouseDoubleClickEvent(self, event):
         print(f"Tag node '{self.name}' double-clicked")
-        self.graph_view.emit_tag_double_clicked(self.tag_id)
         super().mouseDoubleClickEvent(event)
 
 
@@ -260,7 +390,6 @@ class GraphViewScene(QGraphicsScene):
         selected_nodes = self.selectedItems()
 
         if not selected_nodes:
-            # No selection, reset everything
             for node in self.all_nodes:
                 node.reset_highlight_state()
             for edge in self.all_edges:
@@ -305,6 +434,8 @@ class GraphViewTab(QWidget):
     readingDoubleClicked = Signal(int)
     tagDoubleClicked = Signal(int)
 
+    tagsUpdated = Signal()
+
     def __init__(self, db_manager, project_id, parent=None):
         super().__init__(parent)
         self.db = db_manager
@@ -317,12 +448,13 @@ class GraphViewTab(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
 
         self.scene = GraphViewScene(self)
-        self.view = QGraphicsView(self.scene)
-        self.view.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self.view.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
+        self.view = ZoomableGraphicsView(self.scene, self)
         main_layout.addWidget(self.view)
 
         self.view.mousePressEvent = self.view_mouse_press
+
+        self.view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.view.customContextMenuRequested.connect(self.show_graph_context_menu)
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_physics)
@@ -341,7 +473,7 @@ class GraphViewTab(QWidget):
             event.accept()
             return
 
-        super(QGraphicsView, self.view).mousePressEvent(event)
+        ZoomableGraphicsView.mousePressEvent(self.view, event)
 
     @Slot(int)
     def emit_reading_double_clicked(self, reading_id):
@@ -369,7 +501,14 @@ class GraphViewTab(QWidget):
         pos_x, pos_y = 0, 0
         for reading in data['readings']:
             node_id = f"r_{reading['id']}"
+
+            # --- MODIFIED: Use full reading details ---
+            # 'name' is COALESCE(nickname, title)
             node_item = ReadingNodeItem(reading['id'], reading['name'], self)
+            node_item.full_title = reading.get('title', reading['name'])
+            node_item.author = reading.get('author', '')
+            # --- END MODIFIED ---
+
             node_item.setPos(pos_x, pos_y)
             self.scene.add_node(node_item)
             self.nodes[node_id] = node_item
@@ -398,6 +537,9 @@ class GraphViewTab(QWidget):
                 from_node.add_edge(edge_item)
                 to_node.add_edge(edge_item)
 
+        for node in self.nodes.values():
+            node.update_node_scale_and_tooltip()
+
         if self.nodes:
             self.view.setSceneRect(self.scene.itemsBoundingRect().adjusted(-50, -50, 50, 50))
 
@@ -406,12 +548,12 @@ class GraphViewTab(QWidget):
         if not self.nodes:
             return
 
-        # --- FIX: Tuned constants to be more stable ---
-        K_REPEL = 20000  # Repulsion force
-        K_ATTRACT = 0.02  # Attraction force (spring) - WAS 0.05
-        DAMPING = 0.85  # Damping factor - WAS 0.95
-        CENTER_PULL = 0.002  # Force pulling nodes to center - WAS 0.001
-        MIN_DIST = 10.0  # Minimum distance to avoid division by zero
+        # --- THIS IS THE FIX for overlapping project nodes ---
+        K_REPEL = 150000  # Repulsion force (was 50000)
+        K_ATTRACT = 0.02  # Attraction force (spring) (was 0.01)
+        DAMPING = 0.85  # Damping factor
+        CENTER_PULL = 0.002  # Force pulling nodes to center
+        MIN_DIST = 50.0  # Minimum distance (was 10.0)
         # --- END FIX ---
 
         node_list = list(self.nodes.values())
@@ -448,7 +590,7 @@ class GraphViewTab(QWidget):
                 dist_sq = max(MIN_DIST, QPointF.dotProduct(delta, delta))
 
                 dist = math.sqrt(dist_sq)
-                attract_force = dist * K_ATTRACT  # Correct spring force F = k * x
+                attract_force = dist * K_ATTRACT
 
                 force += (delta / dist) * attract_force
 
@@ -456,7 +598,6 @@ class GraphViewTab(QWidget):
             center_delta = -node_a.pos()
             force += center_delta * CENTER_PULL
 
-            # Apply force
             if not hasattr(node_a, 'velocity'):
                 node_a.velocity = QPointF(0, 0)
 
@@ -465,6 +606,131 @@ class GraphViewTab(QWidget):
             if not (node_a.isUnderMouse() and QApplication.mouseButtons() & Qt.MouseButton.LeftButton):
                 node_a.setPos(node_a.pos() + node_a.velocity)
 
-        # Update all edge positions
         for edge in self.edges:
             edge.update_position()
+
+    @Slot(int, str)
+    def rename_reading(self, reading_id, new_name):
+        """Updates a reading's nickname in the database."""
+        try:
+            self.db.update_reading_nickname(reading_id, new_name)
+            self.load_graph()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not rename reading: {e}")
+            self.load_graph()
+
+    @Slot(int, str)
+    def rename_tag(self, tag_id, new_name):
+        """Updates a tag's name in the database."""
+        try:
+            self.db.rename_tag(tag_id, new_name)
+            self.load_graph()
+            self.tagsUpdated.emit()
+        except sqlite3.IntegrityError:
+            QMessageBox.warning(self, "Tag Exists", f"A tag named '{new_name}' already exists.")
+            self.load_graph()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not rename tag: {e}")
+            self.load_graph()
+
+    @Slot(QPoint)
+    def show_graph_context_menu(self, pos):
+        """Shows the right-click menu for the graph view."""
+        scene_pos = self.view.mapToScene(pos)
+        item = self.view.itemAt(pos)
+        menu = QMenu(self)
+
+        node = None
+        if isinstance(item, BaseGraphNode):
+            node = item
+        elif isinstance(item, QGraphicsTextItem) and isinstance(item.parentItem(), BaseGraphNode):
+            node = item.parentItem()
+
+        if node:
+            if not node.isSelected():
+                self.scene.clearSelection()
+                node.setSelected(True)
+            menu.addAction("Rename", lambda: node.mouseDoubleClickEvent(None))
+            menu.addAction("Delete", lambda: self.delete_node(node))
+
+        elif isinstance(item, GraphEdgeItem):
+            menu.addAction("View Anchors (Tag <-> Reading)", lambda: self.view_anchors(item))
+
+        else:
+            try:
+                # self (GraphViewTab) -> QStackedWidget -> QWidget -> QSplitter -> ... -> ProjectDashboardWidget
+                dashboard = self.parentWidget().parentWidget()
+                if hasattr(dashboard, 'add_reading'):
+                    menu.addAction("Add New Reading...", dashboard.add_reading)
+                else:
+                    print("Could not find add_reading method on parent.")
+            except Exception as e:
+                print(f"Error finding add_reading method: {e}")
+
+            menu.addAction("Add New Tag...", self.create_new_tag_from_graph)
+
+        menu.exec(self.view.mapToGlobal(pos))
+
+    @Slot(BaseGraphNode)
+    def delete_node(self, node):
+        """Deletes the selected node from the graph and DB."""
+        if isinstance(node, ReadingNodeItem):
+            reply = QMessageBox.question(self, "Delete Reading",
+                                         f"Are you sure you want to delete '{node.name}'?\nThis will delete the reading, its outline, and all attachments.",
+                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                         QMessageBox.StandardButton.No)
+            if reply == QMessageBox.StandardButton.Yes:
+                try:
+                    self.db.delete_reading(node.reading_id)
+                    self.load_graph()
+                    # Also tell the dashboard to close the tab if it's open
+                    # (This is complex, skip for now)
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Could not delete reading: {e}")
+
+        elif isinstance(node, TagNodeItem):
+            reply = QMessageBox.question(self, "Delete Tag",
+                                         f"Are you sure you want to delete '{node.name}'?\nThis will delete the tag and all its anchors from all projects.",
+                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                         QMessageBox.StandardButton.No)
+            if reply == QMessageBox.StandardButton.Yes:
+                try:
+                    self.db.delete_tag_and_anchors(node.tag_id)
+                    self.load_graph()
+                    self.tagsUpdated.emit()
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Could not delete tag: {e}")
+
+    @Slot(GraphEdgeItem)
+    def view_anchors(self, edge):
+        """Emits a signal to view anchors for the connected tag."""
+        tag_node = None
+        if isinstance(edge.from_node, TagNodeItem):
+            tag_node = edge.from_node
+        elif isinstance(edge.to_node, TagNodeItem):
+            tag_node = edge.to_node
+
+        if tag_node:
+            self.tagDoubleClicked.emit(tag_node.tag_id)
+
+    @Slot()
+    def create_new_tag_from_graph(self):
+        """Opens a dialog to create a new tag."""
+        if not EditTagDialog:
+            QMessageBox.critical(self, "Error", "EditTagDialog not loaded.")
+            return
+
+        dialog = EditTagDialog(parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            new_name = dialog.get_tag_name()
+            if not new_name:
+                return
+
+            try:
+                self.db.get_or_create_tag(new_name, self.project_id)
+                self.load_graph()
+                self.tagsUpdated.emit()
+            except sqlite3.IntegrityError:
+                QMessageBox.warning(self, "Tag Exists", f"A tag named '{new_name}' already exists.")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Could not create tag: {e}")

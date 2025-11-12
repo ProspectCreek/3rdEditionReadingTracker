@@ -58,9 +58,9 @@ class MainWindow(QMainWindow):
         self.home_screen.projectSelected.connect(self.show_project_dashboard)
         self.project_dashboard.returnToHome.connect(self.show_home_screen)
 
-        # --- NEW: Connect home screen's jump request ---
+        # --- MODIFIED: Connect home screen's jump request (Step 3.3) ---
         self.home_screen.globalJumpRequested.connect(self.open_project_from_global)
-        # --- END NEW ---
+        # --- END MODIFIED ---
 
     @Slot(dict)
     def show_project_dashboard(self, project_details):
@@ -107,7 +107,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"Warning: Could not center window. {e}")
 
-    # --- NEW: Slot for Global Connections jump ---
+    # --- NEW: Slot for Global Connections jump (Step 3.3) ---
     @Slot(int, int, int)
     def open_project_from_global(self, project_id, reading_id, outline_id):
         """

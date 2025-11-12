@@ -5,17 +5,21 @@ import random
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QSplitter, QGraphicsView,
     QGraphicsScene, QGraphicsItem, QLabel, QTextBrowser,
-    QMessageBox, QWidget
+    QMessageBox, QWidget, QGraphicsDropShadowEffect
 )
 from PySide6.QtCore import Qt, QTimer, QRectF, QPointF, QLineF, Signal, Slot, QUrl
-from PySide6.QtGui import QPainter, QColor, QFont, QPen, QBrush, QPainterPath
+from PySide6.QtGui import QPainter, QColor, QFont, QPen, QBrush, QPainterPath, QFontMetrics  # <-- Import QFontMetrics
 
 # Reuse the node and edge items from the project graph for consistency
 try:
-    from tabs.graph_view_tab import BaseGraphNode, GraphEdgeItem
+    # --- MODIFIED: Import new ZoomableGraphicsView ---
+    from tabs.graph_view_tab import BaseGraphNode, GraphEdgeItem, ZoomableGraphicsView
 except ImportError:
     QMessageBox.critical(None, "Import Error", "Could not import graph components from tabs.graph_view_tab.py")
     sys.exit(1)
+
+
+# --- END MODIFIED ---
 
 
 class GlobalTagNodeItem(BaseGraphNode):
@@ -29,12 +33,29 @@ class GlobalTagNodeItem(BaseGraphNode):
         self.project_count = project_count
         super().__init__(name, graph_view, parent)
 
-        # Scale the node based on the count
-        # Use a non-linear scale (sqrt) so it doesn't get *too* big
-        scale_factor = 1 + (math.sqrt(self.project_count) / 3)
-        self.setScale(scale_factor)
+        # --- NEW: Add shadow ---
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(15)
+        shadow.setColor(QColor(0, 0, 0, 60))
+        shadow.setOffset(3, 3)
+        self.setGraphicsEffect(shadow)
+        # --- END NEW ---
 
-        self.setToolTip(f"{name}\nUsed in {project_count} project(s)")
+    # --- NEW: More informative tooltip ---
+    def update_node_scale_and_tooltip(self):
+        """Sets the node's scale and tooltip based on its connection count."""
+        connection_count = len(self.edges)
+
+        # --- MODIFIED: More aggressive scaling ---
+        # Scale based on *both* project count and direct connections
+        total_weight = self.project_count + connection_count
+        scale_factor = 1.0 + (math.sqrt(total_weight) / 2.5)  # Was / 4.0
+        self.setScale(scale_factor)
+        # --- END MODIFIED ---
+
+        self.setToolTip(f"Tag: {self.name}\nProjects: {self.project_count}\nConnections: {connection_count}")
+
+    # --- END NEW ---
 
     def shape(self):
         """Override shape to be a rounded rect."""
@@ -50,7 +71,7 @@ class GlobalTagNodeItem(BaseGraphNode):
         brush = QBrush(QColor("#cce8cc"))  # Light green
         painter.fillPath(path, brush)
 
-        pen = QPen(QColor("#006100"), 2)  # Dark green border
+        pen = QPen(QColor("#006100"), 1)  # Thinner green border
         painter.setPen(pen)
         painter.drawPath(path)
 
@@ -62,6 +83,65 @@ class GlobalTagNodeItem(BaseGraphNode):
         event.accept()
 
 
+# --- NEW (Step 3.2): Project Node for Global Graph ---
+class GlobalProjectNodeItem(BaseGraphNode):
+    """A node representing a Project in the global graph."""
+
+    def __init__(self, project_id, name, graph_view, parent=None):
+        self.project_id = project_id
+        super().__init__(name, graph_view, parent)
+
+        # Add shadow
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(15)
+        shadow.setColor(QColor(0, 0, 0, 60))
+        shadow.setOffset(3, 3)
+        self.setGraphicsEffect(shadow)
+
+    # --- NEW: More informative tooltip ---
+    def update_node_scale_and_tooltip(self):
+        """Sets the node's scale and tooltip based on its connection count."""
+        connection_count = len(self.edges)
+
+        # --- MODIFIED: More aggressive scaling ---
+        scale_factor = 1.0 + (math.sqrt(connection_count) / 2.5)  # Was / 4.0
+        self.setScale(scale_factor)
+        # --- END MODIFIED ---
+
+        self.setToolTip(f"Project: {self.name}\nTag Connections: {connection_count}")
+
+    # --- END NEW ---
+
+    def shape(self):
+        """Override shape to be a rounded rect."""
+        path = QPainterPath()
+        path.addRoundedRect(self.boundingRect(), 10, 10)  # More rounded
+        return path
+
+    def paint(self, painter, option, widget):
+        """Override paint to draw a project node."""
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        path = self.shape()
+
+        brush = QBrush(QColor("#cce0f5"))  # Light blue
+        painter.fillPath(path, brush)
+
+        pen = QPen(QColor("#0047b2"), 1)  # Thinner blue border
+        painter.setPen(pen)
+        painter.drawPath(path)
+
+    def mouseDoubleClickEvent(self, event):
+        """Double-clicking a project in the global graph does nothing for now."""
+        print(f"Project node '{self.name}' double-clicked (no action)")
+        # --- MODIFIED: Do not call base class implementation ---
+        # super().mouseDoubleClickEvent(event) # Do not call edit
+        event.accept()
+        # --- END MODIFIED ---
+
+
+# --- END NEW ---
+
+
 class GlobalGraphDialog(QDialog):
     """
     A dialog window that displays a force-directed graph of all
@@ -71,16 +151,32 @@ class GlobalGraphDialog(QDialog):
     # This signal is internal to this dialog, for the node to talk to the dialog
     _tagDoubleClicked = Signal(str)
 
+    # --- NEW (Step 3.3): Signal to jump to an anchor ---
+    jumpToAnchor = Signal(int, int, int)  # project_id, reading_id, outline_id
+
+    # --- END NEW ---
+
     def __init__(self, db, parent=None):
         super().__init__(parent)
         self.db = db
         self.nodes = {}  # Stores node items keyed by tag_name
+        self.edges = []  # --- NEW (Step 3.2) ---
 
         # --- RENAMED ---
         self.setWindowTitle("Global Knowledge Connections")
         self.setMinimumSize(1000, 700)
-        self.setModal(True)
+        # --- MODIFIED: Change window behavior ---
+        self.setModal(False)  # No longer modal
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.setWindowFlags(
+            Qt.WindowType.Window |
+            Qt.WindowType.CustomizeWindowHint |
+            Qt.WindowType.WindowTitleHint |
+            Qt.WindowType.WindowMinimizeButtonHint |
+            Qt.WindowType.WindowMaximizeButtonHint |
+            Qt.WindowType.WindowCloseButtonHint
+        )
+        # --- END MODIFIED ---
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -96,11 +192,9 @@ class GlobalGraphDialog(QDialog):
         self.scene = QGraphicsScene(self)
         self.scene.setBackgroundBrush(QColor("#F8F8F8"))
 
-        self.view = QGraphicsView(self.scene)
-        self.view.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self.view.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
-        self.view.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
-        self.view.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        # --- MODIFIED: Use new ZoomableGraphicsView ---
+        self.view = ZoomableGraphicsView(self.scene, self)
+        # --- END MODIFIED ---
         graph_layout.addWidget(self.view)
 
         # --- Right Panel: Global Synthesis View ---
@@ -127,7 +221,9 @@ class GlobalGraphDialog(QDialog):
         self.timer.timeout.connect(self._update_forces)
         self._simulation_steps = 0
         self.REPULSION = 15000  # More repulsion for a global graph
-        self.ATTRACTION = 0.005  # Less attraction (no edges)
+        # --- MODIFIED (Step 3.2): Added ATTRACTION ---
+        self.ATTRACTION = 0.01  # Spring force for edges
+        # --- END MODIFIED ---
         self.DAMPING = 0.95
 
         # --- Connect Internal Signal ---
@@ -140,38 +236,74 @@ class GlobalGraphDialog(QDialog):
         self.timer.stop()
         self.scene.clear()
         self.nodes.clear()
+        self.edges.clear()  # --- NEW (Step 3.2) ---
 
         try:
-            tags_data = self.db.get_global_graph_tags()
+            # --- MODIFIED (Step 3.2): Call new DB method ---
+            data = self.db.get_global_graph_data()
+            # --- END MODIFIED ---
         except Exception as e:
             QMessageBox.critical(self, "Database Error", f"Could not load global tags: {e}")
             return
 
-        if not tags_data:
-            label = self.scene.addSimpleText("No synthesis tags found across any projects.")
+        if not data['tags'] and not data['projects']:
+            label = self.scene.addSimpleText("No projects or tags found.")
             label.setPos(0, 0)
             return
 
-        # Create all nodes
-        for tag in tags_data:
-            tag_name = tag['name']
-            # --- FIX: Pass tag['id'] as the tag_id ---
+        # --- MODIFIED (Step 3.2): Create all nodes (Projects and Tags) ---
+        scene_size = 300 * math.sqrt(len(data['tags']) + len(data['projects']))
+
+        # Create Tag Nodes
+        for tag in data['tags']:
+            node_id = f"t_{tag['id']}"
             node_item = GlobalTagNodeItem(
-                tag_id=tag['id'],  # <--- THIS WAS THE FIX
-                name=tag_name,
+                tag_id=tag['id'],
+                name=tag['name'],
                 project_count=tag['project_count'],
-                graph_view=self,  # Pass self (the dialog) as the graph_view
+                graph_view=self,
                 parent=None
             )
-            # --- END FIX ---
+            node_item.setPos(random.uniform(-scene_size, scene_size),
+                             random.uniform(-scene_size, scene_size))
             self.scene.addItem(node_item)
-            self.nodes[tag_name] = node_item
+            self.nodes[node_id] = node_item
 
-        # Randomly position nodes
-        scene_size = 300 * math.sqrt(len(self.nodes))
+        # Create Project Nodes
+        for project in data['projects']:
+            node_id = f"p_{project['id']}"
+            node_item = GlobalProjectNodeItem(
+                project_id=project['id'],
+                name=project['name'],
+                graph_view=self,
+                parent=None
+            )
+            node_item.setPos(random.uniform(-scene_size, scene_size),
+                             random.uniform(-scene_size, scene_size))
+            self.scene.addItem(node_item)
+            self.nodes[node_id] = node_item
+
+        # Create Edges
+        for edge in data['edges']:
+            from_id = f"p_{edge['project_id']}"
+            to_id = f"t_{edge['tag_id']}"
+
+            if from_id in self.nodes and to_id in self.nodes:
+                from_node = self.nodes[from_id]
+                to_node = self.nodes[to_id]
+
+                edge_item = GraphEdgeItem(from_node, to_node)
+                self.scene.addItem(edge_item)
+                self.edges.append(edge_item)  # Add to list
+
+                from_node.add_edge(edge_item)
+                to_node.add_edge(edge_item)
+        # --- END MODIFIED ---
+
+        # --- NEW: Update scaling *after* edges are added ---
         for node in self.nodes.values():
-            node.setPos(random.uniform(-scene_size, scene_size),
-                        random.uniform(-scene_size, scene_size))
+            node.update_node_scale_and_tooltip()
+        # --- END NEW ---
 
         # Start simulation
         self._simulation_steps = 0
@@ -196,8 +328,8 @@ class GlobalGraphDialog(QDialog):
             # Center pull
             center_dx = -node.pos().x()
             center_dy = -node.pos().y()
-            node.force_x += center_dx * self.ATTRACTION
-            node.force_y += center_dy * self.ATTRACTION
+            node.force_x += center_dx * 0.005  # Use a smaller center pull
+            node.force_y += center_dy * 0.005
 
             # Repulsion
             for other_node in all_nodes:
@@ -212,6 +344,21 @@ class GlobalGraphDialog(QDialog):
                     repulsion = self.REPULSION / (distance * distance)  # F = k / r^2
                     node.force_x += (dx / distance) * repulsion
                     node.force_y += (dy / distance) * repulsion
+
+            # --- NEW: Attraction from edges ---
+            for edge in node.edges:
+                other_node = edge.from_node if edge.to_node == node else edge.to_node
+
+                dx = other_node.pos().x() - node.pos().x()
+                dy = other_node.pos().y() - node.pos().y()
+                distance = math.hypot(dx, dy) + 0.1
+
+                # F = k * x (Hooke's Law)
+                attract_force = self.ATTRACTION * distance
+
+                node.force_x += dx * attract_force
+                node.force_y += dy * attract_force
+            # --- END NEW ---
 
         # Apply all forces
         has_moved = False
@@ -233,12 +380,17 @@ class GlobalGraphDialog(QDialog):
                 node.setPos(node.pos() + node.velocity)
                 has_moved = True
 
+        # --- NEW (Step 3.2): Update edges ---
+        for edge in self.edges:
+            edge.update_position()
+        # --- END NEW ---
+
         # Stop simulation
         self._simulation_steps += 1
         if not has_moved or self._simulation_steps > 200:
             self.timer.stop()
             self._center_graph()
-            print("Global connections simulation complete.") # <-- RENAMED
+            print("Global connections simulation complete.")  # <-- RENAMED
 
     def _center_graph(self):
         try:
@@ -246,7 +398,7 @@ class GlobalGraphDialog(QDialog):
             if bounds.isValid():
                 self.view.fitInView(bounds, Qt.AspectRatioMode.KeepAspectRatio)
         except Exception as e:
-            print(f"Error centering global connections: {e}") # <-- RENAMED
+            print(f"Error centering global connections: {e}")  # <-- RENAMED
 
     @Slot(str, str)
     def node_double_clicked(self, data_id_or_name, data_type):
@@ -317,27 +469,20 @@ class GlobalGraphDialog(QDialog):
         """
         Handles clicks on 'jumpto' links.
         This is a global view, so it can't directly open tabs.
-        It will just show a message for now.
+        It will emit a signal for the main window.
         """
         url_str = url.toString()
         if url_str.startswith("jumpto:"):
             try:
+                # --- MODIFIED (Step 3.3): Emit signal and close ---
                 parts = url_str.split(":")
                 project_id = int(parts[1])
                 reading_id = int(parts[2])
                 outline_id = int(parts[3])
 
-                # In a real app, this would emit a signal to the main window
-                # For now, show an info box
-                QMessageBox.information(
-                    self,
-                    "Global Connections Navigation", # <-- RENAMED
-                    f"This anchor is in:\n\n"
-                    f"Project ID: {project_id}\n"
-                    f"Reading ID: {reading_id}\n"
-                    f"Outline ID: {outline_id}\n\n"
-                    "(This would jump to the project in a full implementation.)"
-                )
+                self.jumpToAnchor.emit(project_id, reading_id, outline_id)
+                self.accept()  # Close the global graph dialog
+                # --- END MODIFIED ---
             except Exception as e:
                 print(f"Error handling jumpto link: {e}")
 

@@ -3,7 +3,7 @@ import sys
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QSplitter,
     QStackedWidget, QLabel, QPushButton, QHBoxLayout,
-    QMessageBox
+    QMessageBox, QApplication
 )
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QPixmap
@@ -25,10 +25,10 @@ class HomeScreenWidget(QWidget):
     # Relay the projectSelected signal up to the MainWindow
     projectSelected = Signal(dict)
 
-    # --- FIX: Add the missing signal definition ---
+    # --- MODIFIED: Add the missing signal definition (Step 3.3) ---
     globalJumpRequested = Signal(int, int, int)  # project_id, reading_id, outline_id
 
-    # --- END FIX ---
+    # --- END MODIFIED ---
 
     def __init__(self, db_manager, parent=None):
         super().__init__(parent)
@@ -90,7 +90,7 @@ class HomeScreenWidget(QWidget):
             }
         """)
 
-        # --- NEW: Manage Tags Button ---
+        # --- MODIFIED: Manage Tags Button (Step 1.3) ---
         self.btn_manage_tags = QPushButton("Manage All Tags")
         self.btn_manage_tags.setFont(font)
         self.btn_manage_tags.setMinimumHeight(40)
@@ -106,7 +106,7 @@ class HomeScreenWidget(QWidget):
                 background-color: #666666;
             }
         """)
-        # --- END NEW ---
+        # --- END MODIFIED ---
 
         # Center button
         button_layout = QHBoxLayout()
@@ -150,14 +150,26 @@ class HomeScreenWidget(QWidget):
         try:
             from dialogs.global_graph_dialog import GlobalGraphDialog
 
+            # --- MODIFIED (Fix 2): Check if already open ---
+            # Find all top-level widgets that are GlobalGraphDialog
+            for widget in QApplication.topLevelWidgets():
+                if isinstance(widget, GlobalGraphDialog):
+                    widget.activateWindow()
+                    widget.raise_()
+                    widget.showMaximized()
+                    return
+            # --- END MODIFIED ---
+
             # Pass the db manager to the dialog
             dialog = GlobalGraphDialog(self.db, self)
 
-            # --- FIX: Connect the jumpToAnchor signal ---
+            # --- MODIFIED: Connect the jumpToAnchor signal (Step 3.3) ---
             dialog.jumpToAnchor.connect(self.globalJumpRequested.emit)
-            # --- END FIX ---
+            # --- END MODIFIED ---
 
-            dialog.exec()  # Open as a modal dialog
+            # --- MODIFIED (Fix 2): Show maximized instead of modal ---
+            dialog.showMaximized()
+            # --- END MODIFIED ---
 
         except ImportError:
             QMessageBox.critical(self, "Error",
@@ -168,7 +180,7 @@ class HomeScreenWidget(QWidget):
 
     # --- END NEW ---
 
-    # --- NEW: Slot to open global tag manager ---
+    # --- NEW: Slot to open global tag manager (Step 1.3) ---
     @Slot()
     def open_global_tag_manager(self):
         """
