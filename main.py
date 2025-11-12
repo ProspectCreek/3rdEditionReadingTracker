@@ -48,7 +48,7 @@ class MainWindow(QMainWindow):
         self.home_screen.projectSelected.connect(self.show_project_dashboard)
         self.project_dashboard.returnToHome.connect(self.show_home_screen)
 
-        self.resize(1200, 800)
+        # --- FIX: Removed self.resize(1200, 800) ---
         self.center_window()
 
     @Slot(dict)

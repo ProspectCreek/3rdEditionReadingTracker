@@ -1,360 +1,470 @@
 # tabs/graph_view_tab.py
 import sys
 import math
-import random
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QGraphicsView, QGraphicsScene, QGraphicsItem,
-    QGraphicsLineItem, QGraphicsEllipseItem, QGraphicsRectItem,
-    QGraphicsSimpleTextItem, QApplication
+    QWidget, QVBoxLayout, QGraphicsView, QGraphicsScene,
+    QGraphicsItem, QGraphicsLineItem, QGraphicsTextItem,
+    QGraphicsEllipseItem, QGraphicsRectItem, QMenu, QGraphicsSceneMouseEvent,
+    QMessageBox, QApplication
 )
-from PySide6.QtCore import Qt, QTimer, QRectF, QPointF, QLineF, Signal, Slot
-from PySide6.QtGui import QPainter, QColor, QFont, QPen, QBrush, QPainterPath
+from PySide6.QtCore import Qt, QPointF, QRectF, QTimer, Signal, Slot, QLineF
+from PySide6.QtGui import QPainter, QBrush, QColor, QPen, QFont, QPainterPath
+
+# --- Constants for dynamic node sizing ---
+NODE_MIN_WIDTH = 100
+NODE_MIN_HEIGHT = 40
+H_PAD = 20  # Horizontal padding
+V_PAD = 10  # Vertical padding
 
 
-# --- GRAPHICS ITEMS ---
+# --- END ---
+
 
 class GraphEdgeItem(QGraphicsLineItem):
-    """A simple line to connect two nodes."""
+    """A custom edge for the graph."""
 
-    def __init__(self, node1, node2, parent=None):
+    def __init__(self, from_node, to_node, parent=None):
         super().__init__(parent)
-        self.node1 = node1
-        self.node2 = node2
-        self.setZValue(-1)  # Draw behind nodes
-        self.setPen(QPen(QColor("#555555"), 1.5))
+        self.from_node = from_node
+        self.to_node = to_node
+        self.setZValue(-1)
+        self.setPen(QPen(QColor("#555"), 2))
 
-    def adjust(self):
-        """Updates the line position based on node centers."""
-        line = QLineF(self.node1.pos(), self.node2.pos())
-        self.setLine(line)
+    def update_position(self):
+        if not self.from_node or not self.to_node:
+            return
+        from_point = self.from_node.get_connection_point(self.to_node.pos())
+        to_point = self.to_node.get_connection_point(self.from_node.pos())
+        self.setLine(QLineF(from_point, to_point))
+
+    def set_highlight_state(self, highlight):
+        """Sets the visual state of the edge."""
+        if highlight:
+            self.setOpacity(1.0)
+            self.setPen(QPen(QColor("#000"), 2.5))
+        else:
+            self.setOpacity(0.2)
+            self.setPen(QPen(QColor("#aaa"), 1.5))
+
+    def reset_highlight_state(self):
+        """Resets to default."""
+        self.setOpacity(1.0)
+        self.setPen(QPen(QColor("#555"), 2))
 
 
 class BaseGraphNode(QGraphicsItem):
-    """
-    Base class for physics-enabled nodes.
-    Handles forces, position, and edge management.
-    """
+    """Base class for all nodes in the graph."""
 
-    # --- FIX: Signals are REMOVED from this class. ---
-    # QGraphicsItem does not inherit from QObject and cannot have signals.
-
-    def __init__(self, data_id, name, data_type, parent_tab):
-        super().__init__()
-        self.data_id = data_id
+    def __init__(self, name, graph_view, parent=None):
+        super().__init__(parent)
         self.name = name
-        self.data_type = data_type  # 'reading' or 'tag'
-        self.parent_tab = parent_tab  # This is the GraphViewTab
-
+        self.graph_view = graph_view
         self.edges = []
-        self.force_x = 0.0
-        self.force_y = 0.0
+
+        # --- DYNAMIC SIZING ---
+        self.text_item = QGraphicsTextItem(self.name, self)
+        font = QFont("Arial", 10)
+        self.text_item.setFont(font)
+        self.update_geometry()
+        # --- END DYNAMIC SIZING ---
 
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setCacheMode(QGraphicsItem.CacheMode.DeviceCoordinateCache)
+        self.setZValue(1)
 
-        # Simple text label, child of the node
-        self.label = QGraphicsSimpleTextItem(self.name, self)
-        self.label.setFont(QFont("Segoe UI", 9))
-        self.label.setBrush(QColor("#000000"))
-        # Center the label
-        label_rect = self.label.boundingRect()
-        self.label.setPos(-label_rect.width() / 2, -label_rect.height() / 2)
+    def update_geometry(self):
+        """Calculates the node's bounds based on its text."""
+        self.prepareGeometryChange()
+
+        self.text_item.setTextWidth(-1)
+        text_rect = self.text_item.boundingRect()
+
+        self.width = max(NODE_MIN_WIDTH, text_rect.width() + H_PAD)
+
+        self.text_item.setTextWidth(self.width - H_PAD)
+        text_rect = self.text_item.boundingRect()
+
+        self.height = max(NODE_MIN_HEIGHT, text_rect.height() + V_PAD)
+
+        text_x = -text_rect.width() / 2
+        text_y = -text_rect.height() / 2
+        self.text_item.setPos(text_x, text_y)
+
+    def boundingRect(self):
+        """Returns the dynamically calculated bounding rect."""
+        return QRectF(-self.width / 2, -self.height / 2, self.width, self.height)
+
+    def shape(self):
+        """Returns the precise shape for collision detection and painting."""
+        path = QPainterPath()
+        path.addRect(self.boundingRect())
+        return path
 
     def add_edge(self, edge):
         if edge not in self.edges:
             self.edges.append(edge)
 
-    def adjust_edges(self):
+    def get_connected_nodes(self):
+        """Returns a set of all nodes connected to this one."""
+        nodes = set()
         for edge in self.edges:
-            edge.adjust()
+            if edge.from_node == self:
+                nodes.add(edge.to_node)
+            else:
+                nodes.add(edge.from_node)
+        return nodes
 
-    def calculate_forces(self, all_nodes, repulsion_strength, attraction_strength):
-        """Calculate repulsion from all nodes and attraction from neighbors."""
-        for node in all_nodes:
-            if node is self:
-                continue
+    def get_connection_point(self, to_point):
+        """Finds the intersection point on the node's bounding box."""
+        center_point = self.pos()
+        rect = self.boundingRect().translated(center_point)
 
-            # --- Repulsion (from all nodes) ---
-            dx = self.pos().x() - node.pos().x()
-            dy = self.pos().y() - node.pos().y()
-            distance = math.hypot(dx, dy) + 0.1  # avoid division by zero
+        center_line = QLineF(center_point, to_point)
+        if center_line.length() == 0:
+            return center_point
 
-            if distance < 250:  # Only repel if somewhat close
-                # Coulomb's Law: F = k * (q1*q2) / r^2
-                # We'll simplify: F = k / r
-                repulsion = repulsion_strength / distance
-                self.force_x += (dx / distance) * repulsion
-                self.force_y += (dy / distance) * repulsion
+        lines = [
+            QLineF(rect.topLeft(), rect.topRight()),
+            QLineF(rect.topRight(), rect.bottomRight()),
+            QLineF(rect.bottomRight(), rect.bottomLeft()),
+            QLineF(rect.bottomLeft(), rect.topLeft())
+        ]
 
-        # --- Attraction (along edges) ---
-        for edge in self.edges:
-            other_node = edge.node1 if edge.node1 is not self else edge.node2
+        intersect_points = []
+        for line in lines:
+            try:
+                intersect_type, intersect_point = center_line.intersects(line)
+                if intersect_type == QLineF.IntersectionType.BoundedIntersection:
+                    intersect_points.append(intersect_point)
+            except Exception:
+                intersect_point = QPointF()
+                intersect_type = line.intersect(center_line, intersect_point)
+                if intersect_type == QLineF.IntersectionType.BoundedIntersection:
+                    intersect_points.append(intersect_point)
 
-            # Hooke's Law: F = -k * x
-            dx = other_node.pos().x() - self.pos().x()
-            dy = other_node.pos().y() - self.pos().y()
-            # No distance check, springs always pull
-            self.force_x += dx * attraction_strength
-            self.force_y += dy * attraction_strength
+        if intersect_points:
+            intersect_points.sort(key=lambda p: QLineF(p, to_point).length())
+            return intersect_points[0]
 
-    def advance_position(self, damping):
-        """Apply calculated forces to the node's position."""
-        if math.hypot(self.force_x, self.force_y) < 0.1:
-            self.force_x, self.force_y = 0.0, 0.0
-            return False  # No significant movement
-
-        # Apply damping
-        self.force_x *= damping
-        self.force_y *= damping
-
-        # Update position
-        self.setPos(self.pos().x() + self.force_x, self.pos().y() + self.force_y)
-
-        # Reset forces for next tick
-        self.force_x = 0.0
-        self.force_y = 0.0
-        return True  # Moved
+        return center_point
 
     def itemChange(self, change, value):
-        """Ensure edges update when the node is moved (by physics or user)."""
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
-            self.adjust_edges()
+            for edge in self.edges:
+                edge.update_position()
+
+        if change == QGraphicsItem.GraphicsItemChange.ItemSelectedChange:
+            if self.scene():
+                if hasattr(self.scene(), 'update_highlights'):
+                    self.scene().update_highlights()
+
         return super().itemChange(change, value)
 
-    def doubleClickEvent(self, event):
-        """
-        FIX: Emit a signal by calling a method on the parent_tab (GraphViewTab),
-        which IS a QObject and can emit signals.
-        """
-        if self.data_type == 'reading':
-            print(f"Graph: Node clicked, calling parent tab for reading {self.data_id}")
-            self.parent_tab.node_double_clicked(self.data_id, 'reading')
-        elif self.data_type == 'tag':
-            print(f"Graph: Node clicked, calling parent tab for tag {self.data_id}")
-            self.parent_tab.node_double_clicked(self.data_id, 'tag')
-        event.accept()
+    def mouseDoubleClickEvent(self, event):
+        """Placeholder for subclasses to implement."""
+        print(f"Node '{self.name}' double-clicked (Base)")
+        super().mouseDoubleClickEvent(event)
+
+    def paint(self, painter, option, widget):
+        """Overridden by subclasses to draw specific shapes."""
+        pass
+
+    def set_highlight_state(self, highlight):
+        """Sets the visual state of the node."""
+        if highlight:
+            self.setOpacity(1.0)
+            self.setZValue(2)
+        else:
+            self.setOpacity(0.2)
+            self.setZValue(1)
+
+    def reset_highlight_state(self):
+        """Resets to default."""
+        self.setOpacity(1.0)
+        self.setZValue(1)
 
 
 class ReadingNodeItem(BaseGraphNode):
-    """A circular node representing a Reading."""
+    """A node representing a Reading."""
 
-    def __init__(self, data_id, name, parent_tab):
-        super().__init__(data_id, name, 'reading', parent_tab)
-        self.setZValue(1)  # Draw nodes on top of edges
+    def __init__(self, reading_id, name, graph_view, parent=None):
+        self.reading_id = reading_id
+        super().__init__(name, graph_view, parent)
 
-    def boundingRect(self):
-        return QRectF(-20, -20, 40, 40)
+    def shape(self):
+        path = QPainterPath()
+        path.addEllipse(self.boundingRect())
+        return path
 
     def paint(self, painter, option, widget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        rect = self.boundingRect()
+        path = self.shape()
 
-        # Draw shadow
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(0, 0, 0, 50))
-        painter.drawEllipse(rect.translated(2, 2))
+        brush = QBrush(QColor("#cce0f5"))
+        painter.fillPath(path, brush)
 
-        # Draw main circle
-        pen_color = QColor("#003366")
-        brush_color = QColor("#B0C4DE")  # Light Steel Blue
-        if self.isSelected():
-            pen_color = QColor("#FF0000")
-            brush_color = QColor("#D8E0EB")
+        pen = QPen(QColor("#0047b2"), 2)
+        painter.setPen(pen)
+        painter.drawPath(path)
 
-        painter.setPen(QPen(pen_color, 2))
-        painter.setBrush(brush_color)
-        painter.drawEllipse(rect)
+    def mouseDoubleClickEvent(self, event):
+        print(f"Reading node '{self.name}' double-clicked")
+        self.graph_view.emit_reading_double_clicked(self.reading_id)
+        super().mouseDoubleClickEvent(event)
 
 
 class TagNodeItem(BaseGraphNode):
-    """A square node representing a Tag."""
+    """A node representing a Tag."""
 
-    def __init__(self, data_id, name, parent_tab):
-        super().__init__(data_id, name, 'tag', parent_tab)
-        self.setZValue(1)
+    def __init__(self, tag_id, name, graph_view, parent=None):
+        self.tag_id = tag_id
+        super().__init__(name, graph_view, parent)
 
-    def boundingRect(self):
-        return QRectF(-15, -15, 30, 30)
+    def shape(self):
+        path = QPainterPath()
+        path.addRoundedRect(self.boundingRect(), 5, 5)
+        return path
 
     def paint(self, painter, option, widget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        rect = self.boundingRect()
+        path = self.shape()
 
-        # Draw shadow
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(0, 0, 0, 50))
-        painter.drawRoundedRect(rect.translated(2, 2), 5, 5)
+        brush = QBrush(QColor("#cce8cc"))
+        painter.fillPath(path, brush)
 
-        # Draw main rectangle
-        pen_color = QColor("#006400")  # Dark Green
-        brush_color = QColor("#C8E6C9")  # Light Green
-        if self.isSelected():
-            pen_color = QColor("#FF0000")
-            brush_color = QColor("#E3F0E3")
+        pen = QPen(QColor("#006100"), 2)
+        painter.setPen(pen)
+        painter.drawPath(path)
 
-        painter.setPen(QPen(pen_color, 2))
-        painter.setBrush(brush_color)
-        painter.drawRoundedRect(rect, 5, 5)
+    def mouseDoubleClickEvent(self, event):
+        print(f"Tag node '{self.name}' double-clicked")
+        self.graph_view.emit_tag_double_clicked(self.tag_id)
+        super().mouseDoubleClickEvent(event)
 
 
-# --- MAIN TAB WIDGET ---
+class GraphViewScene(QGraphicsScene):
+    """Custom scene to manage highlight updates."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.all_nodes = []
+        self.all_edges = []
+
+    def update_highlights(self):
+        """
+        Updates the opacity of all nodes and edges based on the
+        current selection.
+        """
+        selected_nodes = self.selectedItems()
+
+        if not selected_nodes:
+            # No selection, reset everything
+            for node in self.all_nodes:
+                node.reset_highlight_state()
+            for edge in self.all_edges:
+                edge.reset_highlight_state()
+            return
+
+        highlight_set = set(selected_nodes)
+        edges_to_highlight = set()
+
+        for node in selected_nodes:
+            if isinstance(node, BaseGraphNode):
+                for edge in node.edges:
+                    edges_to_highlight.add(edge)
+                    highlight_set.add(edge.from_node)
+                    highlight_set.add(edge.to_node)
+
+        for node in self.all_nodes:
+            node.set_highlight_state(node in highlight_set)
+
+        for edge in self.all_edges:
+            edge.set_highlight_state(edge in edges_to_highlight)
+
+    def clear_graph(self):
+        """Clears all items and internal lists."""
+        self.clear()
+        self.all_nodes.clear()
+        self.all_edges.clear()
+
+    def add_node(self, node):
+        self.all_nodes.append(node)
+        self.addItem(node)
+
+    def add_edge(self, edge):
+        self.all_edges.append(edge)
+        self.addItem(edge)
+
 
 class GraphViewTab(QWidget):
     """
     Main widget for the "Graph View" tab.
-    Manages the scene, view, and physics simulation.
     """
-    # Signals for interactivity (to be connected by the dashboard)
-    readingDoubleClicked = Signal(int)  # Emits reading_id
-    tagDoubleClicked = Signal(int)  # Emits tag_id
+    readingDoubleClicked = Signal(int)
+    tagDoubleClicked = Signal(int)
 
-    def __init__(self, db, project_id, parent=None):
+    def __init__(self, db_manager, project_id, parent=None):
         super().__init__(parent)
-        self.db = db
+        self.db = db_manager
         self.project_id = project_id
 
-        self.nodes = {}  # Stores all node items, keyed by "r_ID" or "t_ID"
-        self.edges = []  # Stores all edge items
+        self.nodes = {}
+        self.edges = []
 
-        # --- UI Setup ---
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
 
-        self.scene = QGraphicsScene(self)
-        self.scene.setBackgroundBrush(QColor("#F8F8F8"))
-
+        self.scene = GraphViewScene(self)
         self.view = QGraphicsView(self.scene)
         self.view.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self.view.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
-        self.view.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
-        self.view.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
-
+        self.view.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
         main_layout.addWidget(self.view)
 
-        # --- Physics Timer ---
+        self.view.mousePressEvent = self.view_mouse_press
+
         self.timer = QTimer(self)
-        self.timer.timeout.connect(self._update_forces)
-        self._simulation_steps = 0
-        self.REPULSION = 10000
-        self.ATTRACTION = 0.01
-        self.DAMPING = 0.95
+        self.timer.timeout.connect(self.update_physics)
+        self.timer.start(16)
+
+    def view_mouse_press(self, event):
+        """
+        Overrides the view's mouse press event to clear selection
+        when the background is clicked.
+        """
+        item_at_pos = self.view.itemAt(event.pos())
+
+        if item_at_pos is None and event.button() == Qt.MouseButton.LeftButton:
+            self.scene.clearSelection()
+            self.scene.update_highlights()
+            event.accept()
+            return
+
+        super(QGraphicsView, self.view).mousePressEvent(event)
+
+    @Slot(int)
+    def emit_reading_double_clicked(self, reading_id):
+        self.readingDoubleClicked.emit(reading_id)
+
+    @Slot(int)
+    def emit_tag_double_clicked(self, tag_id):
+        self.tagDoubleClicked.emit(tag_id)
 
     def load_graph(self):
-        """
-        Clears the scene and builds a new graph from database data.
-        Called by the dashboard when this tab becomes visible.
-        """
-        # Stop simulation if it's running
-        self.timer.stop()
+        """Fetches data from the DB and builds the graph."""
+        if not self.db or self.project_id is None:
+            return
 
-        # Clear old items
-        self.scene.clear()
+        self.scene.clear_graph()
         self.nodes.clear()
         self.edges.clear()
 
-        # Get data from DB
         try:
             data = self.db.get_graph_data(self.project_id)
         except Exception as e:
-            print(f"Error loading graph data: {e}")
+            QMessageBox.critical(self, "Error", f"Could not load graph data: {e}")
             return
 
-        # 1. Create all nodes
+        pos_x, pos_y = 0, 0
         for reading in data['readings']:
-            node_key = f"r_{reading['id']}"
+            node_id = f"r_{reading['id']}"
             node_item = ReadingNodeItem(reading['id'], reading['name'], self)
-            # --- FIX: REMOVED connect call ---
-            self.scene.addItem(node_item)
-            self.nodes[node_key] = node_item
+            node_item.setPos(pos_x, pos_y)
+            self.scene.add_node(node_item)
+            self.nodes[node_id] = node_item
+            pos_x += 50
 
         for tag in data['tags']:
-            node_key = f"t_{tag['id']}"
+            node_id = f"t_{tag['id']}"
             node_item = TagNodeItem(tag['id'], tag['name'], self)
-            # --- FIX: REMOVED connect call ---
-            self.scene.addItem(node_item)
-            self.nodes[node_key] = node_item
+            node_item.setPos(pos_x, pos_y + 100)
+            self.scene.add_node(node_item)
+            self.nodes[node_id] = node_item
+            pos_x += 50
 
-        # 2. Create all edges
         for edge in data['edges']:
-            from_key = f"r_{edge['reading_id']}"
-            to_key = f"t_{edge['tag_id']}"
+            from_id = f"r_{edge['reading_id']}"
+            to_id = f"t_{edge['tag_id']}"
 
-            if from_key in self.nodes and to_key in self.nodes:
-                node1 = self.nodes[from_key]
-                node2 = self.nodes[to_key]
+            if from_id in self.nodes and to_id in self.nodes:
+                from_node = self.nodes[from_id]
+                to_node = self.nodes[to_id]
 
-                edge_item = GraphEdgeItem(node1, node2)
-                self.scene.addItem(edge_item)
+                edge_item = GraphEdgeItem(from_node, to_node)
+                self.scene.add_edge(edge_item)
                 self.edges.append(edge_item)
-                node1.add_edge(edge_item)
-                node2.add_edge(edge_item)
 
+                from_node.add_edge(edge_item)
+                to_node.add_edge(edge_item)
+
+        if self.nodes:
+            self.view.setSceneRect(self.scene.itemsBoundingRect().adjusted(-50, -50, 50, 50))
+
+    def update_physics(self):
+        """Simple physics simulation for the graph."""
         if not self.nodes:
-            return  # No graph to draw
-
-        # 3. Randomly position nodes to start
-        scene_size = 500 * math.sqrt(len(self.nodes))
-        for node in self.nodes.values():
-            node.setPos(random.uniform(-scene_size, scene_size),
-                        random.uniform(-scene_size, scene_size))
-
-        # 4. Start the physics simulation
-        self._simulation_steps = 0
-        self.timer.start(16)  # ~60 FPS
-
-    @Slot()
-    def _update_forces(self):
-        """One tick of the physics simulation."""
-        if not self.nodes:
-            self.timer.stop()
             return
 
-        all_nodes = list(self.nodes.values())
+        # --- FIX: Tuned constants to be more stable ---
+        K_REPEL = 20000  # Repulsion force
+        K_ATTRACT = 0.02  # Attraction force (spring) - WAS 0.05
+        DAMPING = 0.85  # Damping factor - WAS 0.95
+        CENTER_PULL = 0.002  # Force pulling nodes to center - WAS 0.001
+        MIN_DIST = 10.0  # Minimum distance to avoid division by zero
+        # --- END FIX ---
 
-        # Calculate all forces
-        for node in all_nodes:
-            node.calculate_forces(all_nodes, self.REPULSION, self.ATTRACTION)
+        node_list = list(self.nodes.values())
 
-        # Apply all forces
-        has_moved = False
-        for node in all_nodes:
-            if node.advance_position(self.DAMPING):
-                has_moved = True
+        for i, node_a in enumerate(node_list):
+            if node_a.isSelected():
+                if hasattr(node_a, 'velocity'):
+                    node_a.velocity = QPointF(0, 0)
+                continue
 
-        # Adjust all edges
+            force = QPointF(0, 0)
+
+            # 1. Repulsion from all other nodes
+            for j, node_b in enumerate(node_list):
+                if i == j:
+                    continue
+
+                delta = node_a.pos() - node_b.pos()
+                dist_sq = max(MIN_DIST, QPointF.dotProduct(delta, delta))
+
+                repel_force = K_REPEL / dist_sq
+
+                dist = math.sqrt(dist_sq)
+                force += (delta / dist) * repel_force
+
+            # 2. Attraction from connected nodes (edges)
+            for edge in node_a.edges:
+                other_node = edge.from_node if edge.to_node == node_a else edge.to_node
+
+                if other_node.isSelected():
+                    continue
+
+                delta = other_node.pos() - node_a.pos()
+                dist_sq = max(MIN_DIST, QPointF.dotProduct(delta, delta))
+
+                dist = math.sqrt(dist_sq)
+                attract_force = dist * K_ATTRACT  # Correct spring force F = k * x
+
+                force += (delta / dist) * attract_force
+
+            # 3. Pull towards center
+            center_delta = -node_a.pos()
+            force += center_delta * CENTER_PULL
+
+            # Apply force
+            if not hasattr(node_a, 'velocity'):
+                node_a.velocity = QPointF(0, 0)
+
+            node_a.velocity = (node_a.velocity + force) * DAMPING
+
+            if not (node_a.isUnderMouse() and QApplication.mouseButtons() & Qt.MouseButton.LeftButton):
+                node_a.setPos(node_a.pos() + node_a.velocity)
+
+        # Update all edge positions
         for edge in self.edges:
-            edge.adjust()
-
-        # Stop simulation if it's stable or has run long enough
-        self._simulation_steps += 1
-        if not has_moved or self._simulation_steps > 150:  # ~2.5 seconds
-            self.timer.stop()
-            self._center_graph()
-            print("Graph simulation complete.")
-
-    def _center_graph(self):
-        """Fits the view to the items after simulation."""
-        try:
-            bounds = self.scene.itemsBoundingRect().adjusted(-50, -50, 50, 50)
-            if bounds.isValid():
-                self.view.fitInView(bounds, Qt.AspectRatioMode.KeepAspectRatio)
-        except Exception as e:
-            print(f"Error centering graph: {e}")
-
-    def showEvent(self, event):
-        """Override showEvent to re-center the graph without re-running simulation."""
-        super().showEvent(event)
-        if not self.timer.isActive():
-            QTimer.singleShot(10, self._center_graph)
-
-    # --- NEW: Slot to receive click from node ---
-    @Slot(int, str)
-    def node_double_clicked(self, data_id, data_type):
-        """Called by a node item on double-click."""
-        if data_type == 'reading':
-            self.readingDoubleClicked.emit(data_id)
-        elif data_type == 'tag':
-            self.tagDoubleClicked.emit(data_id)
-    # --- END NEW ---
+            edge.update_position()

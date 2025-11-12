@@ -91,6 +91,8 @@ class SynthesisTab(QWidget):
         """Reloads the list of tags from the database."""
         self.tag_list.clear()
         try:
+            # This function now correctly gets tags for this project
+            # from the global pool.
             tags = self.db.get_tags_with_counts(self.project_id)
             if not tags:
                 item = QListWidgetItem("No tags created yet.")
@@ -227,7 +229,9 @@ class SynthesisTab(QWidget):
                 return
 
             try:
-                self.db.get_or_create_tag(self.project_id, new_name)
+                # --- FIX: Pass project_id to link the new tag ---
+                self.db.get_or_create_tag(new_name, self.project_id)
+                # --- END FIX ---
                 self.load_tags_list()
             except sqlite3.IntegrityError:
                 QMessageBox.warning(self, "Tag Exists", f"A tag named '{new_name}' already exists.")
@@ -255,7 +259,9 @@ class SynthesisTab(QWidget):
                 return
 
             try:
-                self.db.rename_tag(tag_id, new_name, self.project_id)
+                # --- GLOBAL TAGS FIX: Removed project_id ---
+                self.db.rename_tag(tag_id, new_name)
+                # --- END FIX ---
                 self.load_tags_list()  # Refresh list
                 self.tagsUpdated.emit()  # Refresh anchors
             except sqlite3.IntegrityError:
@@ -276,12 +282,11 @@ class SynthesisTab(QWidget):
         reply = QMessageBox.question(
             self, "Delete Tag",
             f"Are you sure you want to delete the tag '{tag_name}'?\n\n"
-            "This will delete the tag itself AND all anchors associated with it from all readings.",
+            "This will delete the tag itself AND all anchors associated with it from all projects.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
 
-        # --- FIX: Indentation error was here ---
         if reply == QMessageBox.StandardButton.Yes:
             try:
                 self.db.delete_tag_and_anchors(tag_id)
@@ -292,7 +297,6 @@ class SynthesisTab(QWidget):
                 self.anchor_display.clear()  # Clear detail view
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not delete tag: {e}")
-        # --- END FIX ---
 
     # --- NEW: Slot for Manage Anchors ---
     @Slot()

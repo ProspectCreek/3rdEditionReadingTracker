@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QTreeWidgetItemIterator
     # <-- REMOVED QTextBrowser
 )
-from PySide6.QtCore import Qt, Signal, QPoint, Slot, QTimer  # <-- REMOVED QUrl
+from PySide6.QtCore import Qt, Signal, QPoint, Slot, QTimer, QUrl  # <-- Added QTimer, QUrl
 from PySide6.QtGui import QAction, QTextCharFormat, QColor, QTextCursor
 
 from tabs.rich_text_editor_tab import (
@@ -564,8 +564,6 @@ class ReadingNotesTab(QWidget):
                     QTimer.singleShot(50, self.refresh_anchor_formatting)
                     # --- END BUG FIX ---
 
-                    # --- PHASE 2: Load Connections (REMOVED) ---
-
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"Could not load notes: {e}")
                     self.notes_stack.setCurrentWidget(self.notes_placeholder)
@@ -574,11 +572,9 @@ class ReadingNotesTab(QWidget):
             else:
                 self.current_outline_id = None
                 self.notes_stack.setCurrentWidget(self.notes_placeholder)
-                # --- PHASE 2: Clear Connections (REMOVED) ---
         else:
             self.current_outline_id = None
             self.notes_stack.setCurrentWidget(self.notes_placeholder)
-            # --- PHASE 2: Clear Connections (REMOVED) ---
 
     def show_outline_context_menu(self, position):
         """Shows the right-click menu for the outline tree."""
@@ -834,8 +830,6 @@ class ReadingNotesTab(QWidget):
 
     # --- END NEW ---
 
-    # --- NEW (PHASE 2): Method to load connections (REMOVED) ---
-
     # --- NEW: Synthesis Anchor Handlers ---
 
     @Slot(str)
@@ -859,7 +853,9 @@ class ReadingNotesTab(QWidget):
 
             try:
                 # 1. Get or create the tag ID
-                tag_data = self.db.get_or_create_tag(self.project_id, tag_name)
+                # --- FIX: Pass project_id to link the new tag ---
+                tag_data = self.db.get_or_create_tag(tag_name, self.project_id)
+                # --- END FIX ---
                 if not tag_data:
                     raise Exception(f"Could not get or create tag '{tag_name}'")
 
@@ -927,7 +923,9 @@ class ReadingNotesTab(QWidget):
                     return
 
                 # 4. Get/Create new tag
-                tag_data = self.db.get_or_create_tag(self.project_id, new_tag_name)
+                # --- FIX: Pass project_id to link the new tag ---
+                tag_data = self.db.get_or_create_tag(new_tag_name, self.project_id)
+                # --- END FIX ---
                 if not tag_data:
                     raise Exception(f"Could not get or create tag '{new_tag_name}'")
 

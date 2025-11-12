@@ -27,6 +27,110 @@ class DatabaseManager:
 
     # ----------------------------- schema -----------------------------
 
+    def _migrate_to_global_tags(self):
+        """
+        Performs a one-time migration from project-specific tags to
+        a global, de-duplicated tag table.
+        """
+        print("MIGRATION: Starting migration to global tag system...")
+        try:
+            self.cursor.execute("PRAGMA foreign_keys = OFF")
+
+            # 1. Rename old tables
+            self.cursor.execute("ALTER TABLE synthesis_tags RENAME TO _tags_old")
+            self.cursor.execute("ALTER TABLE synthesis_anchors RENAME TO _anchors_old")
+            self.cursor.execute("ALTER TABLE anchor_tag_links RENAME TO _links_old")
+
+            # 2. Create new global synthesis_tags table
+            self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS synthesis_tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE
+            )
+            """)
+
+            # 3. Populate new global tags table with unique names
+            self.cursor.execute("INSERT INTO synthesis_tags (name) SELECT DISTINCT name FROM _tags_old")
+            print("MIGRATION: Global tags table created.")
+
+            # 4. Re-create synthesis_anchors table with new foreign key
+            self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS synthesis_anchors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                reading_id INTEGER NOT NULL,
+                outline_id INTEGER,
+                tag_id INTEGER,
+                unique_doc_id TEXT NOT NULL,
+                selected_text TEXT,
+                comment TEXT,
+                FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE,
+                FOREIGN KEY (reading_id) REFERENCES readings(id) ON DELETE CASCADE,
+                FOREIGN KEY (outline_id) REFERENCES reading_outline(id) ON DELETE CASCADE,
+                FOREIGN KEY (tag_id) REFERENCES synthesis_tags(id) ON DELETE SET NULL
+            )
+            """)
+
+            # 5. Re-map and insert anchors
+            self.cursor.execute("""
+                INSERT INTO synthesis_anchors 
+                    (id, project_id, reading_id, outline_id, unique_doc_id, selected_text, comment, tag_id)
+                SELECT 
+                    a.id, a.project_id, a.reading_id, a.outline_id, a.unique_doc_id, a.selected_text, a.comment, new_tags.id
+                FROM _anchors_old a
+                LEFT JOIN _tags_old ON a.tag_id = _tags_old.id
+                LEFT JOIN synthesis_tags new_tags ON _tags_old.name = new_tags.name
+            """)
+            print("MIGRATION: Anchors re-mapped to new tag IDs.")
+
+            # 6. Re-create anchor_tag_links table
+            self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS anchor_tag_links (
+                anchor_id INTEGER NOT NULL,
+                tag_id INTEGER NOT NULL,
+                FOREIGN KEY (anchor_id) REFERENCES synthesis_anchors(id) ON DELETE CASCADE,
+                FOREIGN KEY (tag_id) REFERENCES synthesis_tags(id) ON DELETE CASCADE,
+                PRIMARY KEY (anchor_id, tag_id)
+            )
+            """)
+
+            # 7. Re-map and insert links
+            self.cursor.execute("""
+                INSERT INTO anchor_tag_links (anchor_id, tag_id)
+                SELECT 
+                    l.anchor_id, 
+                    new_tags.id
+                FROM _links_old l
+                JOIN _tags_old ON l.tag_id = _tags_old.id
+                JOIN synthesis_tags new_tags ON _tags_old.name = new_tags.name
+            """)
+            print("MIGRATION: Tag links re-mapped.")
+
+            # 8. Drop old tables
+            self.cursor.execute("DROP TABLE _tags_old")
+            self.cursor.execute("DROP TABLE _anchors_old")
+            self.cursor.execute("DROP TABLE _links_old")
+
+            self.conn.commit()
+            print("MIGRATION: Global tag migration successful.")
+
+        except Exception as e:
+            print(f"CRITICAL MIGRATION ERROR: {e}. Rolling back...")
+            self.conn.rollback()
+            # Try to restore original tables
+            try:
+                self.cursor.execute("DROP TABLE IF EXISTS synthesis_tags")
+                self.cursor.execute("DROP TABLE IF EXISTS synthesis_anchors")
+                self.cursor.execute("DROP TABLE IF EXISTS anchor_tag_links")
+                self.cursor.execute("ALTER TABLE _tags_old RENAME TO synthesis_tags")
+                self.cursor.execute("ALTER TABLE _anchors_old RENAME TO synthesis_anchors")
+                self.cursor.execute("ALTER TABLE _links_old RENAME TO anchor_tag_links")
+                print("MIGRATION: Rollback successful.")
+            except Exception as re:
+                print(f"CRITICAL MIGRATION ROLLBACK FAILED: {re}. Database may be in an inconsistent state.")
+        finally:
+            self.cursor.execute("PRAGMA foreign_keys = ON")
+
     def setup_database(self):
         # --- Items / Projects ---
         self.cursor.execute("""
@@ -346,18 +450,22 @@ class DatabaseManager:
 
         self.cursor.execute("PRAGMA foreign_keys = ON")
 
-        # --- NEW: Synthesis Tables ---
+        # --- Synthesis Tables ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS synthesis_tags (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id INTEGER NOT NULL,
-            name TEXT NOT NULL,
-            FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE,
-            UNIQUE(project_id, name)
+            name TEXT NOT NULL UNIQUE
         )
         """)
 
-        # --- Updated to include tag_id ---
+        # --- MIGRATION to global tags ---
+        self.cursor.execute("PRAGMA table_info(synthesis_tags)")
+        tag_cols = {row["name"] for row in self.cursor.fetchall()}
+        if "project_id" in tag_cols:
+            # Found the old schema, need to migrate
+            self._migrate_to_global_tags()
+        # --- END MIGRATION ---
+
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS synthesis_anchors (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -375,7 +483,7 @@ class DatabaseManager:
         )
         """)
 
-        # --- MIGRATION: Add tag_id to synthesis_anchors if missing ---
+        # --- MIGRATION: Add tag_id to synthesis_anchors if missing (legacy) ---
         self.cursor.execute("PRAGMA table_info(synthesis_anchors)")
         anchor_cols = {row["name"] for row in self.cursor.fetchall()}
         if "tag_id" not in anchor_cols:
@@ -393,6 +501,17 @@ class DatabaseManager:
             FOREIGN KEY (anchor_id) REFERENCES synthesis_anchors(id) ON DELETE CASCADE,
             FOREIGN KEY (tag_id) REFERENCES synthesis_tags(id) ON DELETE CASCADE,
             PRIMARY KEY (anchor_id, tag_id)
+        )
+        """)
+
+        # --- NEW: project_tag_links Table ---
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS project_tag_links (
+            project_id INTEGER NOT NULL,
+            tag_id INTEGER NOT NULL,
+            FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE,
+            FOREIGN KEY (tag_id) REFERENCES synthesis_tags(id) ON DELETE CASCADE,
+            PRIMARY KEY (project_id, tag_id)
         )
         """)
         # --- END NEW ---
@@ -1150,12 +1269,13 @@ class DatabaseManager:
         )
         self.conn.commit()
 
-    # --- NEW: Synthesis Functions ---
+    # --- Synthesis Functions (NOW GLOBAL) ---
 
-    def get_or_create_tag(self, project_id, tag_name):
+    def get_or_create_tag(self, tag_name, project_id=None):
         """
         Finds a tag by name. If it doesn't exist, creates it.
         Returns the tag's ID and name.
+        If project_id is provided, links the tag to the project.
         """
         tag_name = tag_name.strip()
         if not tag_name:
@@ -1163,41 +1283,69 @@ class DatabaseManager:
 
         # Try to find it
         self.cursor.execute(
-            "SELECT * FROM synthesis_tags WHERE project_id = ? AND name = ?",
-            (project_id, tag_name)
+            "SELECT * FROM synthesis_tags WHERE name = ?",
+            (tag_name,)
         )
         tag = self._rowdict(self.cursor.fetchone())
 
-        if tag:
-            return tag  # Returns {'id': 1, 'project_id': 1, 'name': '#tag'}
+        if not tag:
+            # Not found, so create it
+            try:
+                self.cursor.execute(
+                    "INSERT INTO synthesis_tags (name) VALUES (?)",
+                    (tag_name,)
+                )
+                self.conn.commit()
+                new_id = self.cursor.lastrowid
+                tag = {'id': new_id, 'name': tag_name}
+            except sqlite3.IntegrityError:
+                # Race condition: it was created by another process
+                # between our SELECT and INSERT. Let's just get it.
+                self.cursor.execute(
+                    "SELECT * FROM synthesis_tags WHERE name = ?",
+                    (tag_name,)
+                )
+                tag = self._rowdict(self.cursor.fetchone())
+            except Exception as e:
+                print(f"Error in get_or_create_tag: {e}")
+                return None
 
-        # Not found, so create it
-        try:
-            self.cursor.execute(
-                "INSERT INTO synthesis_tags (project_id, name) VALUES (?, ?)",
-                (project_id, tag_name)
-            )
-            self.conn.commit()
-            new_id = self.cursor.lastrowid
-            return {'id': new_id, 'project_id': project_id, 'name': tag_name}
-        except sqlite3.IntegrityError:
-            # Race condition: it was created by another process
-            # between our SELECT and INSERT. Let's just get it.
-            self.cursor.execute(
-                "SELECT * FROM synthesis_tags WHERE project_id = ? AND name = ?",
-                (project_id, tag_name)
-            )
-            return self._rowdict(self.cursor.fetchone())
-        except Exception as e:
-            print(f"Error in get_or_create_tag: {e}")
-            return None
+        if not tag:
+            return None  # Should not happen, but safety check
+
+        # --- NEW: Link to project if project_id is given ---
+        if project_id:
+            try:
+                self.cursor.execute(
+                    "INSERT OR IGNORE INTO project_tag_links (project_id, tag_id) VALUES (?, ?)",
+                    (project_id, tag['id'])
+                )
+                self.conn.commit()
+            except Exception as e:
+                print(f"Error linking tag {tag['id']} to project {project_id}: {e}")
+        # --- END NEW ---
+
+        return tag
 
     def get_project_tags(self, project_id):
-        """Gets all tags for a project."""
-        self.cursor.execute(
-            "SELECT * FROM synthesis_tags WHERE project_id = ? ORDER BY name",
-            (project_id,)
-        )
+        """
+        Gets all tags *used by* or *explicitly linked to* a specific project.
+        """
+        self.cursor.execute("""
+            SELECT DISTINCT t.id, t.name 
+            FROM synthesis_tags t
+            JOIN synthesis_anchors a ON t.id = a.tag_id
+            WHERE a.project_id = ?
+
+            UNION
+
+            SELECT DISTINCT t.id, t.name
+            FROM synthesis_tags t
+            JOIN project_tag_links ptl ON t.id = ptl.tag_id
+            WHERE ptl.project_id = ?
+
+            ORDER BY t.name
+        """, (project_id, project_id))
         return self._map_rows(self.cursor.fetchall())
 
     def create_anchor(self, project_id, reading_id, outline_id, tag_id, selected_text, comment, unique_doc_id):
@@ -1214,9 +1362,17 @@ class DatabaseManager:
 
             # Link the anchor to the tag
             self.cursor.execute(
-                "INSERT INTO anchor_tag_links (anchor_id, tag_id) VALUES (?, ?)",
+                "INSERT OR IGNORE INTO anchor_tag_links (anchor_id, tag_id) VALUES (?, ?)",
                 (anchor_id, tag_id)
             )
+
+            # --- NEW: Also link the tag to the project ---
+            self.cursor.execute(
+                "INSERT OR IGNORE INTO project_tag_links (project_id, tag_id) VALUES (?, ?)",
+                (project_id, tag_id)
+            )
+            # --- END NEW ---
+
             self.conn.commit()
             return anchor_id
         except Exception as e:
@@ -1238,9 +1394,22 @@ class DatabaseManager:
 
             # 3. Add the new (or same) tag link
             self.cursor.execute(
-                "INSERT INTO anchor_tag_links (anchor_id, tag_id) VALUES (?, ?)",
+                "INSERT OR IGNORE INTO anchor_tag_links (anchor_id, tag_id) VALUES (?, ?)",
                 (anchor_id, new_tag_id)
             )
+
+            # --- NEW: Also link the new tag to the project ---
+            # Get project_id from anchor
+            self.cursor.execute("SELECT project_id FROM synthesis_anchors WHERE id = ?", (anchor_id,))
+            res = self.cursor.fetchone()
+            if res:
+                project_id = res['project_id']
+                self.cursor.execute(
+                    "INSERT OR IGNORE INTO project_tag_links (project_id, tag_id) VALUES (?, ?)",
+                    (project_id, new_tag_id)
+                )
+            # --- END NEW ---
+
             self.conn.commit()
         except Exception as e:
             self.conn.rollback()
@@ -1282,25 +1451,26 @@ class DatabaseManager:
         """, (tag_id,))
         return self._map_rows(self.cursor.fetchall())
 
-    # --- NEW: Synthesis Tab Functions ---
+    # --- Synthesis Tab Functions ---
 
     def get_tags_with_counts(self, project_id):
         """
-        Gets all tags for a project, along with a count of
-        how many anchors are linked to each tag.
+        Gets all tags *used by* or *linked to* a project, along with a count of
+        how many anchors in *this project* are linked to each tag.
         """
         sql = """
             SELECT 
                 t.id, 
                 t.name, 
-                COUNT(l.anchor_id) as anchor_count
+                COUNT(a.id) as anchor_count
             FROM synthesis_tags t
-            LEFT JOIN anchor_tag_links l ON t.id = l.tag_id
-            WHERE t.project_id = ?
+            LEFT JOIN project_tag_links ptl ON t.id = ptl.tag_id
+            LEFT JOIN synthesis_anchors a ON t.id = a.tag_id AND a.project_id = ?
+            WHERE ptl.project_id = ? OR a.project_id = ?
             GROUP BY t.id, t.name
             ORDER BY t.name
         """
-        self.cursor.execute(sql, (project_id,))
+        self.cursor.execute(sql, (project_id, project_id, project_id))
         return self._map_rows(self.cursor.fetchall())
 
     def get_anchors_for_tag_with_context(self, tag_id):
@@ -1328,7 +1498,6 @@ class DatabaseManager:
         self.cursor.execute(sql, (tag_id,))
         return self._map_rows(self.cursor.fetchall())
 
-    # --- NEW: Simple anchor getter for management dialog ---
     def get_anchors_for_tag_simple(self, tag_id):
         """
         Gets all anchors for a tag, but only the anchor's own data,
@@ -1344,28 +1513,23 @@ class DatabaseManager:
         self.cursor.execute(sql, (tag_id,))
         return self._map_rows(self.cursor.fetchall())
 
-    # --- NEW: Tag Management Functions ---
-    def rename_tag(self, tag_id, new_name, project_id):
-        """Renames a tag. Checks for uniqueness conflict."""
+    # --- Tag Management Functions (now global) ---
+    def rename_tag(self, tag_id, new_name):
+        """Renames a tag globally. Checks for uniqueness conflict."""
         try:
             self.cursor.execute(
-                "UPDATE synthesis_tags SET name = ? WHERE id = ? AND project_id = ?",
-                (new_name, tag_id, project_id)
+                "UPDATE synthesis_tags SET name = ? WHERE id = ?",
+                (new_name, tag_id)
             )
             self.conn.commit()
         except sqlite3.IntegrityError:
             # Re-raise a more specific error
-            raise Exception(f"A tag named '{new_name}' already exists in this project.")
+            raise Exception(f"A tag named '{new_name}' already exists.")
 
     def delete_tag_and_anchors(self, tag_id):
         """
-        Deletes a tag and all associated anchors.
-        This relies on the `ON DELETE CASCADE` foreign keys.
-        1. Deleting the tag from `synthesis_tags` should cascade to `anchor_tag_links`.
-        2. We must then manually delete anchors that are now "orphaned" (have no tag_id).
-
-        Correction: A simpler way is to delete anchors that *link* to this tag,
-        then delete the tag.
+        Deletes a tag globally and all associated anchors
+        from all projects. Also unlinks it from projects.
         """
         try:
             # 1. Find all anchors linked to this tag
@@ -1374,13 +1538,17 @@ class DatabaseManager:
 
             if anchor_ids:
                 # 2. Delete those anchors (which cascades to anchor_tag_links)
-                # Ensure anchor_ids is a list of tuples for executemany
                 self.cursor.executemany(
                     "DELETE FROM synthesis_anchors WHERE id = ?",
                     [(aid,) for aid in anchor_ids]
                 )
 
-            # 3. Delete the tag itself
+            # 3. Delete links from project_tag_links (cascade)
+            # This step isn't strictly necessary if the tag is
+            # deleted, but it's good practice.
+            self.cursor.execute("DELETE FROM project_tag_links WHERE tag_id = ?", (tag_id,))
+
+            # 4. Delete the tag itself
             self.cursor.execute("DELETE FROM synthesis_tags WHERE id = ?", (tag_id,))
 
             self.conn.commit()
@@ -1389,7 +1557,7 @@ class DatabaseManager:
             print(f"Error deleting tag and anchors: {e}")
             raise
 
-    # --- NEW (PHASE 3): Function to get graph data ---
+    # --- Graph Data Functions ---
     def get_graph_data(self, project_id):
         """
         Gets all readings, tags, and the connections between them
@@ -1400,14 +1568,18 @@ class DatabaseManager:
         self.cursor.execute(readings_sql, (project_id,))
         readings = self._map_rows(self.cursor.fetchall())  # For Reading Nodes
 
-        # 2. Get all tags for this project
-        tags_sql = "SELECT id, name FROM synthesis_tags WHERE project_id = ?"
-        self.cursor.execute(tags_sql, (project_id,))
+        # 2. Get all tags *linked to this project* (used or unused)
+        tags_sql = """
+            SELECT DISTINCT t.id, t.name 
+            FROM synthesis_tags t
+            LEFT JOIN project_tag_links ptl ON t.id = ptl.tag_id
+            LEFT JOIN synthesis_anchors a ON t.id = a.tag_id AND a.project_id = ?
+            WHERE ptl.project_id = ? OR a.project_id = ?
+        """
+        self.cursor.execute(tags_sql, (project_id, project_id, project_id))
         tags = self._map_rows(self.cursor.fetchall())  # For Tag Nodes
 
         # 3. Get all connections (edges)
-        # This query finds all unique pairs of (reading_id, tag_id)
-        # linked through the synthesis_anchors table.
         edges_sql = """
             SELECT DISTINCT reading_id, tag_id
             FROM synthesis_anchors
@@ -1417,7 +1589,54 @@ class DatabaseManager:
         edges = self._map_rows(self.cursor.fetchall())  # For Edges
 
         return {"readings": readings, "tags": tags, "edges": edges}
-    # --- END NEW (PHASE 3) ---
+
+    def get_global_graph_tags(self):
+        """
+        Gets all unique tag names across all projects and counts
+        how many distinct projects use each tag.
+        """
+        # --- FIX: Select t.id ---
+        sql = """
+            SELECT 
+                t.id, 
+                t.name, 
+                COUNT(DISTINCT ptl.project_id) as project_count
+            FROM synthesis_tags t
+            LEFT JOIN project_tag_links ptl ON t.id = ptl.tag_id
+            GROUP BY t.id, t.name
+            ORDER BY t.name
+        """
+        # --- END FIX ---
+        self.cursor.execute(sql)
+        return self._map_rows(self.cursor.fetchall())
+
+    def get_global_anchors_for_tag_name(self, tag_name):
+        """
+        Gets all anchors matching a tag name from all projects,
+        joining with reading and project info for context.
+        """
+        sql = """
+            SELECT 
+                a.id, 
+                a.selected_text, 
+                a.comment,
+                r.id as reading_id,
+                r.title as reading_title,
+                r.nickname as reading_nickname,
+                o.id as outline_id,
+                o.section_title as outline_title,
+                i.id as project_id,
+                i.name as project_name
+            FROM synthesis_anchors a
+            JOIN synthesis_tags t ON a.tag_id = t.id
+            LEFT JOIN readings r ON a.reading_id = r.id
+            LEFT JOIN items i ON a.project_id = i.id
+            LEFT JOIN reading_outline o ON a.outline_id = o.id
+            WHERE t.name = ?
+            ORDER BY i.name, r.display_order, o.display_order, a.id
+        """
+        self.cursor.execute(sql, (tag_name,))
+        return self._map_rows(self.cursor.fetchall())
 
     # ---------------------------- utility ----------------------------
 

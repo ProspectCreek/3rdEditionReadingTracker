@@ -2,9 +2,10 @@ import os
 import sys
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QSplitter,
-    QStackedWidget, QLabel
+    QStackedWidget, QLabel, QPushButton, QHBoxLayout,
+    QMessageBox
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QPixmap
 
 try:
@@ -26,6 +27,7 @@ class HomeScreenWidget(QWidget):
 
     def __init__(self, db_manager, parent=None):
         super().__init__(parent)
+        self.db = db_manager  # --- NEW: Store db_manager ---
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -60,6 +62,39 @@ class HomeScreenWidget(QWidget):
             ))
 
         welcome_layout.addWidget(self.logo_label)
+
+        # --- NEW: Add Global Graph Button ---
+        welcome_layout.addStretch(1)  # Add stretch before button
+
+        self.btn_global_graph = QPushButton("Open Global Knowledge Graph")
+        font = self.btn_global_graph.font()
+        font.setPointSize(12)
+        self.btn_global_graph.setFont(font)
+        self.btn_global_graph.setMinimumHeight(40)
+        self.btn_global_graph.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_global_graph.setStyleSheet("""
+            QPushButton {
+                background-color: #003366;
+                color: white;
+                border-radius: 5px;
+                padding: 10px;
+            }
+            QPushButton:hover {
+                background-color: #004488;
+            }
+        """)
+
+        # Center button
+        button_layout = QHBoxLayout()
+        button_layout.addStretch(1)
+        button_layout.addWidget(self.btn_global_graph)
+        button_layout.addStretch(1)
+        welcome_layout.addLayout(button_layout)
+        welcome_layout.addStretch(1)  # Add stretch after button
+
+        self.btn_global_graph.clicked.connect(self.open_global_graph)
+        # --- END NEW ---
+
         self.splitter.addWidget(self.welcome_widget)
 
         # Set initial sizes from your main.py
@@ -67,3 +102,24 @@ class HomeScreenWidget(QWidget):
 
         # --- Connect the signal ---
         self.project_list.projectSelected.connect(self.projectSelected.emit)
+
+    # --- NEW: Slot to open global graph ---
+    @Slot()
+    def open_global_graph(self):
+        """
+        Imports and opens the GlobalGraphDialog.
+        Imported locally to prevent circular dependencies.
+        """
+        try:
+            from dialogs.global_graph_dialog import GlobalGraphDialog
+
+            # Pass the db manager to the dialog
+            dialog = GlobalGraphDialog(self.db, self)
+            dialog.exec()  # Open as a modal dialog
+
+        except ImportError:
+            QMessageBox.critical(self, "Error",
+                                 "GlobalGraphDialog could not be loaded. Please check 'dialogs/global_graph_dialog.py'.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not open global graph: {e}")
+    # --- END NEW ---
