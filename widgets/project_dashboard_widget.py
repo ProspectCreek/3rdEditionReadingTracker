@@ -40,7 +40,7 @@ class ProjectDashboardWidget(QWidget):
         self.bottom_tabs = []
         self.reading_tabs = {}  # Stores {reading_id: ReadingNotesTab}
         self.synthesis_tab = None
-        self.graph_view_tab = None
+        self.graph_view_tab = None # --- RENAMED: Still keep old variable name ---
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -200,13 +200,12 @@ class ProjectDashboardWidget(QWidget):
         self.synthesis_tab.tagsUpdated.connect(self._on_tags_updated)
         self.top_tab_widget.addTab(self.synthesis_tab, "Synthesis")
 
-        # --- Add Graph View Tab ---
+        # --- Add Graph View Tab (RENAMED) ---
         self.graph_view_tab = GraphViewTab(self.db, self.project_id)
-        # --- FIX: Connect interactivity signals to the correct slots ---
         self.graph_view_tab.readingDoubleClicked.connect(self.open_reading_from_graph)
         self.graph_view_tab.tagDoubleClicked.connect(self.open_tag_from_graph)
-        # --- END FIX ---
-        self.top_tab_widget.addTab(self.graph_view_tab, "Graph View")
+        self.top_tab_widget.addTab(self.graph_view_tab, "Connections") # <-- RENAMED
+        # --- END RENAMED ---
 
         self.load_readings()  # This populates the tree
 

@@ -76,7 +76,8 @@ class GlobalGraphDialog(QDialog):
         self.db = db
         self.nodes = {}  # Stores node items keyed by tag_name
 
-        self.setWindowTitle("Global Knowledge Graph")
+        # --- RENAMED ---
+        self.setWindowTitle("Global Knowledge Connections")
         self.setMinimumSize(1000, 700)
         self.setModal(True)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -237,7 +238,7 @@ class GlobalGraphDialog(QDialog):
         if not has_moved or self._simulation_steps > 200:
             self.timer.stop()
             self._center_graph()
-            print("Global graph simulation complete.")
+            print("Global connections simulation complete.") # <-- RENAMED
 
     def _center_graph(self):
         try:
@@ -245,7 +246,7 @@ class GlobalGraphDialog(QDialog):
             if bounds.isValid():
                 self.view.fitInView(bounds, Qt.AspectRatioMode.KeepAspectRatio)
         except Exception as e:
-            print(f"Error centering global graph: {e}")
+            print(f"Error centering global connections: {e}") # <-- RENAMED
 
     @Slot(str, str)
     def node_double_clicked(self, data_id_or_name, data_type):
@@ -330,7 +331,7 @@ class GlobalGraphDialog(QDialog):
                 # For now, show an info box
                 QMessageBox.information(
                     self,
-                    "Global Graph Navigation",
+                    "Global Connections Navigation", # <-- RENAMED
                     f"This anchor is in:\n\n"
                     f"Project ID: {project_id}\n"
                     f"Reading ID: {reading_id}\n"
