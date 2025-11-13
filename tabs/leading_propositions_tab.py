@@ -1,12 +1,14 @@
 # tabs/leading_propositions_tab.py
 import sys
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTreeWidget, QTreeWidgetItem,
-    QMenu, QMessageBox, QDialog, QPushButton, QHeaderView, QLabel
+    QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel,
+    QListWidget, QListWidgetItem, QFrame, QTextBrowser,
+    QMenu, QMessageBox, QDialog, QPushButton
 )
 from PySide6.QtCore import Qt, Signal, Slot, QPoint
-from PySide6.QtGui import QAction, QColor, QFont, QTextDocument
+from PySide6.QtGui import QAction, QColor, QFont
 
+# --- FIX: Import the new, correct dialog ---
 try:
     from dialogs.add_leading_proposition_dialog import AddLeadingPropositionDialog
 except ImportError:
@@ -22,232 +24,264 @@ except ImportError:
 
 class LeadingPropositionsTab(QWidget):
     """
-    A widget for managing "Leading Propositions" for a single reading.
-    Shows a tree view with columns.
+    A widget for managing "Leading Propositions" for a *single reading*.
     """
 
-    def __init__(self, db, reading_id, parent=None):
+    def __init__(self, db, project_id, reading_id, parent=None):
         super().__init__(parent)
         self.db = db
-        self.reading_id = reading_id
-        try:
-            reading_details = self.db.get_reading_details(self.reading_id)
-            self.project_id = reading_details['project_id']
-        except Exception as e:
-            print(f"Error getting project_id for LeadingPropositionsTab: {e}")
-            self.project_id = -1
+        self.project_id = project_id
+        self.reading_id = reading_id  # This tab is reading-specific
 
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(4)
 
-        # Button bar
+        self.add_item_btn = QPushButton("Add Leading Proposition")
+        self.add_item_btn.clicked.connect(self._add_item)
+
         button_layout = QHBoxLayout()
-        self.btn_add = QPushButton("Add Proposition")
-        button_layout.addWidget(self.btn_add)
+        button_layout.addWidget(self.add_item_btn)
         button_layout.addStretch()
         main_layout.addLayout(button_layout)
 
-        # Tree widget
-        self.tree_widget = QTreeWidget()
-        self.tree_widget.setHeaderLabels(["Proposition", "Location", "Importance"])
-        self.tree_widget.setColumnCount(3)
-        self.tree_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        main_layout.addWidget(splitter, 1)
 
-        # Set column widths
-        header = self.tree_widget.header()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        self.tree_widget.setColumnWidth(1, 150)
+        left_panel = QFrame()
+        left_panel.setFrameShape(QFrame.Shape.StyledPanel)
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(4, 4, 4, 4)
+        left_layout.addWidget(QLabel("Leading Propositions"))
 
-        main_layout.addWidget(self.tree_widget)
+        self.item_list = QListWidget()
+        self.item_list.currentItemChanged.connect(self.on_item_selected)
+        self.item_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.item_list.customContextMenuRequested.connect(self.show_context_menu)
+        left_layout.addWidget(self.item_list)
 
-        # --- Connections ---
-        self.btn_add.clicked.connect(self._add_item)
-        self.tree_widget.itemDoubleClicked.connect(self._edit_item)
-        self.tree_widget.customContextMenuRequested.connect(self.show_context_menu)
+        splitter.addWidget(left_panel)
 
+        right_panel = QFrame()
+        right_panel.setFrameShape(QFrame.Shape.StyledPanel)
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(4, 4, 4, 4)
+        right_layout.addWidget(QLabel("Details"))
+
+        self.detail_viewer = QTextBrowser()
+        right_layout.addWidget(self.detail_viewer)
+
+        splitter.addWidget(right_panel)
+        splitter.setSizes([250, 600])
+
+        self.item_list.itemDoubleClicked.connect(self._edit_item)
+
+        # Load data when the tab is created
         self.load_propositions()
 
-    def _html_to_plain(self, html):
-        """Utility to convert HTML to plain text for tree display."""
-        doc = QTextDocument()
-        doc.setHtml(html)
-        return doc.toPlainText().replace('\n', ' ').strip()
-
     def load_propositions(self):
-        """Reloads all propositions from the database into the tree."""
-        self.tree_widget.clear()
+        """Reloads the list of propositions from the database."""
+        self.item_list.clear()
+        self.detail_viewer.clear()
         try:
-            # 1. Get outline items for the location dropdown
-            outline_items_raw = self.db.get_reading_outline(self.reading_id, parent_id=None)
-            self.outline_map = {item['id']: item['section_title'] for item in outline_items_raw}
-            # Recursively build map
-            self._build_outline_map(outline_items_raw)
+            # --- FIX: Call the new, correct DB method ---
+            items = self.db.get_reading_propositions_simple(self.reading_id)
+            # --- END OF FIX ---
 
-            # 2. Get propositions
-            propositions = self.db.get_reading_propositions(self.reading_id)
-            if not propositions:
-                item = QTreeWidgetItem(["No propositions added yet."])
-                item.setDisabled(True)
-                item.setForeground(0, QColor("#888"))
-                item.setFont(0, QFont("Arial", 10, QFont.Weight.Normal, True))
-                self.tree_widget.addTopLevelItem(item)
+            if not items:
+                item = QListWidgetItem("No propositions added yet.")
+                item.setFlags(Qt.ItemFlag.NoItemFlags)
+                self.item_list.addItem(item)
                 return
 
-            for prop in propositions:
-                prop_text = self._html_to_plain(prop.get("proposition_text", ""))
+            for item_data in items:
+                # --- FIX: Use 'proposition_text' ---
+                display_text = item_data['proposition_text'].split('\n')[0]
+                if len(display_text) > 70:
+                    display_text = display_text[:70] + "..."
+                item = QListWidgetItem(display_text)
+                # --- END FIX ---
+                item.setData(Qt.ItemDataRole.UserRole, item_data['id'])
+                self.item_list.addItem(item)
+        except Exception as e:
+            QMessageBox.critical(self, "Error Loading Propositions", f"Could not load propositions: {e}")
 
-                # Build Location string
-                loc_text = self.outline_map.get(prop.get("outline_id"), "[Reading-Level]")
-                if prop.get("pages"):
-                    loc_text += f" (p. {prop.get('pages')})"
+    @Slot(QListWidgetItem, QListWidgetItem)
+    def on_item_selected(self, current_item, previous_item):
+        """Called when a proposition is clicked, loads its details."""
+        if current_item is None:
+            self.detail_viewer.clear()
+            return
+        item_id = current_item.data(Qt.ItemDataRole.UserRole)
+        if item_id is None:
+            self.detail_viewer.clear()
+            return
 
-                importance_text = self._html_to_plain(prop.get("importance_text", ""))
+        try:
+            # --- FIX: Call the new, correct DB method ---
+            data = self.db.get_reading_proposition_details(item_id)
+            # --- END FIX ---
+            if not data:
+                self.detail_viewer.setHtml("<i>Could not load proposition details.</i>")
+                return
 
-                item = QTreeWidgetItem([prop_text, loc_text, importance_text])
-                item.setData(0, Qt.ItemDataRole.UserRole, prop["id"])
+            # Format details for display
+            html = f"<h3>Proposition:</h3><p>{data.get('proposition_text', 'N/A').replace(chr(10), '<br>')}</p>"
 
-                # Set tooltips to show full content
-                item.setToolTip(0, f"<b>Proposition:</b><br>{prop.get('proposition_text', '')}")
-                item.setToolTip(1, f"<b>Location:</b><br>{loc_text}")
-                item.setToolTip(2, f"<b>Importance:</b><br>{prop.get('importance_text', '')}")
+            location = "Reading-Level Notes"
+            if data.get('outline_title'):
+                location = data['outline_title']
+            if data.get('pages'):
+                location += f" (p. {data.get('pages')})"
+            html += f"<h3>Location:</h3><p>{location}</p>"
 
-                self.tree_widget.addTopLevelItem(item)
+            html += f"<h3>Why it's important:</h3><p>{data.get('why_important', 'N/A').replace(chr(10), '<br>')}</p>"
+            html += f"<h3>Synthesis Tags:</h3><p>{data.get('synthesis_tags', 'N/A')}</p>"
 
-                # Auto-resize row height to content
-                item.setSizeHint(0, item.sizeHint(0))
+            self.detail_viewer.setHtml(html)
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Could not load propositions: {e}")
-            import traceback
-            traceback.print_exc()
+            self.detail_viewer.setHtml(f"<p><b>Error loading details:</b><br>{e}</p>")
+            QMessageBox.critical(self, "Error", f"Could not load proposition details: {e}")
 
-    def _build_outline_map(self, items):
-        """Recursively populates self.outline_map."""
-        for item in items:
-            self.outline_map[item['id']] = item['section_title']
-            children = self.db.get_reading_outline(self.reading_id, parent_id=item['id'])
-            if children:
-                self._build_outline_map(children)
+    @Slot(QPoint)
+    def show_context_menu(self, position):
+        menu = QMenu(self)
+        add_action = menu.addAction("Add New Leading Proposition...")
+        add_action.triggered.connect(self._add_item)
 
-    def _get_outline_items_for_dialog(self, parent_id=None):
-        """Recursively fetches outline items to build a nested list for the dialog."""
+        item = self.item_list.itemAt(position)
+        if item and item.data(Qt.ItemDataRole.UserRole) is not None:
+            menu.addSeparator()
+            edit_action = menu.addAction("Edit Leading Proposition...")
+            edit_action.triggered.connect(self._edit_item)
+            delete_action = menu.addAction("Delete Leading Proposition")
+            delete_action.triggered.connect(self._delete_item)
+
+        real_item_count = sum(1 for i in range(self.item_list.count()) if
+                              self.item_list.item(i).data(Qt.ItemDataRole.UserRole) is not None)
+        if real_item_count > 1 and ReorderDialog:
+            menu.addSeparator()
+            reorder_action = menu.addAction("Reorder Leading Propositions...")
+            reorder_action.triggered.connect(self._reorder_items)
+
+        menu.exec(self.item_list.mapToGlobal(position))
+
+    @Slot(QListWidgetItem)
+    def _on_item_double_clicked(self, item):
+        if item and item.data(Qt.ItemDataRole.UserRole) is not None:
+            self._edit_item()
+
+    def _get_outline_items(self, parent_id=None):
+        """Recursively fetches outline items for the dialog dropdown."""
         items = self.db.get_reading_outline(self.reading_id, parent_id=parent_id)
         for item in items:
-            children = self._get_outline_items_for_dialog(parent_id=item['id'])
+            children = self._get_outline_items(parent_id=item['id'])
             if children:
                 item['children'] = children
         return items
 
-    def show_context_menu(self, position):
-        menu = QMenu(self)
-        item = self.tree_widget.itemAt(position)
-
-        menu.addAction("Add Proposition", self._add_item)
-
-        if item and item.data(0, Qt.ItemDataRole.UserRole) is not None:
-            menu.addSeparator()
-            menu.addAction("Edit Proposition", self._edit_item)
-            menu.addAction("Delete Proposition", self._delete_item)
-
-        if ReorderDialog and self.tree_widget.topLevelItemCount() > 1:
-            menu.addSeparator()
-            reorder_action = QAction("Reorder Items...", self)
-            reorder_action.triggered.connect(self._reorder_items)
-            menu.addAction(reorder_action)
-
-        menu.exec(self.tree_widget.viewport().mapToGlobal(position))
-
     @Slot()
     def _add_item(self):
-        """Adds a new proposition."""
         if not AddLeadingPropositionDialog:
-            QMessageBox.critical(self, "Error", "Add Proposition Dialog could not be loaded.")
+            QMessageBox.critical(self, "Error", "Add Leading Proposition Dialog could not be loaded.")
             return
 
-        outline_items = self._get_outline_items_for_dialog()
-        dialog = AddLeadingPropositionDialog(
-            db_manager=self.db,
-            project_id=self.project_id,
-            outline_items=outline_items,
-            parent=self
-        )
+        outline_items = self._get_outline_items()
+        dialog = AddLeadingPropositionDialog(self.db, self.project_id, self.reading_id, outline_items, parent=self)
+
         if dialog.exec() == QDialog.DialogCode.Accepted:
             data = dialog.get_data()
+            if not data['proposition_text']:
+                QMessageBox.warning(self, "Invalid", "Proposition text cannot be empty.")
+                return
             try:
+                # --- FIX: Call new DB method ---
                 self.db.add_reading_proposition(self.reading_id, data)
                 self.load_propositions()
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Could not save proposition: {e}")
+                QMessageBox.critical(self, "Error", f"Could not save new proposition: {e}")
 
     @Slot()
     def _edit_item(self):
-        """Edits the selected proposition."""
-        item = self.tree_widget.currentItem()
-        if not item or item.data(0, Qt.ItemDataRole.UserRole) is None:
+        item = self.item_list.currentItem()
+        if not item or item.data(Qt.ItemDataRole.UserRole) is None:
+            return
+        item_id = item.data(Qt.ItemDataRole.UserRole)
+
+        if not AddLeadingPropositionDialog:
+            QMessageBox.critical(self, "Error", "Edit Leading Proposition Dialog could not be loaded.")
             return
 
-        proposition_id = item.data(0, Qt.ItemDataRole.UserRole)
-        current_data = self.db.get_reading_proposition_details(proposition_id)
+        # --- FIX: Call new DB method ---
+        current_data = self.db.get_reading_proposition_details(item_id)
         if not current_data:
-            QMessageBox.critical(self, "Error", "Could not find proposition details.")
+            QMessageBox.critical(self, "Error", "Could not find proposition details to edit.")
             return
 
-        outline_items = self._get_outline_items_for_dialog()
-        dialog = AddLeadingPropositionDialog(
-            db_manager=self.db,
-            project_id=self.project_id,
-            outline_items=outline_items,
-            current_data=current_data,
-            parent=self
-        )
+        outline_items = self._get_outline_items()
+        dialog = AddLeadingPropositionDialog(self.db, self.project_id, self.reading_id, outline_items,
+                                             current_data=current_data, parent=self)
 
         if dialog.exec() == QDialog.DialogCode.Accepted:
             data = dialog.get_data()
+            if not data['proposition_text']:
+                QMessageBox.warning(self, "Invalid", "Proposition text cannot be empty.")
+                return
             try:
-                self.db.update_reading_proposition(proposition_id, data)
+                # --- FIX: Call new DB method ---
+                self.db.update_reading_proposition(item_id, data)
                 self.load_propositions()
+                for i in range(self.item_list.count()):
+                    if self.item_list.item(i).data(Qt.ItemDataRole.UserRole) == item_id:
+                        self.item_list.setCurrentRow(i)
+                        break
+                self.on_item_selected(self.item_list.currentItem(), None)
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not update proposition: {e}")
 
     @Slot()
     def _delete_item(self):
-        """Deletes the selected proposition."""
-        item = self.tree_widget.currentItem()
-        if not item or item.data(0, Qt.ItemDataRole.UserRole) is None:
+        item = self.item_list.currentItem()
+        if not item or item.data(Qt.ItemDataRole.UserRole) is None:
             return
+        item_id = item.data(Qt.ItemDataRole.UserRole)
+        item_name = item.text()
 
-        proposition_id = item.data(0, Qt.ItemDataRole.UserRole)
         reply = QMessageBox.question(
             self, "Delete Proposition",
-            "Are you sure you want to delete this proposition?",
+            f"Are you sure you want to delete this proposition?\n\n'{item_name}'",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
+
         if reply == QMessageBox.StandardButton.Yes:
             try:
-                self.db.delete_reading_proposition(proposition_id)
+                # --- FIX: Call new DB method ---
+                self.db.delete_reading_proposition(item_id)
                 self.load_propositions()
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not delete proposition: {e}")
 
     @Slot()
     def _reorder_items(self):
-        """Opens the reorder dialog."""
-        try:
-            propositions = self.db.get_reading_propositions(self.reading_id)
-            if len(propositions) < 2:
-                QMessageBox.information(self, "Reorder", "Not enough items to reorder.")
-                return
+        if not ReorderDialog:
+            QMessageBox.critical(self, "Error", "Reorder dialog is not available.")
+            return
 
-            items_to_reorder = [(self._html_to_plain(p.get('proposition_text', '...')), p['id']) for p in propositions]
-            dialog = ReorderDialog(items_to_reorder, self)
+        items_to_reorder = []
+        for i in range(self.item_list.count()):
+            item = self.item_list.item(i)
+            item_id = item.data(Qt.ItemDataRole.UserRole)
+            if item_id is not None:
+                items_to_reorder.append((item.text(), item_id))
+        if len(items_to_reorder) < 2:
+            return
 
-            if dialog.exec() == QDialog.DialogCode.Accepted:
-                ordered_ids = dialog.ordered_db_ids
+        dialog = ReorderDialog(items_to_reorder, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            ordered_ids = dialog.ordered_db_ids
+            try:
+                # --- FIX: Call new DB method ---
                 self.db.update_reading_proposition_order(ordered_ids)
                 self.load_propositions()
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Could not reorder propositions: {e}")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Could not reorder propositions: {e}")

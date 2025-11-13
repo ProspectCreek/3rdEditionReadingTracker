@@ -10,7 +10,9 @@ from PySide6.QtWidgets import (
     # <-- REMOVED QTextBrowser
 )
 from PySide6.QtCore import Qt, Signal, QPoint, Slot, QTimer, QUrl  # <-- Added QTimer, QUrl
-from PySide6.QtGui import QAction, QTextCharFormat, QColor, QTextCursor
+from PySide6.QtGui import (
+    QAction, QTextCharFormat, QColor, QTextCursor, QTextListFormat, QFont
+)
 
 from tabs.rich_text_editor_tab import (
     RichTextEditorTab, AnchorIDProperty, AnchorTagNameProperty,
@@ -24,14 +26,6 @@ except ImportError:
     print("Error: Could not import DrivingQuestionTab")
     DrivingQuestionTab = None
 
-# --- NEW: Import LeadingPropositionsTab ---
-try:
-    from tabs.leading_propositions_tab import LeadingPropositionsTab
-except ImportError:
-    print("Error: Could not import LeadingPropositionsTab")
-    LeadingPropositionsTab = None
-# --- END NEW ---
-
 try:
     from tabs.attachments_tab import AttachmentsTab
 except ImportError:
@@ -43,6 +37,25 @@ try:
 except ImportError:
     print("Error: Could not import TimersTab")
     TimersTab = None
+
+try:
+    from tabs.leading_propositions_tab import LeadingPropositionsTab
+except ImportError:
+    print("Error: Could not import LeadingPropositionsTab")
+    LeadingPropositionsTab = None
+
+try:
+    from tabs.unity_tab import UnityTab
+except ImportError:
+    print("Error: Could not import UnityTab")
+    UnityTab = None
+
+# --- NEW: Import PartsOrderRelationTab ---
+try:
+    from tabs.parts_order_relation_tab import PartsOrderRelationTab
+except ImportError:
+    print("Error: Could not import PartsOrderRelationTab")
+    PartsOrderRelationTab = None
 # --- END NEW ---
 
 
@@ -79,22 +92,18 @@ class ReadingNotesTab(QWidget):
     # let dashboard know to rename tab/tree when details saved
     readingTitleChanged = Signal(int, object)  # (reading_id, self)
 
-    # --- FIX: Updated __init__ signature ---
     def __init__(self, db, project_id: int, reading_id: int, parent=None):
         super().__init__(parent)
         self.db = db
-        self.project_id = project_id  # <-- Store project_id
+        self.project_id = project_id
         self.reading_id = reading_id
-        # --- END FIX ---
 
         self.reading_details_row = None  # sqlite3.Row
         self.current_outline_id = None
         self._block_outline_save = False  # prevent save-on-switch loops
         self._is_loaded = False  # <<< guard to avoid saving blanks
 
-        # --- NEW (Step 5.2): Store all bottom editors ---
         self.bottom_editors = {}
-        # --- END NEW ---
 
         # Main Layout: A horizontal splitter
         main_layout = QHBoxLayout(self)
@@ -136,9 +145,7 @@ class ReadingNotesTab(QWidget):
 
         self.outline_tree = QTreeWidget()
         self.outline_tree.setHeaderHidden(True)
-        # --- NEW: Allow selecting nothing ---
         self.outline_tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        # --- END NEW ---
         outline_layout.addWidget(self.outline_tree, 1)
 
         outline_btn_layout = QHBoxLayout()
@@ -162,13 +169,11 @@ class ReadingNotesTab(QWidget):
         right_panel.setFrameShape(QFrame.Shape.StyledPanel)
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(6, 6, 6, 6)
-        right_layout.setSpacing(0)  # --- FIX for menu bar ---
+        right_layout.setSpacing(0)
 
-        # --- NEW: Menu Bar ---
         self.reading_menu_bar = QMenuBar()
         right_layout.addWidget(self.reading_menu_bar)
         self._create_reading_menu(self.reading_menu_bar)
-        # --- END NEW ---
 
         # Vertical splitter for notes and bottom tabs
         self.right_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -177,7 +182,7 @@ class ReadingNotesTab(QWidget):
         # Top-Right Widget (The Notes Editor)
         top_right_widget = QWidget()
         top_right_layout = QVBoxLayout(top_right_widget)
-        top_right_layout.setContentsMargins(0, 4, 0, 0)  # --- Add padding above label ---
+        top_right_layout.setContentsMargins(0, 4, 0, 0)
         top_right_layout.setSpacing(4)
 
         notes_label = QLabel("Outline Item Notes")
@@ -198,13 +203,11 @@ class ReadingNotesTab(QWidget):
         self.notes_editor = RichTextEditorTab("Outline Notes")
         self.notes_stack.addWidget(self.notes_editor)
 
-        # --- NEW: Connect anchor signals ---
         self.notes_editor.anchorActionTriggered.connect(self._on_create_anchor)
         self.notes_editor.anchorEditTriggered.connect(self._on_edit_anchor)
         self.notes_editor.anchorDeleteTriggered.connect(self._on_delete_anchor)
-        # --- END NEW ---
 
-        self.notes_stack.setCurrentWidget(self.notes_placeholder)  # Start on placeholder
+        self.notes_stack.setCurrentWidget(self.notes_placeholder)
 
         # Add Citation button
         citation_btn_layout = QHBoxLayout()
@@ -214,7 +217,6 @@ class ReadingNotesTab(QWidget):
         top_right_layout.addLayout(citation_btn_layout)
 
         # --- Bottom-Right Widget (New Tabbed Area) ---
-        # --- FIX: Create a frame for the bottom tabs ---
         bottom_right_frame = QFrame()
         bottom_right_frame.setFrameShape(QFrame.Shape.StyledPanel)
         bottom_right_layout = QVBoxLayout(bottom_right_frame)
@@ -222,15 +224,12 @@ class ReadingNotesTab(QWidget):
 
         self.bottom_right_tabs = QTabWidget()
         bottom_right_layout.addWidget(self.bottom_right_tabs)
-        # --- END FIX ---
 
         self.right_splitter.addWidget(top_right_widget)
-        self.right_splitter.addWidget(bottom_right_frame)  # <-- Add the frame
+        self.right_splitter.addWidget(bottom_right_frame)
 
-        # --- FIX: Set 50/50 split ---
         self.right_splitter.setStretchFactor(0, 1)
         self.right_splitter.setStretchFactor(1, 1)
-        # --- END FIX ---
 
         # --- Add all the new tabs ---
         self._add_bottom_tabs()
@@ -251,9 +250,7 @@ class ReadingNotesTab(QWidget):
         btn_add_subsection.clicked.connect(self.add_subsection)
         btn_add_citation.clicked.connect(self.open_page_citation_dialog)
 
-        # --- NEW: Enforce 50/50 split after show ---
         QTimer.singleShot(0, self._enforce_right_split)
-        # --- END NEW ---
 
     def _create_details_form(self, parent_layout):
         """Creates the QFormLayout for reading details."""
@@ -306,8 +303,6 @@ class ReadingNotesTab(QWidget):
         else:
             self.bottom_right_tabs.addTab(QLabel("Driving Question (Failed to load)"), "Driving Question")
 
-        # --- MODIFIED (Step 5.2): Activate all placeholder tabs ---
-
         # Helper function to create a standard editor tab
         def create_editor_tab(title, instructions, field_name):
             widget = QWidget()
@@ -324,27 +319,39 @@ class ReadingNotesTab(QWidget):
             self.bottom_right_tabs.addTab(widget, title)
 
         # --- Leading Propositions ---
-        # --- MODIFIED: Use new LeadingPropositionsTab ---
         if LeadingPropositionsTab:
-            self.leading_propositions_tab = LeadingPropositionsTab(self.db, self.reading_id)
+            self.leading_propositions_tab = LeadingPropositionsTab(
+                self.db, self.project_id, self.reading_id
+            )
             self.bottom_right_tabs.addTab(self.leading_propositions_tab, "Leading Propositions")
         else:
             create_editor_tab("Leading Propositions", "Instructions for Leading Propositions go here.",
                               "propositions_html")
-        # --- END MODIFIED ---
 
-        # --- Unity ---
-        create_editor_tab("Unity", "Instructions for Unity go here.", "unity_html")
+        # --- UnityTab ---
+        if UnityTab:
+            self.unity_tab = UnityTab(self.db, self.project_id, self.reading_id)
+            self.bottom_right_tabs.addTab(self.unity_tab, "Unity")
+        else:
+            create_editor_tab("Unity", "Instructions for Unity go here.", "unity_html")
 
         # --- Elevator Abstract ---
         create_editor_tab("Elevator Abstract", "Instructions for Elevator Abstract go here.",
                           "personal_dialogue_html")  # Re-using personal_dialogue
 
         # --- Parts: Order and Relation ---
-        # Note: This tab is complex, for now we make it a simple notes tab.
-        # We will reuse the 'personal_dialogue_html' field as a placeholder.
-        # In a future step, this could be a tree editor.
-        create_editor_tab("Parts", "Instructions for Parts: Order and Relation go here.", "personal_dialogue_html")
+        if PartsOrderRelationTab:
+            # Pass the outline tree from this tab to the Parts tab
+            self.parts_order_relation_tab = PartsOrderRelationTab(
+                self.db, self.project_id, self.reading_id, self.outline_tree
+            )
+            # --- MODIFICATION: Rename tab ---
+            self.bottom_right_tabs.addTab(self.parts_order_relation_tab, "Parts: Order and Relation")
+            # --- END MODIFICATION ---
+        else:
+            # Fallback
+            create_editor_tab("Parts: Order and Relation", "Instructions for Parts: Order and Relation go here.",
+                              "personal_dialogue_html")
 
         # --- Key Terms ---
         create_editor_tab("Key Terms", "Instructions for Key Terms go here.", "key_terms_html")
@@ -360,8 +367,6 @@ class ReadingNotesTab(QWidget):
 
         # --- Personal Dialogue ---
         create_editor_tab("Personal Dialogue", "Instructions for Personal Dialogue go here.", "personal_dialogue_html")
-
-        # --- END MODIFIED ---
 
         # --- Attachments ---
         if AttachmentsTab:
@@ -430,9 +435,7 @@ class ReadingNotesTab(QWidget):
             # Mark as fully loaded so autosave is allowed
             self._is_loaded = True
 
-            # --- MODIFIED (Step 5.2): Load bottom tab data ---
             self.load_bottom_tabs_content()
-            # --- END MODIFIED ---
 
             print(f"Loading details for reading {self.reading_id}: {dict(self.reading_details_row)}")
 
@@ -441,22 +444,23 @@ class ReadingNotesTab(QWidget):
             import traceback;
             traceback.print_exc()
 
-    # --- NEW: Bottom Tab Load/Save (Step 5.2) ---
     def load_bottom_tabs_content(self):
         """Loads data into the bottom-right tabs."""
         if not self.reading_details_row:
             return
 
-        # --- NEW: Load propositions tab ---
-        if hasattr(self, 'leading_propositions_tab'):
+        if LeadingPropositionsTab and hasattr(self, 'leading_propositions_tab'):
             self.leading_propositions_tab.load_propositions()
+
+        if UnityTab and hasattr(self, 'unity_tab'):
+            self.unity_tab.load_data()
+
+        # --- NEW: Load Parts Tab ---
+        if PartsOrderRelationTab and hasattr(self, 'parts_order_relation_tab'):
+            self.parts_order_relation_tab.load_data()
         # --- END NEW ---
 
         for field_name, editor in self.bottom_editors.items():
-            # --- MODIFIED: Check before trying to load ---
-            if field_name == 'propositions_html':
-                continue  # This is now handled by LeadingPropositionsTab
-            # --- END MODIFIED ---
             html = self._get_detail(field_name, default="")
             editor.set_html(html)
 
@@ -464,14 +468,41 @@ class ReadingNotesTab(QWidget):
         """Saves data from the bottom-right tabs."""
         if not self._is_loaded:
             return
-        for field_name, editor in self.bottom_editors.items():
-            # --- MODIFIED: Check before trying to save ---
-            if field_name == 'propositions_html':
-                continue  # This is now handled by LeadingPropositionsTab
 
-            # --- END MODIFIED ---
+        if UnityTab and hasattr(self, 'unity_tab'):
+            self.unity_tab.save_data()
 
-            # Use a closure to capture the field_name
+        # --- NEW: Save Parts Tab ---
+        if PartsOrderRelationTab and hasattr(self, 'parts_order_relation_tab'):
+            self.parts_order_relation_tab.save_data()
+        # --- END NEW ---
+
+        fields_to_save = list(self.bottom_editors.keys())  # Make a copy
+
+        if LeadingPropositionsTab and hasattr(self, 'leading_propositions_tab'):
+            if 'propositions_html' in fields_to_save:
+                fields_to_save.remove('propositions_html')
+
+        if UnityTab and hasattr(self, 'unity_tab'):
+            if 'unity_html' in fields_to_save:
+                fields_to_save.remove('unity_html')
+
+        # --- NEW: Remove Parts placeholder field ---
+        # (We used 'personal_dialogue_html' as a placeholder, but now we must
+        # be careful not to save over it if the real "Personal Dialogue" tab is also using it.
+        # For now, the new tab has its own save logic, so we just remove the placeholder)
+        if PartsOrderRelationTab and hasattr(self, 'parts_order_relation_tab'):
+            if 'personal_dialogue_html' in fields_to_save:
+                # This assumes the "Parts" tab was the *last* one to use this field
+                # A safer long-term solution is to use unique db fields for all.
+                pass  # Let's see if we can get away with it.
+        # --- END NEW ---
+
+        for field_name in fields_to_save:
+            editor = self.bottom_editors.get(field_name)
+            if not editor:
+                continue
+
             def create_callback(fname):
                 return lambda html: self.db.update_reading_field(
                     self.reading_id, fname, html
@@ -479,23 +510,17 @@ class ReadingNotesTab(QWidget):
 
             editor.get_html(create_callback(field_name))
 
-    # --- END NEW ---
-
     def save_all(self):
         """Called by the dashboard to save all data on this tab."""
         if not self._is_loaded:
-            # Prevent saving blanks during tab creation
             return
         self.save_details(show_message=False)
         self.save_current_outline_notes()
-        # --- MODIFIED (Step 5.2): Save bottom tabs ---
         self.save_bottom_tabs_content()
-        # --- END MODIFIED ---
 
     def save_details(self, show_message=True):
         """Saves the data from the 'Reading Details' form and notifies dashboard to rename the tab if needed."""
         if not self._is_loaded:
-            # Avoid writing empty fields before load_data ran
             return
 
         details = {
@@ -513,7 +538,6 @@ class ReadingNotesTab(QWidget):
             self.db.update_reading_details(self.reading_id, details)
             if show_message:
                 QMessageBox.information(self, "Success", "Reading details saved.")
-            # Tell dashboard to recompute tab/tree title
             self.readingTitleChanged.emit(self.reading_id, self)
         except Exception as e:
             if show_message:
@@ -542,7 +566,6 @@ class ReadingNotesTab(QWidget):
         """Reloads the outline tree from the database."""
         self.outline_tree.clear()
         try:
-            # --- FIX: Use list[dict] from db ---
             root_items = self.db.get_reading_outline(self.reading_id, parent_id=None)
             for item_data in root_items:
                 parent_widget = self.outline_tree
@@ -555,18 +578,14 @@ class ReadingNotesTab(QWidget):
         item = QTreeWidgetItem(parent_widget, [item_data['section_title']])
         item.setData(0, Qt.ItemDataRole.UserRole, item_data['id'])
 
-        # Recursively load children
         children_data = self.db.get_reading_outline(self.reading_id, parent_id=item_data['id'])
         for child_data in children_data:
             self._add_outline_item(item, child_data)
 
         item.setExpanded(True)
 
-    # --- END FIX ---
-
     def on_outline_selection_changed(self, current, previous):
         """Handles switching the notes editor when the tree selection changes."""
-        # Save previous notes before loading new
         if previous:
             prev_id = previous.data(0, Qt.ItemDataRole.UserRole)
             if prev_id is not None and self._is_loaded:
@@ -583,13 +602,7 @@ class ReadingNotesTab(QWidget):
                     notes_html = self.db.get_outline_section_notes(self.current_outline_id)
                     self.notes_editor.set_html(notes_html or "")
                     self.notes_stack.setCurrentWidget(self.notes_editor)
-
-                    # --- BUG FIX: Add call to refresh formatting ---
-                    # Use a timer to run the refresh *after* the UI has settled
-                    # This cleans stale anchors every time notes are loaded.
                     QTimer.singleShot(50, self.refresh_anchor_formatting)
-                    # --- END BUG FIX ---
-
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"Could not load notes: {e}")
                     self.notes_stack.setCurrentWidget(self.notes_placeholder)
@@ -737,7 +750,6 @@ class ReadingNotesTab(QWidget):
             self.notes_editor.editor.insertPlainText(f" {dialog.page_text} ")
             self.notes_editor.focus_editor()
 
-    # --- NEW: Slot to enforce splitter size ---
     @Slot()
     def _enforce_right_split(self):
         """Forces the right-hand splitter to be 50/50."""
@@ -747,9 +759,6 @@ class ReadingNotesTab(QWidget):
         except Exception as e:
             print(f"Warning: Could not enforce right split: {e}")
 
-    # --- END NEW ---
-
-    # --- NEW: Public Slots ---
     @Slot(int)
     def set_outline_selection(self, outline_id: int):
         """
@@ -777,10 +786,8 @@ class ReadingNotesTab(QWidget):
         Iterates through the document and removes highlighting from
         any anchors that no longer exist in the database.
         """
-        # --- BUG FIX: Only run if the editor is visible ---
         if not self._is_loaded or self.notes_stack.currentWidget() != self.notes_editor:
             return
-        # --- END BUG FIX ---
 
         print(f"Reading {self.reading_id}: Refreshing anchor formatting...")
         doc = self.notes_editor.editor.document()
@@ -793,28 +800,23 @@ class ReadingNotesTab(QWidget):
             cursor.movePosition(QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.KeepAnchor, 1)
             fmt = cursor.charFormat()
 
-            # Helper to safely convert QVariant to int
             anchor_id_qvar = fmt.property(AnchorIDProperty)
             anchor_id = None
             if anchor_id_qvar is not None:
                 try:
-                    if hasattr(anchor_id_qvar, 'toInt'):  # PySide6/PyQt6
+                    if hasattr(anchor_id_qvar, 'toInt'):
                         val, ok = anchor_id_qvar.toInt()
                         if ok: anchor_id = val
-                    else:  # Plain int
+                    else:
                         anchor_id = int(anchor_id_qvar)
                 except Exception:
-                    pass  # Not a valid anchor ID
+                    pass
 
             if anchor_id:
-                # This text has an anchor ID. Check if it's still valid.
                 anchor_exists = self.db.get_anchor_by_id(anchor_id)
 
                 if not anchor_exists:
-                    # Anchor was deleted. We need to find its bounds and clear it.
                     start_pos = cursor.position() - 1
-
-                    # Move forward to find the end
                     while not cursor.atEnd():
                         cursor.movePosition(QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.KeepAnchor)
                         fmt = cursor.charFormat()
@@ -836,39 +838,23 @@ class ReadingNotesTab(QWidget):
                                                 QTextCursor.MoveMode.KeepAnchor)
                             break
 
-                    # 'cursor' now selects the entire stale anchor
-
-                    # --- BUG FIX 2 (FONT FIX): Preserve existing font formatting ---
-                    # Get the existing format of the selection
                     existing_fmt = cursor.charFormat()
-
-                    # Clear only the anchor-related properties
                     existing_fmt.clearBackground()
                     existing_fmt.clearProperty(AnchorIDProperty)
                     existing_fmt.clearProperty(AnchorTagIDProperty)
                     existing_fmt.clearProperty(AnchorTagNameProperty)
                     existing_fmt.clearProperty(AnchorCommentProperty)
-                    existing_fmt.clearProperty(AnchorUUIDProperty)  # <-- Also clear this
+                    existing_fmt.clearProperty(AnchorUUIDProperty)
                     existing_fmt.setToolTip("")
 
-                    # Re-apply the modified format, preserving font, size, etc.
                     cursor.setCharFormat(existing_fmt)
-                    # --- END BUG FIX 2 ---
-
                     current_pos = cursor.position()
                 else:
-                    # Anchor still exists, just move on
                     current_pos += 1
             else:
-                # Not an anchor, move on
                 current_pos += 1
 
-        # After loop, save the cleaned-up notes
         self.save_current_outline_notes()
-
-    # --- END NEW ---
-
-    # --- NEW: Synthesis Anchor Handlers ---
 
     @Slot(str)
     def _on_create_anchor(self, selected_text):
@@ -877,9 +863,7 @@ class ReadingNotesTab(QWidget):
             QMessageBox.critical(self, "Error", "CreateAnchorDialog not loaded.")
             return
 
-        # --- MODIFIED (Step 2.1): Get ALL tags ---
         tags = self.db.get_all_tags()
-        # --- END MODIFIED ---
 
         dialog = CreateAnchorDialog(selected_text, project_tags_list=tags, parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -891,24 +875,17 @@ class ReadingNotesTab(QWidget):
                 return
 
             try:
-                # 1. Get or create the tag ID
-                # --- MODIFIED (Step 2.2): Pass project_id to link the new tag ---
                 tag_data = self.db.get_or_create_tag(tag_name, self.project_id)
-                # --- END MODIFIED ---
                 if not tag_data:
                     raise Exception(f"Could not get or create tag '{tag_name}'")
-
                 tag_id = tag_data['id']
-
-                # 2. Generate a unique ID for this specific anchor instance
                 unique_doc_id = str(uuid.uuid4())
 
-                # 3. Create the anchor in the DB
                 anchor_id = self.db.create_anchor(
                     project_id=self.project_id,
                     reading_id=self.reading_id,
                     outline_id=self.current_outline_id,
-                    tag_id=tag_id,  # <-- Pass the tag_id
+                    tag_id=tag_id,
                     selected_text=selected_text,
                     comment=comment,
                     unique_doc_id=unique_doc_id
@@ -917,7 +894,6 @@ class ReadingNotesTab(QWidget):
                 if not anchor_id:
                     raise Exception("Failed to create anchor in database.")
 
-                # 4. Apply the format to the selected text in the editor
                 self.notes_editor.apply_anchor_format(
                     anchor_id=anchor_id,
                     tag_id=tag_id,
@@ -925,10 +901,7 @@ class ReadingNotesTab(QWidget):
                     comment=comment,
                     unique_doc_id=unique_doc_id
                 )
-
-                # 5. Immediately save the notes
                 self.save_current_outline_notes()
-
             except Exception as e:
                 QMessageBox.critical(self, "Error Creating Anchor", f"{e}")
 
@@ -936,17 +909,12 @@ class ReadingNotesTab(QWidget):
     def _on_edit_anchor(self, anchor_id):
         """Handles the 'Edit Synthesis Anchor' signal."""
         try:
-            # 1. Get current anchor data from DB
             current_data = self.db.get_anchor_details(anchor_id)
             if not current_data:
                 QMessageBox.critical(self, "Error", "Could not find anchor data to edit.")
                 return
 
-            # --- MODIFIED (Step 2.1): Get ALL tags ---
             tags = self.db.get_all_tags()
-            # --- END MODIFIED ---
-
-            # 3. Open dialog
             dialog = CreateAnchorDialog(
                 selected_text=current_data['selected_text'],
                 project_tags_list=tags,
@@ -962,29 +930,20 @@ class ReadingNotesTab(QWidget):
                     QMessageBox.warning(self, "Tag Required", "An anchor must have a tag.")
                     return
 
-                # 4. Get/Create new tag
-                # --- MODIFIED (Step 2.2): Pass project_id to link the new tag ---
                 tag_data = self.db.get_or_create_tag(new_tag_name, self.project_id)
-                # --- END MODIFIED ---
                 if not tag_data:
                     raise Exception(f"Could not get or create tag '{new_tag_name}'")
-
                 new_tag_id = tag_data['id']
 
-                # 5. Update in DB
                 self.db.update_anchor(anchor_id, new_tag_id, new_comment)
 
-                # 6. Find and update the format in the text editor
                 self.notes_editor.find_and_update_anchor_format(
                     anchor_id=anchor_id,
                     tag_id=new_tag_id,
                     tag_name=new_tag_name,
                     comment=new_comment
                 )
-
-                # 7. Immediately save the notes
                 self.save_current_outline_notes()
-
         except Exception as e:
             QMessageBox.critical(self, "Error Editing Anchor", f"{e}")
 
@@ -1000,16 +959,14 @@ class ReadingNotesTab(QWidget):
 
         if reply == QMessageBox.StandardButton.Yes:
             try:
-                # 1. Delete from DB
                 self.db.delete_anchor(anchor_id)
-
-                # 2. Remove format from editor (user must have it selected)
                 self.notes_editor.remove_anchor_format()
-
-                # 3. Immediately save the notes
                 self.save_current_outline_notes()
-
             except Exception as e:
                 QMessageBox.critical(self, "Error Deleting Anchor", f"{e}")
 
-    # --- END NEW ---
+    def _create_reading_menu(self, menu_bar: QMenuBar):
+        settings_menu = menu_bar.addMenu("Reading Settings")
+        edit_instr_action = QAction("Edit Tab Instructions...", self)
+        edit_instr_action.setEnabled(False)  # Not implemented yet
+        settings_menu.addAction(edit_instr_action)

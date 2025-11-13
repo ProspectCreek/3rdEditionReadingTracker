@@ -16,15 +16,16 @@ except ImportError:
 
 class AddLeadingPropositionDialog(QDialog):
     """
-    Dialog for adding or editing a Reading-Specific Proposition.
-    Based on image_d1e328.png.
+    Dialog for adding or editing a 'Leading Proposition'
+    that is specific to a single reading.
     """
 
-    def __init__(self, db_manager, project_id, outline_items, current_data=None, parent=None):
+    def __init__(self, db_manager, project_id, reading_id, outline_items, current_data=None, parent=None):
         super().__init__(parent)
 
         self.db = db_manager
         self.project_id = project_id
+        self.reading_id = reading_id
         self.outline_items = outline_items
         self.current_data = current_data if current_data else {}
 
@@ -35,13 +36,13 @@ class AddLeadingPropositionDialog(QDialog):
         form_layout = QFormLayout()
 
         # --- Proposition Text ---
-        self.proposition_edit = QTextEdit()
-        self.proposition_edit.setPlaceholderText("Enter the proposition...")
-        self.proposition_edit.setMinimumHeight(80)
-        self.proposition_edit.setHtml(self.current_data.get("proposition_text", ""))
-        form_layout.addRow("Proposition:", self.proposition_edit)
+        self.proposition_text_edit = QTextEdit()
+        self.proposition_text_edit.setMinimumHeight(80)
+        self.proposition_text_edit.setPlaceholderText("Enter the proposition...")
+        self.proposition_text_edit.setText(self.current_data.get("proposition_text", ""))
+        form_layout.addRow("Proposition:", self.proposition_text_edit)
 
-        # --- Location (Outline + Pages) ---
+        # --- Location (Outline) ---
         where_layout = QHBoxLayout()
         where_layout.setContentsMargins(0, 0, 0, 0)
         self.where_combo = QComboBox()
@@ -58,17 +59,17 @@ class AddLeadingPropositionDialog(QDialog):
         self.page_edit.setFixedWidth(60)
         self.page_edit.setText(self.current_data.get("pages", ""))
 
-        where_layout.addWidget(self.where_combo, 1)  # Give combo stretch
+        where_layout.addWidget(self.where_combo)
         where_layout.addWidget(QLabel("Page(s):"))
         where_layout.addWidget(self.page_edit)
         form_layout.addRow("Location:", where_layout)
 
         # --- Why this is important ---
-        self.importance_edit = QTextEdit()
-        self.importance_edit.setPlaceholderText("Why is this proposition important?")
-        self.importance_edit.setMinimumHeight(60)
-        self.importance_edit.setHtml(self.current_data.get("importance_text", ""))
-        form_layout.addRow("Why this is important:", self.importance_edit)
+        self.why_edit = QTextEdit()
+        self.why_edit.setMinimumHeight(60)
+        self.why_edit.setPlaceholderText("Why is this proposition important?")
+        self.why_edit.setText(self.current_data.get("why_important", ""))
+        form_layout.addRow("Why is this important:", self.why_edit)
 
         # --- Synthesis Tags ---
         tags_layout = QHBoxLayout()
@@ -85,13 +86,12 @@ class AddLeadingPropositionDialog(QDialog):
             connect_btn.setEnabled(False)
             connect_btn.setToolTip("Database connection not available or dialog not found")
 
-        tags_layout.addWidget(self.tags_edit, 1)
+        tags_layout.addWidget(self.tags_edit)
         tags_layout.addWidget(connect_btn)
         form_layout.addRow("Synthesis Tags:", tags_layout)
 
         main_layout.addLayout(form_layout)
 
-        # --- Standard OK/Cancel buttons ---
         self.button_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -102,7 +102,7 @@ class AddLeadingPropositionDialog(QDialog):
     def _populate_where_combo(self, outline_items, indent=0):
         """Recursively populates the 'Where in Reading' dropdown."""
         if indent == 0:
-            self.where_combo.addItem("[Reading-Level]", None)  # Top-level
+            self.where_combo.addItem("[Reading-Level Notes]", None)  # Top-level
 
         for item in outline_items:
             prefix = "  " * indent
@@ -112,9 +112,18 @@ class AddLeadingPropositionDialog(QDialog):
             if 'children' in item:
                 self._populate_where_combo(item['children'], indent + 1)
 
+    def get_data(self):
+        """Returns all data from the dialog fields in a dictionary."""
+        return {
+            "proposition_text": self.proposition_text_edit.toPlainText().strip(),
+            "outline_id": self.where_combo.currentData(),
+            "pages": self.page_edit.text().strip(),
+            "why_important": self.why_edit.toPlainText().strip(),
+            "synthesis_tags": self.tags_edit.text().strip(),
+        }
+
     @Slot()
     def _open_connect_tags_dialog(self):
-        """Opens the tag connection dialog."""
         if not self.db or self.project_id is None:
             QMessageBox.warning(self, "Error", "Database connection is not available.")
             return
@@ -134,13 +143,3 @@ class AddLeadingPropositionDialog(QDialog):
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not open tag connector: {e}")
-
-    def get_data(self):
-        """Returns all data from the dialog fields in a dictionary."""
-        return {
-            "proposition_text": self.proposition_edit.toHtml(),
-            "outline_id": self.where_combo.currentData(),
-            "pages": self.page_edit.text().strip(),
-            "importance_text": self.importance_edit.toHtml(),
-            "synthesis_tags": self.tags_edit.text().strip(),
-        }
