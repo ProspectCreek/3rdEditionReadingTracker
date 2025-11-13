@@ -1,172 +1,736 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Quill Editor (Qt-driven)</title>
-  <link rel="stylesheet" href="old%20files/web_resources/quill.snow.css" />
-  <style>
-    html, body { margin:0; padding:0; height:100%; width:100%; }
-    #editor { height:100vh; }
-    .ql-editor { font-size:14px; }
-  </style>
-</head>
-<body>
-  <div id="editor"></div>
+# tabs/rich_text_editor_tab.py
+import sys
+import uuid  # <-- NEW: For synthesis anchors
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QComboBox, QPushButton,
+    QTextEdit, QInputDialog, QMessageBox, QSizePolicy, QColorDialog,
+    QMenu
+)
+from PySide6.QtCore import Qt, Signal, QPoint, Slot  # <-- Added Slot
+from PySide6.QtGui import (
+    QFontDatabase, QTextCharFormat, QTextCursor, QTextListFormat,
+    QColor, QFont, QAction
+)
 
-  <script src="old%20files/web_resources/quill.min.js"></script>
-  <script>
-    if (typeof window.Quill === "undefined" || !Quill.import) {
-      throw new Error("Quill failed to load. Check web_resources/quill.min.js");
-    }
+_PT_SIZES = [10, 12, 14, 16, 18, 20, 24, 32]
+_FONTS = [
+    "Times New Roman",  # put first so we prefer it if available
+    "Times",
+    "Sans Serif", "Serif", "Monospace",
+    "Arial", "Georgia",
+    "Courier New", "Tahoma", "Verdana", "Segoe UI",
+]
 
-    // Font whitelist (class tokens the Qt toolbar sends)
-    var FontFormat = Quill.import('formats/font');
-    FontFormat.whitelist = [
-      '', 'serif','monospace',
-      'arial','georgia','times-new-roman','courier-new','tahoma','verdana','segoe-ui'
-    ];
-    Quill.register(FontFormat, true);
+_CUSTOM = "__custom__"
 
-    // Size whitelist (style px)
-    var SizeStyle = Quill.import('attributors/style/size');
-    SizeStyle.whitelist = ['','10px','12px','14px','16px','18px','20px','24px','32px'];
-    Quill.register(SizeStyle, true);
+# --- NEW: Custom Property IDs for Anchors ---
+# Qt reserves property IDs up to 1000. User properties should start above that.
+BaseAnchorProperty = 1001
+AnchorIDProperty = BaseAnchorProperty + 1
+AnchorTagIDProperty = BaseAnchorProperty + 2
+AnchorTagNameProperty = BaseAnchorProperty + 3
+AnchorCommentProperty = BaseAnchorProperty + 4
+AnchorUUIDProperty = BaseAnchorProperty + 5
+# --- END NEW ---
 
-    // IMPORTANT: no toolbar module here — Qt provides the toolbar
-    var quill = new Quill('#editor', {
-      theme: 'snow',
-      formats: [
-        'font','size','header',
-        'bold','italic','underline','strike',
-        'color','background',
-        'list','script','indent','align',
-        'link','image','video'
-      ],
-      modules: { history: true, clipboard: true, keyboard: true }
-    });
 
-    // Track last non-collapsed selection so Qt actions apply to the exact range
-    var RT_savedRange = null;
-    quill.on('selection-change', function(range) {
-      if (range && range.length > 0) RT_savedRange = { index: range.index, length: range.length };
-    });
-    quill.root.addEventListener('mouseup', function() {
-      var r = quill.getSelection();
-      if (r && r.length > 0) RT_savedRange = { index: r.index, length: r.length };
-    });
-    quill.root.addEventListener('keyup', function() {
-      var r = quill.getSelection();
-      if (r && r.length > 0) RT_savedRange = { index: r.index, length: r.length };
-    });
+def _apply_char_format(editor: QTextEdit, fmt: QTextCharFormat):
+    c = editor.textCursor()
+    if not c.hasSelection():
+        # This modifies the *current* format for new text
+        editor.mergeCurrentCharFormat(fmt)
+    else:
+        # This modifies the *selected* text
+        c.mergeCharFormat(fmt)
+        editor.setTextCursor(c)
 
-    function RT_targetRange() {
-      var r = quill.getSelection();
-      if (r && r.length > 0) return r;
-      if (RT_savedRange && RT_savedRange.length > 0) return RT_savedRange;
-      return null;
-    }
 
-    // === Bridge called from Qt toolbar ===
-    window.RT_applyFormat = function(name, value) {
-      var target = RT_targetRange();
-      var val = (value === '' || value == null) ? false : value;
-      if (target) {
-        quill.formatText(target.index, target.length, { [name]: val }, 'user');
-        setTimeout(function(){ quill.setSelection(target.index, target.length, 'silent'); RT_savedRange = { index: target.index, length: target.length }; }, 0);
-      } else {
-        quill.format(name, val, 'user');
-      }
-    };
+def _set_indent(editor: QTextEdit, delta: int):
+    c = editor.textCursor()
+    bfmt = c.blockFormat()
+    indent = max(0, bfmt.indent() + delta)
+    bfmt.setIndent(indent)
+    c.setBlockFormat(bfmt)
+    editor.setTextCursor(c)
 
-    window.RT_setHeader = function(level) {
-      var target = RT_targetRange();
-      var val = (!level || level === 0 || level === '') ? false : level;
-      if (target) {
-        quill.formatLine(target.index, target.length, { header: val }, 'user');
-        setTimeout(function(){ quill.setSelection(target.index, target.length, 'silent'); RT_savedRange = { index: target.index, length: target.length }; }, 0);
-      } else {
-        quill.format('header', val, 'user');
-      }
-    };
 
-    window.RT_setAlign = function(alignVal) {
-      var target = RT_targetRange();
-      var val = (alignVal === '' || alignVal == null) ? false : alignVal;
-      if (target) {
-        quill.formatLine(target.index, target.length, { align: val }, 'user');
-        setTimeout(function(){ quill.setSelection(target.index, target.length, 'silent'); RT_savedRange = { index: target.index, length: target.length }; }, 0);
-      } else {
-        quill.format('align', val, 'user');
-      }
-    };
+class RichTextEditorTab(QWidget):
+    """
+    Native Qt rich-text editor with a minimal, label-free toolbar.
+    Public API:
+      - set_html(html: str)
+      - get_html(callback)
+      - focus_editor()
+    """
 
-    window.RT_setList = function(kind) {
-      var target = RT_targetRange();
-      var val = (kind === '' || kind == null) ? false : kind;
-      if (target) {
-        quill.formatLine(target.index, target.length, { list: val }, 'user');
-        setTimeout(function(){ quill.setSelection(target.index, target.length, 'silent'); RT_savedRange = { index: target.index, length: target.length }; }, 0);
-      }
-    };
+    # --- NEW: Signals for Synthesis Anchors ---
+    anchorActionTriggered = Signal(str)  # Emits selected_text
+    anchorEditTriggered = Signal(int)  # Emits anchor_id
+    anchorDeleteTriggered = Signal(int)  # Emits anchor_id
+    # --- END NEW ---
 
-    window.RT_indent = function(delta) {
-      var target = RT_targetRange();
-      if (!target) return;
-      var fmt = quill.getFormat(target);
-      var curr = parseInt(fmt.indent || 0, 10);
-      var next = Math.max(0, curr + (delta || 0));
-      var val = next === 0 ? false : next;
-      quill.formatLine(target.index, target.length, { indent: val }, 'user');
-      setTimeout(function(){ quill.setSelection(target.index, target.length, 'silent'); RT_savedRange = { index: target.index, length: target.length }; }, 0);
-    };
+    def __init__(self, title: str = "Editor", parent=None):
+        super().__init__(parent)
 
-    window.RT_setLink = function(url) {
-      var target = RT_targetRange();
-      var val = (url && url.trim()) ? url.trim() : false;
-      if (target) {
-        quill.formatText(target.index, target.length, { link: val }, 'user');
-        setTimeout(function(){ quill.setSelection(target.index, target.length, 'silent'); RT_savedRange = { index: target.index, length: target.length }; }, 0);
-      } else {
-        quill.format('link', val, 'user');
-      }
-    };
+        main = QVBoxLayout(self)
+        main.setContentsMargins(6, 4, 6, 6)
+        main.setSpacing(4)
 
-    window.RT_insertImage = function(url) {
-      if (!url) return;
-      var r = quill.getSelection() || { index: quill.getLength(), length: 0 };
-      quill.insertEmbed(r.index, 'image', url, 'user');
-      quill.setSelection(r.index + 1, 0, 'silent');
-    };
+        # ===== Toolbar (compact, no labels) =====
+        bar = QWidget(self)
+        bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        h = QHBoxLayout(bar)
+        h.setContentsMargins(6, 4, 6, 4)
+        h.setSpacing(6)
 
-    window.RT_insertVideo = function(url) {
-      if (!url) return;
-      var r = quill.getSelection() || { index: quill.getLength(), length: 0 };
-      quill.insertEmbed(r.index, 'video', url, 'user');
-      quill.setSelection(r.index + 1, 0, 'silent');
-    };
+        bar.setStyleSheet("""
+            QComboBox, QPushButton { height: 24px; font-size: 11px; }
+            QComboBox::drop-down { width: 16px; }
+        """)
 
-    window.RT_clean = function() {
-      var target = RT_targetRange();
-      if (target) {
-        quill.removeFormat(target.index, target.length, 'user');
-        setTimeout(function(){ quill.setSelection(target.index, target.length, 'silent'); RT_savedRange = { index: target.index, length: target.length }; }, 0);
-      }
-    };
-    window.RT_undo = function(){ quill.history.undo(); };
-    window.RT_redo = function(){ quill.history.redo(); };
+        BTN_W = 26
+        BTN_WW = 28
+        COMBO_FONT_W = 120
+        COMBO_SIZE_W = 70
+        COMBO_HDR_W = 56
+        COMBO_ALIGN_W = 80
+        COMBO_TXTCLR_W = 110
+        COMBO_BGCLR_W = 120
 
-    // Content bridge
-    window.setEditorContent = function (html) {
-      if (html) {
-        const delta = quill.clipboard.convert(html);
-        quill.setContents(delta, 'silent');
-      } else {
-        quill.setContents([], 'silent');
-      }
-      RT_savedRange = null;
-    };
-    window.getEditorContent = function () { return quill.root.innerHTML; };
-    window.focusEditor = function () { quill.focus(); };
-  </script>
-</body>
-</html>
+        # Font family (default: Times New Roman if present, else Times)
+        self.fontCombo = QComboBox(bar);
+        self.fontCombo.setToolTip("Font family")
+        self.fontCombo.setMinimumWidth(COMBO_FONT_W);
+        self.fontCombo.setMaximumWidth(COMBO_FONT_W)
+        installed = set(QFontDatabase().families())
+        for fam in _FONTS:
+            mapped = fam
+            if fam == "Sans Serif":
+                mapped = QFont().defaultFamily()
+            if fam == "Serif":
+                mapped = "Times New Roman" if "Times New Roman" in installed else "Times"
+            if fam == "Monospace":
+                mapped = "Courier New" if "Courier New" in installed else "Courier"
+            self.fontCombo.addItem(fam, mapped)
+
+        # --- FIX: Default font logic moved to self.default_format setting ---
+
+        h.addWidget(self.fontCombo)
+
+        # Size (default 16 pt)
+        self.sizeCombo = QComboBox(bar);
+        self.sizeCombo.setToolTip("Font size (pt)")
+        self.sizeCombo.setMinimumWidth(COMBO_SIZE_W);
+        self.sizeCombo.setMaximumWidth(COMBO_SIZE_W)
+        for sz in _PT_SIZES:
+            self.sizeCombo.addItem(f"{sz} pt", sz)
+        idx_sz = self.sizeCombo.findData(16)
+        if idx_sz != -1:
+            self.sizeCombo.setCurrentIndex(idx_sz)
+        h.addWidget(self.sizeCombo)
+
+        # Header level
+        self.headerCombo = QComboBox(bar);
+        self.headerCombo.setToolTip("Paragraph / H1 / H2 / H3")
+        self.headerCombo.setMinimumWidth(COMBO_HDR_W);
+        self.headerCombo.setMaximumWidth(COMBO_HDR_W)
+        self.headerCombo.addItem("¶", 0);
+        self.headerCombo.addItem("H1", 1)
+        self.headerCombo.addItem("H2", 2);
+        self.headerCombo.addItem("H3", 3)
+        h.addWidget(self.headerCombo)
+
+        # Inline toggles
+        def mkbtn(text, tip):
+            b = QPushButton(text);
+            b.setCheckable(True);
+            b.setToolTip(tip)
+            b.setMinimumWidth(BTN_W);
+            b.setMaximumWidth(BTN_W);
+            return b
+
+        self.boldBtn = mkbtn("B", "Bold")
+        self.italicBtn = mkbtn("I", "Italic")
+        self.underlineBtn = mkbtn("U", "Underline")
+        self.strikeBtn = mkbtn("S", "Strikethrough")
+        for w in (self.boldBtn, self.italicBtn, self.underlineBtn, self.strikeBtn): h.addWidget(w)
+
+        # Text Color (with Custom…)
+        self.textColorCombo = QComboBox(bar);
+        self.textColorCombo.setToolTip("Text Color")
+        self.textColorCombo.setMinimumWidth(COMBO_TXTCLR_W);
+        self.textColorCombo.setMaximumWidth(COMBO_TXTCLR_W)
+        self.textColorCombo.addItem("Text Color", None)  # default/clear
+        for hexval, label in [("#000000", "Black"), ("#FF0000", "Red"), ("#008000", "Green"), ("#0000FF", "Blue"),
+                              ("#FA8000", "Orange"), ("#8000FF", "Purple"), ("#808080", "Gray")]:
+            self.textColorCombo.addItem(label, hexval)
+        self.textColorCombo.addItem("Custom…", _CUSTOM)
+        h.addWidget(self.textColorCombo)
+
+        # Highlight (with No highlight + Custom…)
+        self.bgColorCombo = QComboBox(bar);
+        self.bgColorCombo.setToolTip("Highlight")
+        self.bgColorCombo.setMinimumWidth(COMBO_BGCLR_W);
+        self.bgColorCombo.setMaximumWidth(COMBO_BGCLR_W)
+        self.bgColorCombo.addItem("Highlight", None)  # clear highlight
+        self.bgColorCombo.addItem("No highlight (White)", "#FFFFFF")
+        for hexval, label in [("#FFFF00", "Yellow"), ("#FFCCCC", "L.Red"), ("#CCFFCC", "L.Green"),
+                              ("#CCCCFF", "L.Blue"), ("#FFF2CC", "L.Orange"), ("#F3E5F5", "Lavender")]:
+            self.bgColorCombo.addItem(label, hexval)
+        self.bgColorCombo.addItem("Custom…", _CUSTOM)
+        h.addWidget(self.bgColorCombo)
+
+        # Lists / Indent
+        def mkbtn2(text, tip):
+            b = QPushButton(text);
+            b.setToolTip(tip)
+            b.setMinimumWidth(BTN_WW);
+            b.setMaximumWidth(BTN_WW);
+            return b
+
+        self.olBtn = mkbtn2("1.", "Numbered list")
+        self.ulBtn = mkbtn2("•", "Bulleted list")
+        self.outdentBtn = mkbtn2("⟵", "Outdent")
+        self.indentBtn = mkbtn2("⟶", "Indent")
+        for w in (self.olBtn, self.ulBtn, self.outdentBtn, self.indentBtn): h.addWidget(w)
+
+        # Alignment
+        self.alignCombo = QComboBox(bar);
+        self.alignCombo.setToolTip("Alignment")
+        self.alignCombo.setMinimumWidth(COMBO_ALIGN_W);
+        self.alignCombo.setMaximumWidth(COMBO_ALIGN_W)
+        for val, label in [(Qt.AlignLeft, "Left"), (Qt.AlignCenter, "Center"),
+                           (Qt.AlignRight, "Right"), (Qt.AlignJustify, "Justify")]:
+            self.alignCombo.addItem(label, int(val))
+        h.addWidget(self.alignCombo)
+
+        # Links + Clear
+        def mkbtn1(text, tip):
+            b = QPushButton(text);
+            b.setToolTip(tip)
+            b.setMinimumWidth(BTN_W);
+            b.setMaximumWidth(BTN_W);
+            return b
+
+        self.linkBtn = mkbtn1("🔗", "Insert link…")
+        self.unlinkBtn = mkbtn1("⛓", "Unlink")
+        self.clearBtn = mkbtn1("⌫", "Clear formatting")
+        for w in (self.linkBtn, self.unlinkBtn, self.clearBtn): h.addWidget(w)
+
+        h.addStretch(1)
+        main.addWidget(bar)
+
+        # ===== Editor =====
+        self.editor = QTextEdit(self)
+        self.editor.setAcceptRichText(True)
+        self.editor.setPlaceholderText("Start typing…")
+        # --- NEW: Enable custom context menu ---
+        self.editor.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.editor.customContextMenuRequested.connect(self.show_context_menu)
+        # --- END NEW ---
+        main.addWidget(self.editor, 1)
+
+        # Apply defaults to the current typing format immediately
+        # --- FIX: Store the default format as an instance attribute ---
+        self.default_format = QTextCharFormat()
+        default_font = "Times New Roman" if "Times New Roman" in installed else (
+            "Times" if "Times" in installed else QFont().defaultFamily())
+        idx = next((i for i in range(self.fontCombo.count()) if self.fontCombo.itemData(i) == default_font), 0)
+        self.fontCombo.setCurrentIndex(idx)
+
+        # Set font family and size from the combo boxes
+        self.default_format.setFontFamily(self.fontCombo.currentData())
+        self.default_format.setFontPointSize(float(self.sizeCombo.currentData()))
+        _apply_char_format(self.editor, self.default_format)
+        # --- END FIX ---
+
+        # Wire signals
+        self.fontCombo.currentIndexChanged.connect(self._on_font)
+        self.sizeCombo.currentIndexChanged.connect(self._on_size)
+        self.boldBtn.clicked.connect(self._on_bold)
+        self.italicBtn.clicked.connect(self._on_italic)
+        self.underlineBtn.clicked.connect(self._on_underline)
+        self.strikeBtn.clicked.connect(self._on_strike)
+        self.textColorCombo.currentIndexChanged.connect(self._on_text_color)
+        self.bgColorCombo.currentIndexChanged.connect(self._on_bg_color)
+        self.headerCombo.currentIndexChanged.connect(self._on_header)
+        self.olBtn.clicked.connect(lambda: self._on_list(True))
+        self.ulBtn.clicked.connect(lambda: self._on_list(False))
+        self.outdentBtn.clicked.connect(lambda: _set_indent(self.editor, -1))
+        self.indentBtn.clicked.connect(lambda: _set_indent(self.editor, 1))
+        self.alignCombo.currentIndexChanged.connect(self._on_align)
+        self.linkBtn.clicked.connect(self._on_link)
+        self.unlinkBtn.clicked.connect(self._on_unlink)
+        self.clearBtn.clicked.connect(self._on_clear)
+
+        self.editor.selectionChanged.connect(self._on_selection_changed)
+
+        # --- NEW FIX: Connect textChanged signal ---
+        self.editor.textChanged.connect(self._on_text_changed)
+        # --- END NEW FIX ---
+
+    # ---- Public API ----
+    def set_html(self, html: str):
+        self.editor.setHtml(html or "")
+
+    def get_html(self, callback):
+        callback(self.editor.toHtml())
+
+    def focus_editor(self):
+        self.editor.setFocus()
+
+    # --- NEW: Anchor Formatting API ---
+    def apply_anchor_format(self, anchor_id: int, tag_id: int, tag_name: str, comment: str, unique_doc_id: str):
+        """
+        Applies a special format to the current selection to mark it as an anchor.
+        """
+        if not self.editor.textCursor().hasSelection():
+            return
+
+        fmt = QTextCharFormat()
+        # Visual style: light blue background
+        fmt.setBackground(QColor("#E0EFFF"))
+
+        # Store metadata
+        fmt.setProperty(AnchorIDProperty, anchor_id)
+        fmt.setProperty(AnchorTagIDProperty, tag_id)
+        fmt.setProperty(AnchorTagNameProperty, tag_name)
+        fmt.setProperty(AnchorCommentProperty, comment)
+        fmt.setProperty(AnchorUUIDProperty, unique_doc_id)
+
+        # Tooltip
+        tooltip = f"Tag: {tag_name}"
+        if comment:
+            tooltip += f"\n\nComment: {comment}"
+        fmt.setToolTip(tooltip)
+
+        _apply_char_format(self.editor, fmt)
+
+    # ##################################################################
+    # #
+    # #                 --- BUG FIX STARTS HERE ---
+    # #
+    # ##################################################################
+    def remove_anchor_format(self):
+        """
+        Clears the anchor formatting from the current selection,
+        preserving all other formatting (font, size, bold, etc.).
+        """
+        cursor = self.editor.textCursor()
+        if not cursor.hasSelection():
+            # If no selection, we can't know what to de-format.
+            # The right-click menu should have selected the anchor.
+            return
+
+        # --- RIFLE SHOT FIX ---
+        # Get the selection's CURRENT format, which may be a mix
+        # of properties if the selection is partial, but it's what
+        # QTextCursor provides.
+        fmt = cursor.charFormat()
+
+        # Clear ONLY the anchor properties and background
+        fmt.clearBackground()
+        fmt.clearProperty(AnchorIDProperty)
+        fmt.clearProperty(AnchorTagIDProperty)
+        fmt.clearProperty(AnchorTagNameProperty)
+        fmt.clearProperty(AnchorCommentProperty)
+        fmt.clearProperty(AnchorUUIDProperty)
+        fmt.setToolTip("")
+
+        # Re-apply the modified format, preserving font, size, bold, etc.
+        # This uses the existing _apply_char_format helper.
+        _apply_char_format(self.editor, fmt)
+        # --- END RIFLE SHOT FIX ---
+    # ##################################################################
+    # #
+    # #                 --- BUG FIX ENDS HERE ---
+    # #
+    # ##################################################################
+
+    def find_and_update_anchor_format(self, anchor_id: int, tag_id: int, tag_name: str, comment: str):
+        """
+        Finds an anchor by its ID anywhere in the document and updates its
+        format and metadata.
+        """
+        cursor = self.editor.textCursor()
+        cursor.setPosition(0)  # Start at the beginning
+        doc = self.editor.document()
+
+        # We iterate through the document, finding blocks of text with the matching AnchorIDProperty
+        current_pos = 0
+        while current_pos < doc.characterCount() - 1:
+            cursor.setPosition(current_pos)
+            cursor.movePosition(QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.KeepAnchor, 1)
+            fmt = cursor.charFormat()
+
+            # --- FIX: Safe QVariant to int conversion ---
+            aid_qvar = fmt.property(AnchorIDProperty)
+            aid = None
+            if aid_qvar is not None:
+                try:
+                    if hasattr(aid_qvar, 'toInt'):  # PySide6/PyQt6
+                        val, ok = aid_qvar.toInt()
+                        if ok: aid = val
+                    else:  # Plain int
+                        aid = int(aid_qvar)
+                except Exception:
+                    pass  # Not a valid anchor ID
+            # --- END FIX ---
+
+            if aid and aid == anchor_id:
+                # Found the start of an anchor. Expand selection until property changes.
+                start_pos = cursor.position() - 1
+                while not cursor.atEnd():
+                    cursor.movePosition(QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.KeepAnchor)
+                    fmt = cursor.charFormat()
+
+                    # --- FIX: Safe QVariant to int conversion ---
+                    next_aid_qvar = fmt.property(AnchorIDProperty)
+                    next_aid = None
+                    if next_aid_qvar is not None:
+                        try:
+                            if hasattr(next_aid_qvar, 'toInt'):
+                                val, ok = next_aid_qvar.toInt()
+                                if ok: next_aid = val
+                            else:
+                                next_aid = int(next_aid_qvar)
+                        except Exception:
+                            pass
+                    # --- END FIX ---
+
+                    if next_aid != anchor_id:
+                        # We went one char too far
+                        cursor.movePosition(QTextCursor.MoveOperation.PreviousCharacter,
+                                            QTextCursor.MoveMode.KeepAnchor)
+                        break
+
+                # Now, 'cursor' holds the full selection of the anchor
+                # Apply the new format.
+                new_fmt = cursor.charFormat()  # Get format of the whole selection
+                new_fmt.setProperty(AnchorTagIDProperty, tag_id)
+                new_fmt.setProperty(AnchorTagNameProperty, tag_name)
+                new_fmt.setProperty(AnchorCommentProperty, comment)
+
+                tooltip = f"Tag: {tag_name}"
+                if comment:
+                    tooltip += f"\n\nComment: {comment}"
+                new_fmt.setToolTip(tooltip)
+
+                cursor.setCharFormat(new_fmt)
+                current_pos = cursor.position()
+            else:
+                current_pos += 1
+
+    # --- NEW: Context Menu ---
+    @Slot(QPoint)
+    def show_context_menu(self, pos):
+        """Shows a custom context menu."""
+        menu = self.editor.createStandardContextMenu()
+
+        # Check what's under the cursor
+        cursor = self.editor.cursorForPosition(pos)
+        char_format = cursor.charFormat()
+        anchor_id_qvar = char_format.property(AnchorIDProperty)
+
+        # Helper to safely convert QVariant to int or None
+        def to_int(qvar):
+            if isinstance(qvar, int):
+                return qvar if qvar > 0 else None
+            try:
+                # Check for PySide6/PyQt6 QVariant behavior
+                if hasattr(qvar, 'toInt'):
+                    val, ok = qvar.toInt()
+                    if ok and val > 0:
+                        return val
+                elif qvar is not None:  # Fallback for simple int
+                    val = int(qvar)
+                    if val > 0:
+                        return val
+            except Exception:
+                pass
+            return None
+
+        anchor_id = to_int(anchor_id_qvar)
+
+        menu.addSeparator()
+
+        if anchor_id:
+            # Clicked on an existing anchor.
+            # We need to select the whole anchor to operate on it.
+            self.select_anchor_at_cursor(cursor)
+
+            edit_action = QAction("Edit Synthesis Anchor...", self)
+            edit_action.triggered.connect(lambda: self.anchorEditTriggered.emit(anchor_id))
+            menu.addAction(edit_action)
+
+            delete_action = QAction("Delete Synthesis Anchor", self)
+            delete_action.triggered.connect(lambda: self.anchorDeleteTriggered.emit(anchor_id))
+            menu.addAction(delete_action)
+
+        else:
+            # Not on an anchor, check for selection
+            anchor_action = QAction("Create Synthesis Anchor...", self)
+            has_selection = self.editor.textCursor().hasSelection()
+            anchor_action.setEnabled(has_selection)
+            if has_selection:
+                selected_text = self.editor.textCursor().selectedText()
+                # Clean up text (replace line separators with spaces)
+                selected_text = selected_text.replace(u'\u2029', ' ').replace('\n', ' ').strip()
+                anchor_action.triggered.connect(lambda: self.anchorActionTriggered.emit(selected_text))
+
+            menu.addAction(anchor_action)
+
+        menu.exec(self.editor.viewport().mapToGlobal(pos))
+
+    def select_anchor_at_cursor(self, cursor):
+        """Expands the given cursor to select the entire anchor it's in."""
+        fmt = cursor.charFormat()
+        anchor_id_qvar = fmt.property(AnchorIDProperty)
+
+        # --- FIX: Safe QVariant conversion ---
+        anchor_id = None
+        if anchor_id_qvar is not None:
+            try:
+                if hasattr(anchor_id_qvar, 'toInt'):
+                    val, ok = anchor_id_qvar.toInt()
+                    if ok: anchor_id = val
+                else:
+                    anchor_id = int(anchor_id_qvar)
+            except Exception:
+                pass
+        # --- END FIX ---
+
+        if not anchor_id:
+            return
+
+        # Helper to check property
+        def get_anchor_id(fmt):
+            qvar = fmt.property(AnchorIDProperty)
+            if qvar is None: return None
+            try:
+                if hasattr(qvar, 'toInt'):
+                    v, ok = qvar.toInt()
+                    return v if ok else None
+                return int(qvar)
+            except Exception:
+                return None
+
+        # Move back to the start of the anchor
+        while get_anchor_id(cursor.charFormat()) == anchor_id:
+            if cursor.atBlockStart():
+                break
+            cursor.movePosition(QTextCursor.MoveOperation.PreviousCharacter, QTextCursor.MoveMode.MoveAnchor)
+
+        # We moved one char too far (or are at the start)
+        if get_anchor_id(cursor.charFormat()) != anchor_id:
+            cursor.movePosition(QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.MoveAnchor)
+
+        # Move forward to the end of the anchor
+        while get_anchor_id(cursor.charFormat()) == anchor_id:
+            if cursor.atBlockEnd():
+                break
+            cursor.movePosition(QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.KeepAnchor)
+
+        # We might have moved one char too far
+        if get_anchor_id(cursor.charFormat()) != anchor_id:
+            cursor.movePosition(QTextCursor.MoveOperation.PreviousCharacter, QTextCursor.MoveMode.KeepAnchor)
+
+        self.editor.setTextCursor(cursor)
+
+    # ---- Handlers ----
+
+    # --- NEW FIX: Handle editor becoming empty ---
+    @Slot()
+    def _on_text_changed(self):
+        """
+        When text is changed, check if the editor became empty.
+        If it did, reset the current char format to our default.
+        This prevents the "backspace all text" bug.
+        """
+        if self.editor.toPlainText() == "":
+            self.editor.setCurrentCharFormat(self.default_format)
+
+    # --- END NEW FIX ---
+
+    @Slot()
+    def _on_selection_changed(self):
+        """Updates toolbar button states to reflect cursor's format."""
+        fmt = self.editor.currentCharFormat()
+        self.boldBtn.setChecked(fmt.fontWeight() >= QFont.Weight.Bold)
+        self.italicBtn.setChecked(fmt.fontItalic())
+        self.underlineBtn.setChecked(fmt.fontUnderline())
+        self.strikeBtn.setChecked(fmt.fontStrikeOut())
+
+        # Note: We don't try to update combo boxes as it's complex
+        # and can be annoying to the user.
+
+    def _on_font(self, idx: int):
+        fam = self.fontCombo.itemData(idx)
+        fmt = QTextCharFormat();
+        fmt.setFontFamily(fam)
+        _apply_char_format(self.editor, fmt)
+        # --- FIX: Update default format ---
+        self.default_format.setFontFamily(fam)
+        # --- END FIX ---
+
+    def _on_size(self, idx: int):
+        pt = self.sizeCombo.itemData(idx)
+        fmt = QTextCharFormat();
+        fmt.setFontPointSize(float(pt))
+        _apply_char_format(self.editor, fmt)
+        # --- FIX: Update default format ---
+        self.default_format.setFontPointSize(float(pt))
+        # --- END FIX ---
+
+    def _on_bold(self, on: bool):
+        fmt = QTextCharFormat();
+        fmt.setFontWeight(QFont.Weight.Bold if on else QFont.Weight.Normal)
+        _apply_char_format(self.editor, fmt)
+
+    def _on_italic(self, on: bool):
+        fmt = QTextCharFormat();
+        fmt.setFontItalic(on)
+        _apply_char_format(self.editor, fmt)
+
+    def _on_underline(self, on: bool):
+        fmt = QTextCharFormat();
+        fmt.setFontUnderline(on)
+        _apply_char_format(self.editor, fmt)
+
+    def _on_strike(self, on: bool):
+        fmt = QTextCharFormat();
+        fmt.setFontStrikeOut(on)
+        _apply_char_format(self.editor, fmt)
+
+    def _on_text_color(self, idx: int):
+        data = self.textColorCombo.itemData(idx)
+        if data == _CUSTOM:
+            col = QColorDialog.getColor(parent=self)
+            if not col.isValid():
+                self.textColorCombo.setCurrentIndex(0)
+                return
+            fmt = QTextCharFormat();
+            fmt.setForeground(col)
+            _apply_char_format(self.editor, fmt)
+        else:
+            fmt = QTextCharFormat()
+            if data:
+                fmt.setForeground(QColor(data))
+            else:
+                fmt.clearForeground()
+            _apply_char_format(self.editor, fmt)
+
+    def _on_bg_color(self, idx: int):
+        data = self.bgColorCombo.itemData(idx)
+        if data == _CUSTOM:
+            col = QColorDialog.getColor(parent=self)
+            if not col.isValid():
+                self.bgColorCombo.setCurrentIndex(0)
+                return
+            fmt = QTextCharFormat();
+            fmt.setBackground(col)
+            _apply_char_format(self.editor, fmt)
+        else:
+            fmt = QTextCharFormat()
+            if data is None:
+                # "Highlight" default = clear any highlight
+                # UNLESS it's an anchor
+                current_bg = self.editor.currentCharFormat().background()
+                if current_bg == QColor("#E0EFFF"):  # Don't clear anchor
+                    self.bgColorCombo.setCurrentIndex(0)  # Reset combo
+                    return
+                fmt.clearBackground()
+            else:
+                fmt.setBackground(QColor(data))
+            _apply_char_format(self.editor, fmt)
+
+    def _on_header(self, idx: int):
+        level = self.headerCombo.itemData(idx)  # 0,1,2,3
+
+        # --- FIX: Apply default size *before* setting header ---
+        # This ensures non-header text reverts to the default size (e.g., 16)
+        # instead of inheriting the last header's size.
+        fmt = QTextCharFormat()
+        fmt.setFontPointSize(self.default_format.fontPointSize())
+        # --- END FIX ---
+
+        if level == 0:
+            # fmt.setFontPointSize(16); # <-- Handled by default_format
+            fmt.setFontWeight(QFont.Weight.Normal)
+        else:
+            sizes = {1: 24, 2: 18, 3: 16}
+            fmt.setFontPointSize(sizes.get(level, 16));
+            fmt.setFontWeight(QFont.Weight.Bold)
+        _apply_char_format(self.editor, fmt)
+
+    def _on_list(self, ordered: bool):
+        c = self.editor.textCursor()
+        if c.currentList():
+            st = c.currentList().format().style()
+            want = QTextListFormat.ListDecimal if ordered else QTextListFormat.ListDisc
+            if st == want:
+                # --- FIX: properly remove list ---
+                # Get all blocks in the selection
+                start_block = c.selectionStart()
+                end_block = c.selectionEnd()
+                c.setPosition(start_block)
+
+                # Iterate over all blocks in the selection
+                while c.position() <= end_block or c.blockNumber() == c.document().findBlock(end_block).blockNumber():
+                    list_item = c.block().textList()
+                    if list_item:
+                        list_item.remove(c.block())
+                    if c.atEnd():
+                        break
+                    c.movePosition(QTextCursor.MoveOperation.NextBlock, QTextCursor.MoveMode.MoveAnchor)
+                # --- END FIX ---
+            else:
+                fmt = c.currentList().format();
+                fmt.setStyle(want);
+                c.currentList().setFormat(fmt)
+        else:
+            fmt = QTextListFormat()
+            fmt.setStyle(QTextListFormat.ListDecimal if ordered else QTextListFormat.ListDisc)
+            c.createList(fmt)
+        self.editor.setTextCursor(c)
+
+    def _on_align(self, idx: int):
+        val = Qt.AlignmentFlag(self.alignCombo.itemData(idx))
+        self.editor.setAlignment(val)
+
+    def _on_link(self):
+        c = self.editor.textCursor()
+        if not c.hasSelection():
+            QMessageBox.information(self, "Link", "Select text to make it a link.")
+            return
+        url, ok = QInputDialog.getText(self, "Insert Link", "URL:")
+        if not ok or not url.strip():
+            return
+        fmt = QTextCharFormat()
+        fmt.setAnchor(True);
+        fmt.setAnchorHref(url.strip())
+        fmt.setForeground(QColor("#0000EE"));
+        fmt.setFontUnderline(True)
+        _apply_char_format(self.editor, fmt)
+
+    def _on_unlink(self):
+        c = self.editor.textCursor()
+        if not c.hasSelection(): return
+        fmt = QTextCharFormat()
+        fmt.setAnchor(False);
+        fmt.clearForeground();
+        fmt.setFontUnderline(False)
+        _apply_char_format(self.editor, fmt)
+
+    def _on_clear(self):
+        c = self.editor.textCursor()
+        # --- FIX: Apply the stored default format, not a blank one ---
+        if not c.hasSelection():
+            self.editor.setCurrentCharFormat(self.default_format)
+        else:
+            # This new logic clears all formatting (including anchors)
+            # and reverts to the default font and size.
+            fmt = self.default_format.clone()
+            c.mergeCharFormat(fmt)
+            self.editor.setTextCursor(c)
+        # --- END FIX ---
