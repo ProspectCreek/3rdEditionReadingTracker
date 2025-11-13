@@ -1,4 +1,5 @@
-# tabs/reading_notes_tab.py
+# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-d0eaa6c33c524aa054deaa3e5b81207eb93ba7d2/tabs/reading_notes_tab.py
+
 import sys
 import uuid  # <-- NEW: For synthesis anchors
 from PySide6.QtWidgets import (
@@ -56,6 +57,30 @@ try:
 except ImportError:
     print("Error: Could not import PartsOrderRelationTab")
     PartsOrderRelationTab = None
+# --- END NEW ---
+
+# --- NEW: Import KeyTermsTab ---
+try:
+    from tabs.key_terms_tab import KeyTermsTab
+except ImportError:
+    print("Error: Could not import KeyTermsTab")
+    KeyTermsTab = None
+# --- END NEW ---
+
+# --- NEW: Import TheoriesTab ---
+try:
+    from tabs.theories_tab import TheoriesTab
+except ImportError:
+    print("Error: Could not import TheoriesTab")
+    TheoriesTab = None
+# --- END NEW ---
+
+# --- NEW: Import ArgumentsTab ---
+try:
+    from tabs.arguments_tab import ArgumentsTab
+except ImportError:
+    print("Error: Could not import ArgumentsTab")
+    ArgumentsTab = None
 # --- END NEW ---
 
 
@@ -354,16 +379,30 @@ class ReadingNotesTab(QWidget):
                               "personal_dialogue_html")
 
         # --- Key Terms ---
-        create_editor_tab("Key Terms", "Instructions for Key Terms go here.", "key_terms_html")
+        if KeyTermsTab:
+            self.key_terms_tab = KeyTermsTab(self.db, self.project_id, self.reading_id)
+            self.bottom_right_tabs.addTab(self.key_terms_tab, "Key Terms")
+        else:
+            create_editor_tab("Key Terms", "Instructions for Key Terms go here.", "key_terms_html")
 
         # --- Arguments ---
-        create_editor_tab("Arguments", "Instructions for Arguments go here.", "arguments_html")
+        # --- MODIFIED: Replace placeholder with real tab ---
+        if ArgumentsTab:
+            self.arguments_tab = ArgumentsTab(self.db, self.project_id, self.reading_id)
+            self.bottom_right_tabs.addTab(self.arguments_tab, "Arguments")
+        else:
+            create_editor_tab("Arguments", "Instructions for Arguments go here.", "arguments_html")
+        # --- END MODIFIED ---
 
         # --- Gaps ---
         create_editor_tab("Gaps", "Instructions for Gaps go here.", "gaps_html")
 
         # --- Theories ---
-        create_editor_tab("Theories", "Instructions for Theories go here.", "theories_html")
+        if TheoriesTab:
+            self.theories_tab = TheoriesTab(self.db, self.project_id, self.reading_id)
+            self.bottom_right_tabs.addTab(self.theories_tab, "Theories")
+        else:
+            create_editor_tab("Theories", "Instructions for Theories go here.", "theories_html")
 
         # --- Personal Dialogue ---
         create_editor_tab("Personal Dialogue", "Instructions for Personal Dialogue go here.", "personal_dialogue_html")
@@ -460,7 +499,32 @@ class ReadingNotesTab(QWidget):
             self.parts_order_relation_tab.load_data()
         # --- END NEW ---
 
+        # --- NEW: Load Key Terms Tab ---
+        if KeyTermsTab and hasattr(self, 'key_terms_tab'):
+            self.key_terms_tab.load_key_terms()
+        # --- END NEW ---
+
+        # --- NEW: Load Theories Tab ---
+        if TheoriesTab and hasattr(self, 'theories_tab'):
+            self.theories_tab.load_theories()
+        # --- END NEW ---
+
+        # --- NEW: Load Arguments Tab ---
+        if ArgumentsTab and hasattr(self, 'arguments_tab'):
+            self.arguments_tab.load_arguments()
+        # --- END NEW ---
+
         for field_name, editor in self.bottom_editors.items():
+            # --- FIX: Check if field_name is still in bottom_editors ---
+            if field_name == 'key_terms_html' and KeyTermsTab and hasattr(self, 'key_terms_tab'):
+                continue  # Skip this, it's handled by the new tab
+            if field_name == 'theories_html' and TheoriesTab and hasattr(self, 'theories_tab'):
+                continue  # Skip this, it's handled by the new tab
+            # --- NEW: Skip arguments_html ---
+            if field_name == 'arguments_html' and ArgumentsTab and hasattr(self, 'arguments_tab'):
+                continue  # Skip this, it's handled by the new tab
+            # --- END NEW ---
+            # --- END FIX ---
             html = self._get_detail(field_name, default="")
             editor.set_html(html)
 
@@ -487,16 +551,23 @@ class ReadingNotesTab(QWidget):
             if 'unity_html' in fields_to_save:
                 fields_to_save.remove('unity_html')
 
-        # --- NEW: Remove Parts placeholder field ---
-        # (We used 'personal_dialogue_html' as a placeholder, but now we must
-        # be careful not to save over it if the real "Personal Dialogue" tab is also using it.
-        # For now, the new tab has its own save logic, so we just remove the placeholder)
+        if KeyTermsTab and hasattr(self, 'key_terms_tab'):
+            if 'key_terms_html' in fields_to_save:
+                fields_to_save.remove('key_terms_html')
+
+        if TheoriesTab and hasattr(self, 'theories_tab'):
+            if 'theories_html' in fields_to_save:
+                fields_to_save.remove('theories_html')
+
+        # --- NEW: Remove arguments_html if new tab exists ---
+        if ArgumentsTab and hasattr(self, 'arguments_tab'):
+            if 'arguments_html' in fields_to_save:
+                fields_to_save.remove('arguments_html')
+        # --- END NEW ---
+
         if PartsOrderRelationTab and hasattr(self, 'parts_order_relation_tab'):
             if 'personal_dialogue_html' in fields_to_save:
-                # This assumes the "Parts" tab was the *last* one to use this field
-                # A safer long-term solution is to use unique db fields for all.
-                pass  # Let's see if we can get away with it.
-        # --- END NEW ---
+                pass
 
         for field_name in fields_to_save:
             editor = self.bottom_editors.get(field_name)
@@ -681,7 +752,7 @@ class ReadingNotesTab(QWidget):
         section_id = item.data(0, Qt.ItemDataRole.UserRole)
         current_title = item.text(0)
 
-        new_title, ok = QInputDialog.getText(self, "Rename Section", "New Title:", current_title)
+        new_title, ok = QInputDialog.getText(self, "Rename Section", "New Title:", text=current_title)
         if ok and new_title and new_title != current_title:
             try:
                 self.db.update_outline_section_title(section_id, new_title)

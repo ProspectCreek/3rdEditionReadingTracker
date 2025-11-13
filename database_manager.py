@@ -1,3 +1,5 @@
+# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-d0eaa6c33c524aa054deaa3e5b81207eb93ba7d2/database_manager.py
+
 import sqlite3
 import shutil
 import os
@@ -18,6 +20,11 @@ from database_helpers.graph_mixin import GraphMixin
 from database_helpers.terminology_mixin import TerminologyMixin
 from database_helpers.propositions_mixin import PropositionsMixin
 from database_helpers.todo_mixin import TodoMixin
+from database_helpers.key_terms_mixin import KeyTermsMixin
+from database_helpers.theories_mixin import TheoriesMixin
+# --- NEW ---
+from database_helpers.arguments_mixin import ArgumentsMixin
+# --- END NEW ---
 from database_helpers.utility_mixin import UtilityMixin
 
 
@@ -36,6 +43,9 @@ class DatabaseManager(
     TerminologyMixin,
     PropositionsMixin,
     TodoMixin,
+    KeyTermsMixin,
+    TheoriesMixin,
+    ArgumentsMixin,  # <-- ADDED
     UtilityMixin
 ):
     def __init__(self, db_file="reading_tracker.db"):

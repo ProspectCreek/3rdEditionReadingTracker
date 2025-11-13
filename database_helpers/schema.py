@@ -1,3 +1,4 @@
+# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-d0eaa6c33c524aa054deaa3e5b81207eb93ba7d2/database_helpers/schema.py
 import sqlite3
 
 
@@ -432,6 +433,7 @@ class SchemaSetup:
             why_question TEXT,
             synthesis_tags TEXT,
             is_working_question INTEGER,
+            extra_notes_text TEXT,
             FOREIGN KEY (reading_id) REFERENCES readings(id) ON DELETE CASCADE,
             FOREIGN KEY (parent_id) REFERENCES reading_driving_questions(id) ON DELETE CASCADE,
             FOREIGN KEY (outline_id) REFERENCES reading_outline(id) ON DELETE SET NULL
@@ -443,7 +445,8 @@ class SchemaSetup:
             self.cursor.execute("PRAGMA table_info(reading_driving_questions)")
             existing_dq_cols = {row["name"] for row in self.cursor.fetchall()}
 
-            if "reading_has_parts" in existing_dq_cols or "include_in_summary" in existing_dq_cols or "where_in_book" in existing_dq_cols:
+            # --- MODIFIED: Added check for new column to trigger rebuild if needed ---
+            if "reading_has_parts" in existing_dq_cols or "include_in_summary" in existing_dq_cols or "where_in_book" in existing_dq_cols or "extra_notes_text" not in existing_dq_cols:
 
                 self.cursor.execute("ALTER TABLE reading_driving_questions RENAME TO _dq_old")
 
@@ -463,6 +466,7 @@ class SchemaSetup:
                     why_question TEXT,
                     synthesis_tags TEXT,
                     is_working_question INTEGER,
+                    extra_notes_text TEXT, -- <-- ADDED
                     FOREIGN KEY (reading_id) REFERENCES readings(id) ON DELETE CASCADE,
                     FOREIGN KEY (parent_id) REFERENCES reading_driving_questions(id) ON DELETE CASCADE,
                     FOREIGN KEY (outline_id) REFERENCES reading_outline(id) ON DELETE SET NULL
@@ -475,7 +479,7 @@ class SchemaSetup:
                 new_cols = [
                     "id", "reading_id", "parent_id", "display_order", "question_text", "nickname",
                     "type", "question_category", "scope", "pages", "why_question",
-                    "synthesis_tags", "is_working_question", "outline_id"
+                    "synthesis_tags", "is_working_question", "outline_id", "extra_notes_text"  # <-- ADDED
                 ]
 
                 if "where_in_book" in old_cols:
@@ -644,6 +648,39 @@ class SchemaSetup:
             notes TEXT,
             FOREIGN KEY (proposition_id) REFERENCES project_propositions(id) ON DELETE CASCADE,
             FOREIGN KEY (reading_id) REFERENCES readings(id) ON DELETE CASCADE,
+            FOREIGN KEY (outline_id) REFERENCES reading_outline(id) ON DELETE SET NULL
+        )
+        """)
+        # --- END NEW ---
+
+        # --- NEW: Argument Tables ---
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS reading_arguments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            reading_id INTEGER NOT NULL,
+            display_order INTEGER,
+            claim_text TEXT,
+            because_text TEXT,
+            driving_question_id INTEGER,
+            is_insight INTEGER DEFAULT 0,
+            FOREIGN KEY (reading_id) REFERENCES readings(id) ON DELETE CASCADE,
+            FOREIGN KEY (driving_question_id) REFERENCES reading_driving_questions(id) ON DELETE SET NULL
+        )
+        """)
+
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS reading_argument_evidence (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            argument_id INTEGER NOT NULL,
+            outline_id INTEGER,
+            pages_text TEXT,
+            argument_text TEXT,
+            reading_text TEXT,
+            role_in_argument TEXT,
+            evidence_type TEXT,
+            status TEXT,
+            rationale_text TEXT,
+            FOREIGN KEY (argument_id) REFERENCES reading_arguments(id) ON DELETE CASCADE,
             FOREIGN KEY (outline_id) REFERENCES reading_outline(id) ON DELETE SET NULL
         )
         """)
