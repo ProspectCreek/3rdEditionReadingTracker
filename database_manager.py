@@ -585,6 +585,46 @@ class DatabaseManager:
         """)
         # --- END NEW ---
 
+        # --- NEW: Proposition Tables ---
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS project_propositions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            display_name TEXT NOT NULL,
+            proposition_html TEXT,
+            display_order INTEGER,
+            FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE
+        )
+        """)
+
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS proposition_reading_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            proposition_id INTEGER NOT NULL,
+            reading_id INTEGER NOT NULL,
+            not_in_reading INTEGER DEFAULT 0,
+            FOREIGN KEY (proposition_id) REFERENCES project_propositions(id) ON DELETE CASCADE,
+            FOREIGN KEY (reading_id) REFERENCES readings(id) ON DELETE CASCADE,
+            UNIQUE(proposition_id, reading_id)
+        )
+        """)
+
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS proposition_references (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            proposition_id INTEGER NOT NULL,
+            reading_id INTEGER NOT NULL,
+            outline_id INTEGER,
+            page_number TEXT,
+            how_addressed TEXT,
+            notes TEXT,
+            FOREIGN KEY (proposition_id) REFERENCES project_propositions(id) ON DELETE CASCADE,
+            FOREIGN KEY (reading_id) REFERENCES readings(id) ON DELETE CASCADE,
+            FOREIGN KEY (outline_id) REFERENCES reading_outline(id) ON DELETE SET NULL
+        )
+        """)
+        # --- END NEW ---
+
         # --- NEW: To-Do List Table ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS project_todo_list (
@@ -1902,6 +1942,149 @@ class DatabaseManager:
             self.cursor.execute(
                 "UPDATE project_terminology SET display_order = ? WHERE id = ?",
                 (order, term_id)
+            )
+        self.conn.commit()
+
+    # ----------------------- NEW: Proposition Functions -----------------------
+
+    def save_proposition_entry(self, project_id, proposition_id, data):
+        """
+        Saves a single proposition entry, including its text, and
+        all associated references. This is a transactional operation.
+        """
+        try:
+            # 1. Add or Update the main proposition
+            if proposition_id:
+                # Update existing proposition
+                self.cursor.execute("""
+                    UPDATE project_propositions
+                    SET display_name = ?, proposition_html = ?
+                    WHERE id = ? AND project_id = ?
+                """, (data['display_name'], data['proposition_html'], proposition_id, project_id))
+            else:
+                # Insert new proposition and get its ID
+                self.cursor.execute(
+                    "SELECT COALESCE(MAX(display_order), -1) FROM project_propositions WHERE project_id = ?",
+                    (project_id,))
+                new_order = (self.cursor.fetchone()[0] or -1) + 1
+
+                self.cursor.execute("""
+                    INSERT INTO project_propositions (project_id, display_name, proposition_html, display_order)
+                    VALUES (?, ?, ?, ?)
+                """, (project_id, data['display_name'], data['proposition_html'], new_order))
+                proposition_id = self.cursor.lastrowid
+
+            if not proposition_id:
+                raise Exception("Failed to create or find proposition ID.")
+
+            # 2. Delete all existing references for this proposition
+            self.cursor.execute("DELETE FROM proposition_references WHERE proposition_id = ?", (proposition_id,))
+
+            # 3. Update or Insert the status for ALL readings
+            status_data = []
+            for status in data.get("statuses", []):
+                status_data.append((
+                    proposition_id,
+                    status.get('reading_id'),
+                    status.get('not_in_reading', 0)
+                ))
+
+            if status_data:
+                self.cursor.executemany("""
+                    INSERT INTO proposition_reading_links (proposition_id, reading_id, not_in_reading)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(proposition_id, reading_id) DO UPDATE SET
+                    not_in_reading = excluded.not_in_reading
+                """, status_data)
+
+            # 4. Insert all new references
+            references_data = []
+            not_in_reading_ids = {s['reading_id'] for s in data.get("statuses", []) if s['not_in_reading'] == 1}
+
+            for ref in data.get("references", []):
+                if ref.get('reading_id') not in not_in_reading_ids:
+                    references_data.append((
+                        proposition_id,
+                        ref.get('reading_id'),
+                        ref.get('outline_id'),
+                        ref.get('page_number'),
+                        ref.get('how_addressed'),
+                        ref.get('notes')
+                    ))
+
+            if references_data:
+                self.cursor.executemany("""
+                    INSERT INTO proposition_references 
+                    (proposition_id, reading_id, outline_id, page_number, how_addressed, notes)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, references_data)
+
+            # 5. Commit transaction
+            self.conn.commit()
+
+        except Exception as e:
+            self.conn.rollback()
+            print(f"Error saving proposition entry: {e}")
+            raise
+
+    def get_project_propositions(self, project_id):
+        """
+        Gets a list of all propositions for a project, ordered by display_order.
+        """
+        self.cursor.execute("""
+            SELECT id, display_name
+            FROM project_propositions
+            WHERE project_id = ?
+            ORDER BY display_order, id
+        """, (project_id,))
+        return self._map_rows(self.cursor.fetchall())
+
+    def get_proposition_details(self, proposition_id):
+        """
+        Gets the full details for a single proposition, including its references.
+        """
+        self.cursor.execute("SELECT * FROM project_propositions WHERE id = ?", (proposition_id,))
+        prop_data = self._rowdict(self.cursor.fetchone())
+
+        if not prop_data:
+            return None
+
+        self.cursor.execute("""
+            SELECT 
+                pr.*, 
+                ro.section_title 
+            FROM proposition_references pr
+            LEFT JOIN reading_outline ro ON pr.outline_id = ro.id
+            WHERE pr.proposition_id = ?
+        """, (proposition_id,))
+        references = self._map_rows(self.cursor.fetchall())
+        prop_data['references'] = references
+
+        self.cursor.execute("""
+            SELECT reading_id, not_in_reading
+            FROM proposition_reading_links
+            WHERE proposition_id = ?
+        """, (proposition_id,))
+        statuses = self.cursor.fetchall()
+        prop_data['statuses'] = {row['reading_id']: row['not_in_reading'] for row in statuses}
+
+        return prop_data
+
+    def delete_proposition(self, proposition_id):
+        """
+        Deletes a proposition entry. Cascade delete handles references.
+        """
+        self.cursor.execute("DELETE FROM project_propositions WHERE id = ?", (proposition_id,))
+        self.conn.commit()
+
+    def update_proposition_order(self, ordered_ids):
+        """
+        Updates the display_order for a list of proposition IDs.
+        """
+        for order, prop_id in enumerate(ordered_ids):
+            self.cursor.execute(
+                "UPDATE project_propositions SET display_order = ? WHERE id = ?",
+                (order, prop_id)
             )
         self.conn.commit()
 

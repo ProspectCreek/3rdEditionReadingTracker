@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel,
     QListWidget, QListWidgetItem, QFrame, QTextEdit, QCheckBox,
     QTextBrowser, QMenu, QInputDialog, QMessageBox, QDialog,
-    QTabWidget  # <-- NEW: Import QTabWidget
+    QTabWidget, QPushButton
 )
 from PySide6.QtCore import Qt, Signal, Slot, QUrl, QPoint
 from PySide6.QtGui import QColor, QFont, QAction
@@ -26,6 +26,14 @@ except ImportError:
     TerminologyTab = None
 # --- END NEW ---
 
+# --- NEW: Import PropositionsTab ---
+try:
+    from tabs.propositions_tab import PropositionsTab
+except ImportError:
+    print("Error: Could not import PropositionsTab")
+    PropositionsTab = None
+# --- END NEW ---
+
 
 # --- NEW: Import dialogs ---
 try:
@@ -40,7 +48,12 @@ except ImportError:
     print("Error: Could not import ManageAnchorsDialog")
     ManageAnchorsDialog = None
 
-
+# --- NEW: Import AddCitationDialog ---
+try:
+    from dialogs.add_citation_dialog import AddCitationDialog
+except ImportError:
+    print("Error: Could not import AddCitationDialog for SynthesisTab")
+    AddCitationDialog = None
 # --- END NEW ---
 
 
@@ -125,20 +138,40 @@ class SynthesisTab(QWidget):
         else:
             self.bottom_tab_widget.addTab(QLabel("TerminologyTab failed to load."), "My Terminology")
 
-        # (B) My Propositions (Placeholder)
-        self.propositions_tab = QLabel("Placeholder for 'My Propositions'")
-        self.propositions_tab.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.bottom_tab_widget.addTab(self.propositions_tab, "My Propositions")
+        # (B) My Propositions
+        if PropositionsTab:
+            self.propositions_tab = PropositionsTab(self.db, self.project_id)
+            self.bottom_tab_widget.addTab(self.propositions_tab, "My Propositions")
+        else:
+            self.propositions_tab = QLabel("PropositionsTab failed to load.")
+            self.propositions_tab.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.bottom_tab_widget.addTab(self.propositions_tab, "My Propositions")
 
-        # (C) My Issues (Placeholder)
-        self.issues_tab = QLabel("Placeholder for 'My Issues'")
-        self.issues_tab.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.bottom_tab_widget.addTab(self.issues_tab, "My Issues")
+        # (C) My Issues (REMOVED)
+        # self.issues_tab = QLabel("Placeholder for 'My Issues'")
+        # self.issues_tab.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # self.bottom_tab_widget.addTab(self.issues_tab, "My Issues")
 
-        # (D) Notes
+        # (D) Notes (with Citation Button)
+        notes_container = QWidget()
+        notes_layout = QVBoxLayout(notes_container)
+        notes_layout.setContentsMargins(0, 0, 0, 0)
+        notes_layout.setSpacing(4)
+
         if RichTextEditorTab:
             self.notes_editor = RichTextEditorTab("Notes")
-            self.bottom_tab_widget.addTab(self.notes_editor, "Notes")
+            notes_layout.addWidget(self.notes_editor, 1)  # Add editor with stretch
+
+            # Add citation button layout
+            notes_btn_layout = QHBoxLayout()
+            notes_btn_layout.addStretch(1)
+            self.notes_citation_btn = QPushButton("Add Citation")
+            self.notes_citation_btn.clicked.connect(self.open_notes_citation_dialog)
+            notes_btn_layout.addWidget(self.notes_citation_btn)
+
+            notes_layout.addLayout(notes_btn_layout)  # Add button layout to container
+
+            self.bottom_tab_widget.addTab(notes_container, "Notes")
         else:
             self.bottom_tab_widget.addTab(QLabel("Editor failed to load."), "Notes")
 
@@ -164,6 +197,9 @@ class SynthesisTab(QWidget):
         # --- NEW: Load data for bottom editors ---
         if TerminologyTab and hasattr(self, 'terminology_tab'):
             self.terminology_tab.load_terminology()
+
+        if PropositionsTab and hasattr(self, 'propositions_tab'):
+            self.propositions_tab.load_items()
 
         if RichTextEditorTab and hasattr(self, 'notes_editor'):
             self.notes_editor.set_html(project_details.get('synthesis_notes_html', ''))
@@ -455,4 +491,28 @@ class SynthesisTab(QWidget):
             if tag_id == tag_id_to_select:
                 self.tag_list.setCurrentItem(item)
                 return
+    # --- END NEW ---
+
+    # --- NEW: Citation Button Slot ---
+    @Slot()
+    def open_notes_citation_dialog(self):
+        """Opens the Add Citation dialog and inserts the result into the Notes editor."""
+        if not AddCitationDialog:
+            QMessageBox.critical(self, "Error", "Citation dialog could not be loaded.")
+            return
+
+        readings = self.db.get_readings(self.project_id)
+        if not readings:
+            QMessageBox.information(self, "No Readings",
+                                    "You must add readings to this project before you can cite them.")
+            return
+
+        dialog = AddCitationDialog(readings, self)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.citation_text:
+            if hasattr(self, 'notes_editor') and self.notes_editor:
+                self.notes_editor.editor.insertPlainText(f" {dialog.citation_text} ")
+                self.notes_editor.focus_editor()
+            else:
+                QMessageBox.warning(self, "Error", "Notes editor is not available.")
     # --- END NEW ---
