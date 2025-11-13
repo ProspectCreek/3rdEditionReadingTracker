@@ -3,11 +3,29 @@ import sys
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel,
     QListWidget, QListWidgetItem, QFrame, QTextEdit, QCheckBox,
-    QTextBrowser, QMenu, QInputDialog, QMessageBox, QDialog
+    QTextBrowser, QMenu, QInputDialog, QMessageBox, QDialog,
+    QTabWidget  # <-- NEW: Import QTabWidget
 )
 from PySide6.QtCore import Qt, Signal, Slot, QUrl, QPoint
 from PySide6.QtGui import QColor, QFont, QAction
 import sqlite3  # <-- Import for IntegrityError
+
+# --- NEW: Import RichTextEditorTab ---
+try:
+    from tabs.rich_text_editor_tab import RichTextEditorTab
+except ImportError:
+    print("Error: Could not import RichTextEditorTab")
+    RichTextEditorTab = None
+# --- END NEW ---
+
+# --- NEW: Import TerminologyTab ---
+try:
+    from tabs.terminology_tab import TerminologyTab
+except ImportError:
+    print("Error: Could not import TerminologyTab")
+    TerminologyTab = None
+# --- END NEW ---
+
 
 # --- NEW: Import dialogs ---
 try:
@@ -21,6 +39,8 @@ try:
 except ImportError:
     print("Error: Could not import ManageAnchorsDialog")
     ManageAnchorsDialog = None
+
+
 # --- END NEW ---
 
 
@@ -42,18 +62,27 @@ class SynthesisTab(QWidget):
 
         # Main layout is a horizontal splitter
         main_layout = QHBoxLayout(self)
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        main_layout.addWidget(splitter)
+        # --- NEW: Create a VERTICAL splitter ---
+        self.main_splitter = QSplitter(Qt.Orientation.Vertical)
+        main_layout.addWidget(self.main_splitter)
+
+        # --- Top Panel (Tag Anchors) ---
+        top_widget = QFrame()
+        top_widget.setFrameShape(QFrame.Shape.StyledPanel)
+        top_layout = QHBoxLayout(top_widget)
+        top_widget.setLayout(top_layout)
+
+        top_splitter = QSplitter(Qt.Orientation.Horizontal)
+        top_layout.addWidget(top_splitter)
+        # --- END NEW ---
 
         # --- Left Panel (Tag List) ---
         left_panel = QFrame()
-        left_panel.setFrameShape(QFrame.Shape.StyledPanel)
+        left_panel.setFrameShape(QFrame.Shape.NoFrame)
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(4, 4, 4, 4)
 
         left_layout.addWidget(QLabel("Synthesis Tags"))
-
-        # TODO: Add global checkbox
 
         self.tag_list = QListWidget()
         left_layout.addWidget(self.tag_list)
@@ -61,7 +90,7 @@ class SynthesisTab(QWidget):
 
         # --- Right Panel (Anchor Detail) ---
         right_panel = QFrame()
-        right_panel.setFrameShape(QFrame.Shape.StyledPanel)
+        right_panel.setFrameShape(QFrame.Shape.NoFrame)
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(4, 4, 4, 4)
 
@@ -73,19 +102,95 @@ class SynthesisTab(QWidget):
         right_layout.addWidget(self.anchor_display)
         right_panel.setLayout(right_layout)
 
-        splitter.addWidget(left_panel)
-        splitter.addWidget(right_panel)
-        splitter.setSizes([250, 600])  # Initial sizes
+        # --- MODIFIED: Add panels to TOP splitter ---
+        top_splitter.addWidget(left_panel)
+        top_splitter.addWidget(right_panel)
+        top_splitter.setSizes([250, 600])  # Initial sizes
+        # --- END MODIFIED ---
+
+        # --- NEW: Bottom Panel (New Tabs) ---
+        bottom_panel = QFrame()
+        bottom_panel.setFrameShape(QFrame.Shape.StyledPanel)
+        bottom_layout = QVBoxLayout(bottom_panel)
+        bottom_layout.setContentsMargins(4, 4, 4, 4)
+
+        self.bottom_tab_widget = QTabWidget()
+        bottom_layout.addWidget(self.bottom_tab_widget)
+
+        # Create the new editor tabs
+        # (A) My Terminology
+        if TerminologyTab:
+            self.terminology_tab = TerminologyTab(self.db, self.project_id)
+            self.bottom_tab_widget.addTab(self.terminology_tab, "My Terminology")
+        else:
+            self.bottom_tab_widget.addTab(QLabel("TerminologyTab failed to load."), "My Terminology")
+
+        # (B) My Propositions (Placeholder)
+        self.propositions_tab = QLabel("Placeholder for 'My Propositions'")
+        self.propositions_tab.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.bottom_tab_widget.addTab(self.propositions_tab, "My Propositions")
+
+        # (C) My Issues (Placeholder)
+        self.issues_tab = QLabel("Placeholder for 'My Issues'")
+        self.issues_tab.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.bottom_tab_widget.addTab(self.issues_tab, "My Issues")
+
+        # (D) Notes
+        if RichTextEditorTab:
+            self.notes_editor = RichTextEditorTab("Notes")
+            self.bottom_tab_widget.addTab(self.notes_editor, "Notes")
+        else:
+            self.bottom_tab_widget.addTab(QLabel("Editor failed to load."), "Notes")
+
+        # --- END NEW ---
+
+        # --- NEW: Add top and bottom widgets to the MAIN splitter ---
+        self.main_splitter.addWidget(top_widget)
+        self.main_splitter.addWidget(bottom_panel)
+        self.main_splitter.setStretchFactor(0, 1)  # Give anchor viewer 50%
+        self.main_splitter.setStretchFactor(1, 1)  # Give new tabs 50%
+        # --- END NEW ---
 
         # --- Connections ---
         self.tag_list.currentItemChanged.connect(self.on_tag_selected)
         self.tag_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tag_list.customContextMenuRequested.connect(self.show_tag_context_menu)
 
-    def load_tab_data(self):
+    def load_tab_data(self, project_details):
         """Called by the dashboard to load this tab's data."""
         self.load_tags_list()
         self.anchor_display.clear()
+
+        # --- NEW: Load data for bottom editors ---
+        if TerminologyTab and hasattr(self, 'terminology_tab'):
+            self.terminology_tab.load_terminology()
+
+        if RichTextEditorTab and hasattr(self, 'notes_editor'):
+            self.notes_editor.set_html(project_details.get('synthesis_notes_html', ''))
+        # --- END NEW ---
+
+    # --- NEW: Save method for bottom editors ---
+    def save_editors(self):
+        """Saves the content of the four bottom text editors."""
+        if self.project_id == -1:
+            return
+
+        print("Saving synthesis editors...")
+
+        # We don't need to save Terminology, Propositions, or Issues here
+        # because they will have their own internal save logic.
+        # We ONLY need to save the "Notes" editor.
+
+        if RichTextEditorTab and hasattr(self, 'notes_editor'):
+            def create_callback(field_name):
+                # This closure captures the field_name
+                return lambda html: self.db.update_project_text_field(
+                    self.project_id, field_name, html
+                ) if html is not None else None
+
+            self.notes_editor.get_html(create_callback('synthesis_notes_html'))
+
+    # --- END NEW ---
 
     def load_tags_list(self):
         """Reloads the list of tags from the database."""
@@ -337,6 +442,7 @@ class SynthesisTab(QWidget):
             self.on_tag_selected(current_item, None)
         else:
             self.anchor_display.clear()
+
     # --- END NEW ---
 
     # --- NEW: Public slot for Graph View interactivity ---

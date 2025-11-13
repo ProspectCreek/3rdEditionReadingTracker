@@ -255,7 +255,9 @@ class ProjectDashboardWidget(QWidget):
 
             # --- NEW: Load Synthesis Tab Data ---
             if self.synthesis_tab:
-                self.synthesis_tab.load_tab_data()
+                # --- MODIFIED: Pass project_details ---
+                self.synthesis_tab.load_tab_data(self.project_details)
+                # --- END MODIFIED ---
             # --- END NEW ---
 
             # Call load_data() on each reading tab
@@ -384,7 +386,9 @@ class ProjectDashboardWidget(QWidget):
         current_widget = self.top_tab_widget.widget(index)
         if current_widget == self.synthesis_tab:
             # Reload synthesis data in case anchors were added
-            self.synthesis_tab.load_tab_data()
+            # --- MODIFIED: Pass project_details ---
+            self.synthesis_tab.load_tab_data(self.project_details)
+            # --- END MODIFIED ---
         elif current_widget == self.mindmaps_tab:
             # Reload mindmap list
             self.mindmaps_tab.load_mindmaps()
@@ -429,6 +433,11 @@ class ProjectDashboardWidget(QWidget):
         # Save assignment tab
         if hasattr(self, 'assignment_tab') and isinstance(self.assignment_tab, AssignmentTab):
             self.assignment_tab.save_editors()
+
+        # --- NEW: Save Synthesis tab editors ---
+        if self.synthesis_tab and hasattr(self.synthesis_tab, 'save_editors'):
+            self.synthesis_tab.save_editors()
+        # --- END NEW ---
 
     @Slot()
     def open_edit_instructions(self):
@@ -608,7 +617,9 @@ class ProjectDashboardWidget(QWidget):
         print("Project Dashboard: Detected tag update. Refreshing UI...")
         # Refresh the synthesis tab itself (for counts)
         if self.synthesis_tab:
-            self.synthesis_tab.load_tags_list()
+            # --- MODIFIED: Pass project_details ---
+            self.synthesis_tab.load_tab_data(self.project_details)
+            # --- END MODIFIED ---
 
         # Refresh all open reading tabs
         for reading_tab in self.reading_tabs.values():
