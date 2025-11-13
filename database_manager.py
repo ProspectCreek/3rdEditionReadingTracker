@@ -585,17 +585,51 @@ class DatabaseManager:
         """)
         # --- END NEW ---
 
-        # --- NEW: Proposition Tables ---
+        # --- NEW: Project To-Do List Table ---
         self.cursor.execute("""
-        CREATE TABLE IF NOT EXISTS project_propositions (
+        CREATE TABLE IF NOT EXISTS project_todo_list (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             project_id INTEGER NOT NULL,
-            display_name TEXT NOT NULL,
-            proposition_html TEXT,
+            display_name TEXT,
+            task TEXT,
+            notes TEXT,
+            is_checked INTEGER DEFAULT 0,
             display_order INTEGER,
             FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE
         )
         """)
+        # --- END NEW ---
+
+        # --- NEW: Project Propositions ---
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS project_propositions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            proposition_text TEXT,
+            importance_text TEXT,
+            display_order INTEGER,
+            FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE
+        )
+        """)
+        # --- FIX: Defensively add proposition_text if proposition exists ---
+        self.cursor.execute("PRAGMA table_info(project_propositions)")
+        prop_cols = {row["name"] for row in self.cursor.fetchall()}
+        if "proposition" in prop_cols and "proposition_text" not in prop_cols:
+            try:
+                self.cursor.execute("ALTER TABLE project_propositions ADD COLUMN proposition_text TEXT")
+                self.cursor.execute("UPDATE project_propositions SET proposition_text = proposition")
+                # We can't safely drop 'proposition' in one go, so we'll just leave it
+                # and new code will use 'proposition_text'
+                print("MIGRATION: Added 'proposition_text' to 'project_propositions' and copied data.")
+            except sqlite3.OperationalError as e:
+                print(f"Warning: Could not migrate 'project_propositions' table: {e}")
+        elif "proposition" not in prop_cols and "proposition_text" not in prop_cols:
+            try:
+                # This handles the case where the table was created but somehow is missing BOTH
+                self.cursor.execute("ALTER TABLE project_propositions ADD COLUMN proposition_text TEXT")
+            except sqlite3.OperationalError as e:
+                print(f"Warning: Could not add 'proposition_text' to 'project_propositions' table: {e}")
+        # --- END FIX ---
 
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS proposition_reading_links (
@@ -608,7 +642,6 @@ class DatabaseManager:
             UNIQUE(proposition_id, reading_id)
         )
         """)
-
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS proposition_references (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -616,7 +649,7 @@ class DatabaseManager:
             reading_id INTEGER NOT NULL,
             outline_id INTEGER,
             page_number TEXT,
-            how_addressed TEXT,
+            author_address TEXT,
             notes TEXT,
             FOREIGN KEY (proposition_id) REFERENCES project_propositions(id) ON DELETE CASCADE,
             FOREIGN KEY (reading_id) REFERENCES readings(id) ON DELETE CASCADE,
@@ -625,17 +658,19 @@ class DatabaseManager:
         """)
         # --- END NEW ---
 
-        # --- NEW: To-Do List Table ---
+        # --- NEW: Reading Leading Propositions ---
         self.cursor.execute("""
-        CREATE TABLE IF NOT EXISTS project_todo_list (
+        CREATE TABLE IF NOT EXISTS reading_leading_propositions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id INTEGER NOT NULL,
-            display_name TEXT NOT NULL,
-            task_html TEXT,
-            notes_html TEXT,
-            is_checked INTEGER DEFAULT 0,
+            reading_id INTEGER NOT NULL,
+            proposition_text TEXT,
+            outline_id INTEGER,
+            pages TEXT,
+            importance_text TEXT,
+            synthesis_tags TEXT,
             display_order INTEGER,
-            FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE
+            FOREIGN KEY (reading_id) REFERENCES readings(id) ON DELETE CASCADE,
+            FOREIGN KEY (outline_id) REFERENCES reading_outline(id) ON DELETE SET NULL
         )
         """)
         # --- END NEW ---
@@ -780,7 +815,7 @@ class DatabaseManager:
 
         original_readings = self.get_readings(item_id)
         for reading in original_readings:
-            new_reading_id = self.add_reading(
+            new_reading_id = self.db.add_reading(
                 new_project_id,
                 reading['title'],
                 reading['author'],
@@ -1458,18 +1493,11 @@ class DatabaseManager:
         self.cursor.execute("""
             SELECT DISTINCT t.id, t.name 
             FROM synthesis_tags t
-            JOIN synthesis_anchors a ON t.id = a.tag_id
-            WHERE a.project_id = ?
-
-            UNION
-
-            SELECT DISTINCT t.id, t.name
-            FROM synthesis_tags t
-            JOIN project_tag_links ptl ON t.id = ptl.tag_id
-            WHERE ptl.project_id = ?
-
+            LEFT JOIN synthesis_anchors a ON t.id = a.tag_id AND a.project_id = ?
+            LEFT JOIN project_tag_links ptl ON t.id = ptl.tag_id
+            WHERE ptl.project_id = ? OR a.project_id = ?
             ORDER BY t.name
-        """, (project_id, project_id))
+        """, (project_id, project_id, project_id))
         return self._map_rows(self.cursor.fetchall())
 
     def create_anchor(self, project_id, reading_id, outline_id, tag_id, selected_text, comment, unique_doc_id):
@@ -1945,94 +1973,80 @@ class DatabaseManager:
             )
         self.conn.commit()
 
-    # ----------------------- NEW: Proposition Functions -----------------------
+    # --- NEW: Project To-Do List Functions ---
 
-    def save_proposition_entry(self, project_id, proposition_id, data):
-        """
-        Saves a single proposition entry, including its text, and
-        all associated references. This is a transactional operation.
-        """
-        try:
-            # 1. Add or Update the main proposition
-            if proposition_id:
-                # Update existing proposition
-                self.cursor.execute("""
-                    UPDATE project_propositions
-                    SET display_name = ?, proposition_html = ?
-                    WHERE id = ? AND project_id = ?
-                """, (data['display_name'], data['proposition_html'], proposition_id, project_id))
-            else:
-                # Insert new proposition and get its ID
-                self.cursor.execute(
-                    "SELECT COALESCE(MAX(display_order), -1) FROM project_propositions WHERE project_id = ?",
-                    (project_id,))
-                new_order = (self.cursor.fetchone()[0] or -1) + 1
+    def get_project_todo_items(self, project_id):
+        """Gets all to-do items for a project."""
+        self.cursor.execute("""
+            SELECT * FROM project_todo_list
+            WHERE project_id = ?
+            ORDER BY display_order, id
+        """, (project_id,))
+        return self._map_rows(self.cursor.fetchall())
 
-                self.cursor.execute("""
-                    INSERT INTO project_propositions (project_id, display_name, proposition_html, display_order)
-                    VALUES (?, ?, ?, ?)
-                """, (project_id, data['display_name'], data['proposition_html'], new_order))
-                proposition_id = self.cursor.lastrowid
+    def get_todo_item_details(self, item_id):
+        """Gets details for a single to-do item."""
+        self.cursor.execute("SELECT * FROM project_todo_list WHERE id = ?", (item_id,))
+        return self._rowdict(self.cursor.fetchone())
 
-            if not proposition_id:
-                raise Exception("Failed to create or find proposition ID.")
+    def add_todo_item(self, project_id, data):
+        """Adds a new to-do item."""
+        self.cursor.execute(
+            "SELECT COALESCE(MAX(display_order), -1) FROM project_todo_list WHERE project_id = ?",
+            (project_id,))
+        new_order = (self.cursor.fetchone()[0] or -1) + 1
+        self.cursor.execute("""
+            INSERT INTO project_todo_list (project_id, display_name, task, notes, is_checked, display_order)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            project_id, data.get('display_name'), data.get('task'),
+            data.get('notes'), 0, new_order
+        ))
+        self.conn.commit()
+        return self.cursor.lastrowid
 
-            # 2. Delete all existing references for this proposition
-            self.cursor.execute("DELETE FROM proposition_references WHERE proposition_id = ?", (proposition_id,))
+    def update_todo_item(self, item_id, data):
+        """Updates an existing to-do item."""
+        self.cursor.execute("""
+            UPDATE project_todo_list
+            SET display_name = ?, task = ?, notes = ?
+            WHERE id = ?
+        """, (
+            data.get('display_name'), data.get('task'), data.get('notes'), item_id
+        ))
+        self.conn.commit()
 
-            # 3. Update or Insert the status for ALL readings
-            status_data = []
-            for status in data.get("statuses", []):
-                status_data.append((
-                    proposition_id,
-                    status.get('reading_id'),
-                    status.get('not_in_reading', 0)
-                ))
+    def update_todo_item_checked(self, item_id, is_checked):
+        """Updates the 'is_checked' status of a to-do item."""
+        self.cursor.execute(
+            "UPDATE project_todo_list SET is_checked = ? WHERE id = ?",
+            (int(bool(is_checked)), item_id)
+        )
+        self.conn.commit()
 
-            if status_data:
-                self.cursor.executemany("""
-                    INSERT INTO proposition_reading_links (proposition_id, reading_id, not_in_reading)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT(proposition_id, reading_id) DO UPDATE SET
-                    not_in_reading = excluded.not_in_reading
-                """, status_data)
+    def delete_todo_item(self, item_id):
+        """Deletes a to-do item."""
+        self.cursor.execute("DELETE FROM project_todo_list WHERE id = ?", (item_id,))
+        self.conn.commit()
 
-            # 4. Insert all new references
-            references_data = []
-            not_in_reading_ids = {s['reading_id'] for s in data.get("statuses", []) if s['not_in_reading'] == 1}
+    def update_todo_item_order(self, ordered_ids):
+        """Updates the display_order for a list of to-do item IDs."""
+        for order, item_id in enumerate(ordered_ids):
+            self.cursor.execute(
+                "UPDATE project_todo_list SET display_order = ? WHERE id = ?",
+                (order, item_id)
+            )
+        self.conn.commit()
 
-            for ref in data.get("references", []):
-                if ref.get('reading_id') not in not_in_reading_ids:
-                    references_data.append((
-                        proposition_id,
-                        ref.get('reading_id'),
-                        ref.get('outline_id'),
-                        ref.get('page_number'),
-                        ref.get('how_addressed'),
-                        ref.get('notes')
-                    ))
+    # --- END NEW ---
 
-            if references_data:
-                self.cursor.executemany("""
-                    INSERT INTO proposition_references 
-                    (proposition_id, reading_id, outline_id, page_number, how_addressed, notes)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, references_data)
-
-            # 5. Commit transaction
-            self.conn.commit()
-
-        except Exception as e:
-            self.conn.rollback()
-            print(f"Error saving proposition entry: {e}")
-            raise
+    # --- NEW: Project Propositions Functions ---
 
     def get_project_propositions(self, project_id):
-        """
-        Gets a list of all propositions for a project, ordered by display_order.
-        """
+        """Gets all propositions for a project."""
+        # --- FIX: Select proposition_text and alias it ---
         self.cursor.execute("""
-            SELECT id, display_name
+            SELECT id, proposition_text AS proposition, display_order
             FROM project_propositions
             WHERE project_id = ?
             ORDER BY display_order, id
@@ -2040,11 +2054,15 @@ class DatabaseManager:
         return self._map_rows(self.cursor.fetchall())
 
     def get_proposition_details(self, proposition_id):
-        """
-        Gets the full details for a single proposition, including its references.
-        """
-        self.cursor.execute("SELECT * FROM project_propositions WHERE id = ?", (proposition_id,))
+        """Gets details for a single proposition."""
+        # --- FIX: Select proposition_text and alias it ---
+        self.cursor.execute("""
+            SELECT id, project_id, proposition_text AS proposition, importance_text, display_order
+            FROM project_propositions 
+            WHERE id = ?
+        """, (proposition_id,))
         prop_data = self._rowdict(self.cursor.fetchone())
+        # --- END FIX ---
 
         if not prop_data:
             return None
@@ -2070,17 +2088,82 @@ class DatabaseManager:
 
         return prop_data
 
+    def save_proposition_entry(self, project_id, proposition_id, data):
+        """Saves a single proposition entry and its references."""
+        try:
+            if proposition_id:
+                # --- FIX: Update proposition_text column ---
+                self.cursor.execute("""
+                    UPDATE project_propositions
+                    SET proposition_text = ?, importance_text = ?
+                    WHERE id = ? AND project_id = ?
+                """, (data['proposition'], data['importance_text'], proposition_id, project_id))
+            else:
+                self.cursor.execute(
+                    "SELECT COALESCE(MAX(display_order), -1) FROM project_propositions WHERE project_id = ?",
+                    (project_id,))
+                new_order = (self.cursor.fetchone()[0] or -1) + 1
+                # --- FIX: Insert into proposition_text column ---
+                self.cursor.execute("""
+                    INSERT INTO project_propositions (project_id, proposition_text, importance_text, display_order)
+                    VALUES (?, ?, ?, ?)
+                """, (project_id, data['proposition'], data['importance_text'], new_order))
+                proposition_id = self.cursor.lastrowid
+
+            if not proposition_id:
+                raise Exception("Failed to create or find proposition ID.")
+
+            self.cursor.execute("DELETE FROM proposition_references WHERE proposition_id = ?", (proposition_id,))
+            self.cursor.execute("DELETE FROM proposition_reading_links WHERE proposition_id = ?", (proposition_id,))
+
+            status_data = []
+            for status in data.get("statuses", []):
+                status_data.append((
+                    proposition_id,
+                    status.get('reading_id'),
+                    status.get('not_in_reading', 0)
+                ))
+
+            if status_data:
+                self.cursor.executemany("""
+                    INSERT INTO proposition_reading_links (proposition_id, reading_id, not_in_reading)
+                    VALUES (?, ?, ?)
+                """, status_data)
+
+            references_data = []
+            not_in_reading_ids = {s['reading_id'] for s in data.get("statuses", []) if s['not_in_reading'] == 1}
+
+            for ref in data.get("references", []):
+                if ref.get('reading_id') not in not_in_reading_ids:
+                    references_data.append((
+                        proposition_id,
+                        ref.get('reading_id'),
+                        ref.get('outline_id'),
+                        ref.get('page_number'),
+                        ref.get('author_address'),
+                        ref.get('notes')
+                    ))
+
+            if references_data:
+                self.cursor.executemany("""
+                    INSERT INTO proposition_references 
+                    (proposition_id, reading_id, outline_id, page_number, author_address, notes)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, references_data)
+
+            self.conn.commit()
+        except Exception as e:
+            self.conn.rollback()
+            print(f"Error saving proposition entry: {e}")
+            raise
+
     def delete_proposition(self, proposition_id):
-        """
-        Deletes a proposition entry. Cascade delete handles references.
-        """
+        """Deletes a proposition entry."""
         self.cursor.execute("DELETE FROM project_propositions WHERE id = ?", (proposition_id,))
         self.conn.commit()
 
     def update_proposition_order(self, ordered_ids):
-        """
-        Updates the display_order for a list of proposition IDs.
-        """
+        """Updates the display_order for a list of proposition IDs."""
         for order, prop_id in enumerate(ordered_ids):
             self.cursor.execute(
                 "UPDATE project_propositions SET display_order = ? WHERE id = ?",
@@ -2088,79 +2171,73 @@ class DatabaseManager:
             )
         self.conn.commit()
 
-    # ----------------------- NEW: To-Do List Functions -----------------------
+    # --- END NEW ---
 
-    def get_todo_items(self, project_id):
-        """Gets a list of all to-do items for a project, ordered."""
+    # --- NEW: Reading Leading Propositions Functions ---
+
+    def get_reading_propositions(self, reading_id):
+        """Gets all leading propositions for a specific reading."""
         self.cursor.execute("""
-            SELECT id, display_name, is_checked
-            FROM project_todo_list
-            WHERE project_id = ?
+            SELECT * FROM reading_leading_propositions
+            WHERE reading_id = ?
             ORDER BY display_order, id
-        """, (project_id,))
+        """, (reading_id,))
         return self._map_rows(self.cursor.fetchall())
 
-    def get_todo_item_details(self, item_id):
-        """Gets the full details for a single to-do item."""
-        self.cursor.execute("SELECT * FROM project_todo_list WHERE id = ?", (item_id,))
+    def get_reading_proposition_details(self, proposition_id):
+        """Gets details for a single leading proposition."""
+        self.cursor.execute("SELECT * FROM reading_leading_propositions WHERE id = ?", (proposition_id,))
         return self._rowdict(self.cursor.fetchone())
 
-    def add_todo_item(self, project_id, data):
-        """Adds a new to-do item."""
+    def add_reading_proposition(self, reading_id, data):
+        """Adds a new leading proposition to a reading."""
         self.cursor.execute(
-            "SELECT COALESCE(MAX(display_order), -1) FROM project_todo_list WHERE project_id = ?",
-            (project_id,)
-        )
+            "SELECT COALESCE(MAX(display_order), -1) FROM reading_leading_propositions WHERE reading_id = ?",
+            (reading_id,))
         new_order = (self.cursor.fetchone()[0] or -1) + 1
 
         self.cursor.execute("""
-            INSERT INTO project_todo_list (project_id, display_name, task_html, notes_html, is_checked, display_order)
-            VALUES (?, ?, ?, ?, 0, ?)
+            INSERT INTO reading_leading_propositions (
+                reading_id, proposition_text, outline_id, pages, 
+                importance_text, synthesis_tags, display_order
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
-            project_id,
-            data.get('display_name'),
-            data.get('task_html'),
-            data.get('notes_html'),
-            new_order
+            reading_id, data.get("proposition_text"), data.get("outline_id"),
+            data.get("pages"), data.get("importance_text"),
+            data.get("synthesis_tags"), new_order
         ))
         self.conn.commit()
         return self.cursor.lastrowid
 
-    def update_todo_item(self, item_id, data):
-        """Updates the text content of a to-do item."""
+    def update_reading_proposition(self, proposition_id, data):
+        """Updates an existing leading proposition."""
         self.cursor.execute("""
-            UPDATE project_todo_list
-            SET display_name = ?, task_html = ?, notes_html = ?
+            UPDATE reading_leading_propositions SET
+                proposition_text = ?, outline_id = ?, pages = ?, 
+                importance_text = ?, synthesis_tags = ?
             WHERE id = ?
         """, (
-            data.get('display_name'),
-            data.get('task_html'),
-            data.get('notes_html'),
-            item_id
+            data.get("proposition_text"), data.get("outline_id"),
+            data.get("pages"), data.get("importance_text"),
+            data.get("synthesis_tags"), proposition_id
         ))
         self.conn.commit()
 
-    def update_todo_item_checked(self, item_id, is_checked):
-        """Updates the check state of a to-do item."""
-        self.cursor.execute(
-            "UPDATE project_todo_list SET is_checked = ? WHERE id = ?",
-            (int(bool(is_checked)), item_id)
-        )
+    def delete_reading_proposition(self, proposition_id):
+        """Deletes a leading proposition."""
+        self.cursor.execute("DELETE FROM reading_leading_propositions WHERE id = ?", (proposition_id,))
         self.conn.commit()
 
-    def delete_todo_item(self, item_id):
-        """Deletes a to-do item."""
-        self.cursor.execute("DELETE FROM project_todo_list WHERE id = ?", (item_id,))
-        self.conn.commit()
-
-    def update_todo_order(self, ordered_ids):
-        """Updates the display_order for a list of to-do item IDs."""
+    def update_reading_proposition_order(self, ordered_ids):
+        """Updates the display_order for a list of leading proposition IDs."""
         for order, item_id in enumerate(ordered_ids):
             self.cursor.execute(
-                "UPDATE project_todo_list SET display_order = ? WHERE id = ?",
+                "UPDATE reading_leading_propositions SET display_order = ? WHERE id = ?",
                 (order, item_id)
             )
         self.conn.commit()
+
+    # --- END NEW ---
 
     # ---------------------------- utility ----------------------------
 

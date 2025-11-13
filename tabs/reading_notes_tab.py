@@ -24,6 +24,14 @@ except ImportError:
     print("Error: Could not import DrivingQuestionTab")
     DrivingQuestionTab = None
 
+# --- NEW: Import LeadingPropositionsTab ---
+try:
+    from tabs.leading_propositions_tab import LeadingPropositionsTab
+except ImportError:
+    print("Error: Could not import LeadingPropositionsTab")
+    LeadingPropositionsTab = None
+# --- END NEW ---
+
 try:
     from tabs.attachments_tab import AttachmentsTab
 except ImportError:
@@ -316,7 +324,14 @@ class ReadingNotesTab(QWidget):
             self.bottom_right_tabs.addTab(widget, title)
 
         # --- Leading Propositions ---
-        create_editor_tab("Leading Propositions", "Instructions for Leading Propositions go here.", "propositions_html")
+        # --- MODIFIED: Use new LeadingPropositionsTab ---
+        if LeadingPropositionsTab:
+            self.leading_propositions_tab = LeadingPropositionsTab(self.db, self.reading_id)
+            self.bottom_right_tabs.addTab(self.leading_propositions_tab, "Leading Propositions")
+        else:
+            create_editor_tab("Leading Propositions", "Instructions for Leading Propositions go here.",
+                              "propositions_html")
+        # --- END MODIFIED ---
 
         # --- Unity ---
         create_editor_tab("Unity", "Instructions for Unity go here.", "unity_html")
@@ -431,7 +446,17 @@ class ReadingNotesTab(QWidget):
         """Loads data into the bottom-right tabs."""
         if not self.reading_details_row:
             return
+
+        # --- NEW: Load propositions tab ---
+        if hasattr(self, 'leading_propositions_tab'):
+            self.leading_propositions_tab.load_propositions()
+        # --- END NEW ---
+
         for field_name, editor in self.bottom_editors.items():
+            # --- MODIFIED: Check before trying to load ---
+            if field_name == 'propositions_html':
+                continue  # This is now handled by LeadingPropositionsTab
+            # --- END MODIFIED ---
             html = self._get_detail(field_name, default="")
             editor.set_html(html)
 
@@ -440,6 +465,12 @@ class ReadingNotesTab(QWidget):
         if not self._is_loaded:
             return
         for field_name, editor in self.bottom_editors.items():
+            # --- MODIFIED: Check before trying to save ---
+            if field_name == 'propositions_html':
+                continue  # This is now handled by LeadingPropositionsTab
+
+            # --- END MODIFIED ---
+
             # Use a closure to capture the field_name
             def create_callback(fname):
                 return lambda html: self.db.update_reading_field(
@@ -715,6 +746,7 @@ class ReadingNotesTab(QWidget):
             self.right_splitter.setSizes([total_h // 2, total_h - total_h // 2])
         except Exception as e:
             print(f"Warning: Could not enforce right split: {e}")
+
     # --- END NEW ---
 
     # --- NEW: Public Slots ---

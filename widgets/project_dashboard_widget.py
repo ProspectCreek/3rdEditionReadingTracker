@@ -6,8 +6,10 @@ from PySide6.QtWidgets import (
     QFrame, QDialog, QTreeWidgetItem, QMenuBar,
     QMessageBox, QMenu, QApplication
 )
+# --- NEW: Import QIcon ---
 from PySide6.QtCore import Qt, Signal, Slot, QTimer, QPoint
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QIcon
+# --- END NEW ---
 
 # Import all the tab types
 from tabs.project_editor_tab import ProjectEditorTab
@@ -18,11 +20,8 @@ from tabs.reading_notes_tab import ReadingNotesTab
 from tabs.synthesis_tab import SynthesisTab
 from tabs.graph_view_tab import GraphViewTab
 # --- NEW: Import TodoListTab ---
-try:
-    from tabs.todo_list_tab import TodoListTab
-except ImportError:
-    print("Error: Could not import TodoListTab")
-    TodoListTab = None
+from tabs.todo_list_tab import TodoListTab
+
 # --- END NEW ---
 
 try:
@@ -47,8 +46,26 @@ class ProjectDashboardWidget(QWidget):
         self.bottom_tabs = []
         self.reading_tabs = {}  # Stores {reading_id: ReadingNotesTab}
         self.synthesis_tab = None
-        self.graph_view_tab = None # --- RENAMED: Still keep old variable name ---
-        self.todo_list_tab = None # --- NEW ---
+        self.graph_view_tab = None  # --- RENAMED: Still keep old variable name ---
+
+        # --- NEW: Book Icon ---
+        self.book_icon = QIcon()
+        book_svg = """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M20 5v14.5a.5.5 0 0 1-.5.5h-15a.5.5 0 0 1-.5-.5v-16a.5.5 0 0 1 .5-.5H19a1 1 0 0 1 1 1zm-1-2H4.5a2.5 2.5 0 0 0-2.5 2.5v16A2.5 2.5 0 0 0 4.5 22h15a2.5 2.5 0 0 0 2.5-2.5V5a3 3 0 0 0-3-3z"/>
+          <path d="M6 8.5h8v-1H6v1zm6 3H6v-1h6v1zm-6 3h8v-1H6v1z"/>
+        </svg>
+        """
+        from PySide6.QtSvg import QSvgRenderer
+        from PySide6.QtGui import QPixmap, QPainter
+        renderer = QSvgRenderer(book_svg.encode('utf-8'))
+        pixmap = QPixmap(16, 16)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        renderer.render(painter)
+        painter.end()
+        self.book_icon = QIcon(pixmap)
+        # --- END NEW ---
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -187,7 +204,6 @@ class ProjectDashboardWidget(QWidget):
         self.reading_tabs.clear()
         self.synthesis_tab = None
         self.graph_view_tab = None
-        self.todo_list_tab = None # --- NEW ---
 
         settings_menu = self.menu_bar.addMenu("Settings")
         edit_instr_action = QAction("Edit Dashboard Instructions", self)
@@ -196,16 +212,14 @@ class ProjectDashboardWidget(QWidget):
 
         self.top_tab_widget.addTab(self.dashboard_tab, "Project Dashboard")
 
-        self.mindmaps_tab = MindmapTab(self.db, self.project_id)
-        # self.top_tab_widget.addTab(self.mindmaps_tab, "Mindmaps") # <-- MOVED
-
+        # --- MODIFIED: Tab Order ---
         if self.project_details.get('is_assignment', 0) == 1:
             self.assignment_tab = AssignmentTab(self.db, self.project_id)
             self.top_tab_widget.addTab(self.assignment_tab, "Assignment")
 
-        # --- (1) TAB REORDER: Mindmap tab moved to after Assignment ---
+        self.mindmaps_tab = MindmapTab(self.db, self.project_id)
         self.top_tab_widget.addTab(self.mindmaps_tab, "Mindmaps")
-        # --- END REORDER ---
+        # --- END MODIFIED: Tab Order ---
 
         # --- Add Synthesis Tab ---
         self.synthesis_tab = SynthesisTab(self.db, self.project_id)
@@ -217,15 +231,12 @@ class ProjectDashboardWidget(QWidget):
         self.graph_view_tab = GraphViewTab(self.db, self.project_id)
         self.graph_view_tab.readingDoubleClicked.connect(self.open_reading_from_graph)
         self.graph_view_tab.tagDoubleClicked.connect(self.open_tag_from_graph)
-        self.top_tab_widget.addTab(self.graph_view_tab, "Connections") # <-- RENAMED
+        self.top_tab_widget.addTab(self.graph_view_tab, "Connections")  # <-- RENAMED
         # --- END RENAMED ---
 
-        # --- (2) NEW: Add To-Do List Tab ---
-        if TodoListTab:
-            self.todo_list_tab = TodoListTab(self.db, self.project_id)
-            self.top_tab_widget.addTab(self.todo_list_tab, "To-Do List")
-        else:
-            self.top_tab_widget.addTab(QLabel("To-Do List (Failed to load)"), "To-Do List")
+        # --- NEW: Add To-Do List Tab ---
+        self.todo_list_tab = TodoListTab(self.db, self.project_id)
+        self.top_tab_widget.addTab(self.todo_list_tab, "To-Do List")
         # --- END NEW ---
 
         self.load_readings()  # This populates the tree
@@ -328,7 +339,10 @@ class ProjectDashboardWidget(QWidget):
             return tab
 
         tab = ReadingNotesTab(self.db, self.project_id, reading_id)
-        idx = self.top_tab_widget.addTab(tab, tab_title)
+
+        # --- NEW: Add book icon ---
+        idx = self.top_tab_widget.addTab(tab, self.book_icon, f" {tab_title}")
+        # --- END NEW ---
 
         # Listen for nickname/title changes from within the tab
         tab.readingTitleChanged.connect(self._handle_reading_title_change)
@@ -356,7 +370,10 @@ class ProjectDashboardWidget(QWidget):
         # Update tab text
         i = self.top_tab_widget.indexOf(tab_widget)
         if i != -1:
-            self.top_tab_widget.setTabText(i, new_text)
+            # --- NEW: Add book icon ---
+            self.top_tab_widget.setTabText(i, f" {new_text}")
+            self.top_tab_widget.setTabIcon(i, self.book_icon)
+            # --- END NEW ---
 
         # Update readings tree
         for j in range(self.readings_tree.topLevelItemCount()):
@@ -422,8 +439,7 @@ class ProjectDashboardWidget(QWidget):
         elif current_widget == self.graph_view_tab:
             self.graph_view_tab.load_graph()
         # --- END NEW ---
-
-        # --- NEW: Load to-do list when tab is clicked ---
+        # --- NEW: Load To-Do list when tab is clicked ---
         elif current_widget == self.todo_list_tab:
             self.todo_list_tab.load_items()
         # --- END NEW ---

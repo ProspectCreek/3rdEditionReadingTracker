@@ -59,7 +59,7 @@ class TodoListTab(QWidget):
 
         self.item_list = QListWidget()
         self.item_list.currentItemChanged.connect(self.on_item_selected)
-        self.item_list.itemChanged.connect(self.on_item_changed) # For checkbox
+        self.item_list.itemChanged.connect(self.on_item_changed)  # For checkbox
         # --- (2) Right-click Context Menu ---
         self.item_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.item_list.customContextMenuRequested.connect(self.show_context_menu)
@@ -88,7 +88,10 @@ class TodoListTab(QWidget):
         self.item_list.clear()
         self.detail_viewer.clear()
         try:
-            items = self.db.get_todo_items(self.project_id)
+            # --- BUG FIX: Was get_todo_items, changed to get_project_todo_items ---
+            items = self.db.get_project_todo_items(self.project_id)
+            # --- END BUG FIX ---
+
             if not items:
                 item = QListWidgetItem("No to-do items added yet.")
                 item.setFlags(Qt.ItemFlag.NoItemFlags)
@@ -161,9 +164,9 @@ class TodoListTab(QWidget):
             </style>
             """
             html += f"<h3>Task:</h3>"
-            html += f"<div class='card'>{data.get('task_html', '<i>No task description.</i>')}</div>"
+            html += f"<div class='card'>{data.get('task', '<i>No task description.</i>')}</div>"
             html += f"<h3>Notes:</h3>"
-            html += f"<div class='card'>{data.get('notes_html', '<i>No notes.</i>')}</div>"
+            html += f"<div class='card'>{data.get('notes', '<i>No notes.</i>')}</div>"
 
             self.detail_viewer.setHtml(html)
 
@@ -218,7 +221,14 @@ class TodoListTab(QWidget):
                 return
 
             try:
-                self.db.add_todo_item(self.project_id, data)
+                # --- FIX: Pass HTML content to db ---
+                db_data = {
+                    'display_name': data.get('display_name'),
+                    'task': data.get('task_html'),
+                    'notes': data.get('notes_html')
+                }
+                self.db.add_todo_item(self.project_id, db_data)
+                # --- END FIX ---
                 self.load_items()  # Refresh the list
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not save new item: {e}")
@@ -241,6 +251,11 @@ class TodoListTab(QWidget):
             QMessageBox.critical(self, "Error", "Could not find item details to edit.")
             return
 
+        # --- FIX: Pass HTML content to dialog ---
+        current_data['task_html'] = current_data.get('task', '')
+        current_data['notes_html'] = current_data.get('notes', '')
+        # --- END FIX ---
+
         dialog = AddTodoDialog(current_data=current_data, parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             data = dialog.get_data()
@@ -249,7 +264,14 @@ class TodoListTab(QWidget):
                 return
 
             try:
-                self.db.update_todo_item(item_id, data)
+                # --- FIX: Pass HTML content to db ---
+                db_data = {
+                    'display_name': data.get('display_name'),
+                    'task': data.get('task_html'),
+                    'notes': data.get('notes_html')
+                }
+                self.db.update_todo_item(item_id, db_data)
+                # --- END FIX ---
                 self.load_items()  # Refresh the list
                 # Reselect the item to refresh the detail view
                 for i in range(self.item_list.count()):
@@ -305,7 +327,7 @@ class TodoListTab(QWidget):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             ordered_ids = dialog.ordered_db_ids
             try:
-                self.db.update_todo_order(ordered_ids)
+                self.db.update_todo_item_order(ordered_ids)
                 self.load_items()
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not reorder items: {e}")

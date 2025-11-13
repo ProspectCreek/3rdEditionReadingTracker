@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QMenu, QMessageBox, QDialog, QPushButton
 )
 from PySide6.QtCore import Qt, Signal, Slot, QPoint
-from PySide6.QtGui import QAction, QColor, QFont
+from PySide6.QtGui import QAction, QColor, QFont, QTextDocument
 
 # Import the new dialog
 try:
@@ -94,7 +94,13 @@ class PropositionsTab(QWidget):
                 return
 
             for item_data in items:
-                item = QListWidgetItem(item_data['display_name'])
+                # --- BUG FIX: Handle NoneType ---
+                item_text_raw = item_data.get('proposition')
+                item_text = (item_text_raw or 'Untitled Proposition').strip()
+                if not item_text:
+                    item_text = "Untitled Proposition"
+                item = QListWidgetItem(item_text)
+                # --- END BUG FIX ---
                 item.setData(Qt.ItemDataRole.UserRole, item_data['id'])
                 self.item_list.addItem(item)
         except Exception as e:
@@ -170,9 +176,15 @@ class PropositionsTab(QWidget):
             </style>
             """
 
-            html += f"<h2>{data.get('display_name', 'No Proposition')}</h2>"
+            # --- FIX: Use 'proposition' (the alias) and 'importance_text' ---
+            html += f"<h2>{data.get('proposition', 'No Proposition')}</h2>"
             html += "<h3>My Proposition:</h3>"
-            html += f"<div class='meaning'>{data.get('proposition_html', '<i>No proposition defined.</i>')}</div>"
+            html += f"<div class='meaning'>{data.get('proposition', '<i>No proposition defined.</i>')}</div>"
+
+            html += "<h3>Why this is important:</h3>"
+            html += f"<div class='meaning'>{data.get('importance_text', '<i>No importance defined.</i>')}</div>"
+            # --- END FIX ---
+
             html += "<hr>"
             html += "<h3>Reading References:</h3>"
 
@@ -216,7 +228,7 @@ class PropositionsTab(QWidget):
                             html += f"<b>{context}</b>"
 
                             html += f"<br><b style='color: #555;'>How the author addresses this proposition:</b>"
-                            html += f"<div>{ref.get('how_addressed', 'N/A')}</div>"
+                            html += f"<div>{ref.get('author_address', 'N/A')}</div>"
 
                             html += f"<div class='ref-notes'><b style='color: #555;'>My Notes:</b>"
                             html += f"<div>{ref.get('notes', 'N/A')}</div></div>"
@@ -282,8 +294,8 @@ class PropositionsTab(QWidget):
         dialog = AddPropositionDialog(self.db, self.project_id, parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             data = dialog.get_data()
-            if not data['display_name']:
-                QMessageBox.warning(self, "Invalid Name", "Display Name cannot be empty.")
+            if not data['proposition']:
+                QMessageBox.warning(self, "Invalid Proposition", "Proposition cannot be empty.")
                 return
 
             try:
@@ -305,11 +317,21 @@ class PropositionsTab(QWidget):
             QMessageBox.critical(self, "Error", "Edit Proposition Dialog could not be loaded.")
             return
 
+        data = self.db.get_proposition_details(item_id)
+        if not data:
+            QMessageBox.critical(self, "Error", "Could not load proposition details.")
+            return
+
         dialog = AddPropositionDialog(self.db, self.project_id, proposition_id=item_id, parent=self)
+        # --- FIX: Manually set proposition HTML in dialog ---
+        dialog.proposition_input.setHtml(data.get('proposition', ''))
+        dialog.importance_edit.setHtml(data.get('importance_text', ''))
+        # --- END FIX ---
+
         if dialog.exec() == QDialog.DialogCode.Accepted:
             data = dialog.get_data()
-            if not data['display_name']:
-                QMessageBox.warning(self, "Invalid Name", "Display Name cannot be empty.")
+            if not data['proposition']:
+                QMessageBox.warning(self, "Invalid Proposition", "Proposition cannot be empty.")
                 return
 
             try:
