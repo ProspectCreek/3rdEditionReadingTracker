@@ -30,6 +30,14 @@ class DrivingQuestionTab(QWidget):
         super().__init__(parent)
         self.db = db
         self.reading_id = reading_id
+        # --- NEW: Get project_id from reading_details ---
+        try:
+            reading_details = self.db.get_reading_details(self.reading_id)
+            self.project_id = reading_details['project_id']
+        except Exception as e:
+            print(f"Error getting project_id for DrivingQuestionTab: {e}")
+            self.project_id = -1  # Invalid project ID
+        # --- END NEW ---
 
         # Main layout
         main_layout = QVBoxLayout(self)
@@ -267,6 +275,8 @@ class DrivingQuestionTab(QWidget):
         dialog = EditDrivingQuestionDialog(
             all_questions=all_questions,
             outline_items=outline_items,
+            db_manager=self.db,  # <-- ADD
+            project_id=self.project_id,  # <-- ADD
             parent=self
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -291,6 +301,8 @@ class DrivingQuestionTab(QWidget):
             current_question_data=initial_data,
             all_questions=all_questions,
             outline_items=outline_items,
+            db_manager=self.db,  # <-- ADD
+            project_id=self.project_id,  # <-- ADD
             parent=self
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -317,6 +329,8 @@ class DrivingQuestionTab(QWidget):
             current_question_data=current_data,
             all_questions=all_questions,
             outline_items=outline_items,
+            db_manager=self.db,  # <-- ADD
+            project_id=self.project_id,  # <-- ADD
             parent=self
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:

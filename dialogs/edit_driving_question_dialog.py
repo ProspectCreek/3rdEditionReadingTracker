@@ -3,9 +3,17 @@ import sys
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit, QTextEdit,
     QComboBox, QRadioButton, QCheckBox, QDialogButtonBox,
-    QWidget, QHBoxLayout, QPushButton, QLabel  # <-- FIX: Added QLabel
+    QWidget, QHBoxLayout, QPushButton, QLabel, QMessageBox
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Slot
+
+# --- NEW: Import ConnectTagsDialog ---
+try:
+    from dialogs.connect_tags_dialog import ConnectTagsDialog
+except ImportError:
+    print("Error: Could not import ConnectTagsDialog")
+    ConnectTagsDialog = None
+# --- END NEW ---
 
 
 class EditDrivingQuestionDialog(QDialog):
@@ -13,12 +21,14 @@ class EditDrivingQuestionDialog(QDialog):
     Dialog for adding or editing a driving question.
     """
 
-    def __init__(self, all_questions, outline_items, current_question_data=None, parent=None):
+    def __init__(self, all_questions, outline_items, db_manager=None, project_id=None, current_question_data=None, parent=None):
         super().__init__(parent)
 
         self.current_data = current_question_data if current_question_data else {}
         self.all_questions = all_questions
         self.outline_items = outline_items
+        self.db = db_manager        # <-- ADD
+        self.project_id = project_id  # <-- ADD
 
         self.setWindowTitle("Edit Driving Question")
         if not self.current_data:
@@ -141,7 +151,16 @@ class EditDrivingQuestionDialog(QDialog):
         self.tags_edit.setPlaceholderText("e.g., #gratitude, #leadership")
         self.tags_edit.setText(self.current_data.get("synthesis_tags", ""))
         connect_btn = QPushButton("Connect...")
-        connect_btn.setEnabled(False)  # Placeholder
+
+        # --- MODIFICATION ---
+        if self.db and self.project_id is not None and ConnectTagsDialog:
+            connect_btn.setEnabled(True)
+            connect_btn.clicked.connect(self._open_connect_tags_dialog)
+        else:
+            connect_btn.setEnabled(False)
+            connect_btn.setToolTip("Database connection not available or dialog not found")
+        # --- END MODIFICATION ---
+
         tags_layout.addWidget(self.tags_edit)
         tags_layout.addWidget(connect_btn)
         form_layout.addRow("Synthesis Tags:", tags_layout)
@@ -231,3 +250,32 @@ class EditDrivingQuestionDialog(QDialog):
             "synthesis_tags": self.tags_edit.text().strip(),
             "is_working_question": self.is_working_check.isChecked()
         }
+
+    # --- NEW: Slot to open tag connector ---
+    @Slot()
+    def _open_connect_tags_dialog(self):
+        if not self.db or self.project_id is None:
+            QMessageBox.warning(self, "Error", "Database connection is not available.")
+            return
+        if not ConnectTagsDialog:
+            QMessageBox.critical(self, "Error", "ConnectTagsDialog could not be loaded.")
+            return
+
+        try:
+            # 1. Get all tags for this project
+            all_project_tags = self.db.get_project_tags(self.project_id)
+
+            # 2. Get currently selected tags from the line edit
+            current_tags_text = self.tags_edit.text().strip()
+            selected_tag_names = [tag.strip() for tag in current_tags_text.split(',') if tag.strip()]
+
+            # 3. Open the dialog
+            dialog = ConnectTagsDialog(all_project_tags, selected_tag_names, self)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                # 4. Update the line edit with the new tag list
+                new_names = dialog.get_selected_tag_names()
+                self.tags_edit.setText(", ".join(new_names))
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not open tag connector: {e}")
+    # --- END NEW ---

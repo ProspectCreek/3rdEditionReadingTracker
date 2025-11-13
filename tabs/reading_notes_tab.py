@@ -163,8 +163,8 @@ class ReadingNotesTab(QWidget):
         # --- END NEW ---
 
         # Vertical splitter for notes and bottom tabs
-        right_splitter = QSplitter(Qt.Orientation.Vertical)
-        right_layout.addWidget(right_splitter)
+        self.right_splitter = QSplitter(Qt.Orientation.Vertical)
+        right_layout.addWidget(self.right_splitter)
 
         # Top-Right Widget (The Notes Editor)
         top_right_widget = QWidget()
@@ -216,12 +216,12 @@ class ReadingNotesTab(QWidget):
         bottom_right_layout.addWidget(self.bottom_right_tabs)
         # --- END FIX ---
 
-        right_splitter.addWidget(top_right_widget)
-        right_splitter.addWidget(bottom_right_frame)  # <-- Add the frame
+        self.right_splitter.addWidget(top_right_widget)
+        self.right_splitter.addWidget(bottom_right_frame)  # <-- Add the frame
 
         # --- FIX: Set 50/50 split ---
-        right_splitter.setStretchFactor(0, 1)
-        right_splitter.setStretchFactor(1, 1)
+        self.right_splitter.setStretchFactor(0, 1)
+        self.right_splitter.setStretchFactor(1, 1)
         # --- END FIX ---
 
         # --- Add all the new tabs ---
@@ -242,6 +242,10 @@ class ReadingNotesTab(QWidget):
         btn_add_section.clicked.connect(self.add_section)
         btn_add_subsection.clicked.connect(self.add_subsection)
         btn_add_citation.clicked.connect(self.open_page_citation_dialog)
+
+        # --- NEW: Enforce 50/50 split after show ---
+        QTimer.singleShot(0, self._enforce_right_split)
+        # --- END NEW ---
 
     def _create_details_form(self, parent_layout):
         """Creates the QFormLayout for reading details."""
@@ -701,6 +705,17 @@ class ReadingNotesTab(QWidget):
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.page_text:
             self.notes_editor.editor.insertPlainText(f" {dialog.page_text} ")
             self.notes_editor.focus_editor()
+
+    # --- NEW: Slot to enforce splitter size ---
+    @Slot()
+    def _enforce_right_split(self):
+        """Forces the right-hand splitter to be 50/50."""
+        try:
+            total_h = max(2, self.right_splitter.size().height())
+            self.right_splitter.setSizes([total_h // 2, total_h - total_h // 2])
+        except Exception as e:
+            print(f"Warning: Could not enforce right split: {e}")
+    # --- END NEW ---
 
     # --- NEW: Public Slots ---
     @Slot(int)
