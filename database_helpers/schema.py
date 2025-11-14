@@ -1,4 +1,4 @@
-# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-d0eaa6c33c524aa054deaa3e5b81207eb93ba7d2/database_helpers/schema.py
+# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-f9372c7f456315b9a3fa82060c18255c8574e1ea/database_helpers/schema.py
 import sqlite3
 
 
@@ -446,8 +446,14 @@ class SchemaSetup:
             existing_dq_cols = {row["name"] for row in self.cursor.fetchall()}
 
             # --- MODIFIED: Added check for new column to trigger rebuild if needed ---
-            if "reading_has_parts" in existing_dq_cols or "include_in_summary" in existing_dq_cols or "where_in_book" in existing_dq_cols or "extra_notes_text" not in existing_dq_cols:
+            migration_needed = False
+            if "reading_has_parts" in existing_dq_cols or \
+                    "include_in_summary" in existing_dq_cols or \
+                    "where_in_book" in existing_dq_cols or \
+                    "extra_notes_text" not in existing_dq_cols:
+                migration_needed = True
 
+            if migration_needed:
                 self.cursor.execute("ALTER TABLE reading_driving_questions RENAME TO _dq_old")
 
                 self.cursor.execute("""
@@ -502,12 +508,21 @@ class SchemaSetup:
 
         except Exception as e:
             print(f"Warning: Could not perform migration on reading_driving_questions. {e}")
+            # --- FIX: Added rollback to ensure connection is clean ---
+            self.conn.rollback()
             try:
-                self.cursor.execute("DROP TABLE IF EXISTS reading_driving_questions")
-                self.cursor.execute("ALTER TABLE _dq_old RENAME TO reading_driving_questions")
-                print("Rolled back reading_driving_questions migration.")
+                # We still want to try to restore the old table if it's in a half-migrated state
+                self.cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='_dq_old'")
+                if self.cursor.fetchone():
+                    self.cursor.execute("DROP TABLE IF EXISTS reading_driving_questions")
+                    self.cursor.execute("ALTER TABLE _dq_old RENAME TO reading_driving_questions")
+                    print("Rolled back reading_driving_questions migration.")
+                    self.conn.commit()  # Commit the successful rollback
+                else:
+                    print("Rollback skipped: _dq_old not found.")
             except Exception as re:
                 print(f"Critical error: Could not roll back migration. DB may be unstable. {re}")
+                self.conn.rollback()  # Rollback the failed rollback
 
         self.cursor.execute("PRAGMA foreign_keys = ON")
 
