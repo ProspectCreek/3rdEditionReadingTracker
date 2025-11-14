@@ -223,13 +223,17 @@ class ProjectDashboardWidget(QWidget):
 
         # --- Add Synthesis Tab ---
         self.synthesis_tab = SynthesisTab(self.db, self.project_id)
+        # --- MODIFIED: Connect to new 4-arg signal ---
         self.synthesis_tab.openReading.connect(self.open_reading_tab)
+        # --- END MODIFIED ---
         self.synthesis_tab.tagsUpdated.connect(self._on_tags_updated)
         self.top_tab_widget.addTab(self.synthesis_tab, "Synthesis")
 
         # --- Add Graph View Tab (RENAMED) ---
         self.graph_view_tab = GraphViewTab(self.db, self.project_id)
-        self.graph_view_tab.readingDoubleClicked.connect(self.open_reading_from_graph)
+        # --- MODIFIED: Connect to new 2-arg signal ---
+        self.graph_view_tab.readingDoubleClicked.connect(self.open_reading_tab)
+        # --- END MODIFIED ---
         self.graph_view_tab.tagDoubleClicked.connect(self.open_tag_from_graph)
         self.top_tab_widget.addTab(self.graph_view_tab, "Connections")  # <-- RENAMED
         # --- END RENAMED ---
@@ -628,11 +632,12 @@ class ProjectDashboardWidget(QWidget):
     # --- END NEW ---
 
     # --- NEW: Slots for Synthesis Tab ---
-    @Slot(int, int)
-    def open_reading_tab(self, reading_id, outline_id):
+    # --- MODIFIED: Accept all 4 arguments from the jumpto link ---
+    @Slot(int, int, int, str)
+    def open_reading_tab(self, reading_id, outline_id, item_link_id=0, item_type=''):
         """
         Finds or creates a reading tab, switches to it,
-        and tells it to select a specific outline item.
+        and tells it to select a specific outline item and/or item.
         """
         tab_widget = self.reading_tabs.get(reading_id)
 
@@ -651,8 +656,10 @@ class ProjectDashboardWidget(QWidget):
 
         # Tell the tab to select the outline item
         if hasattr(tab_widget, 'set_outline_selection'):
+            # --- MODIFIED: Pass all arguments to the selection function ---
             # Use QTimer to ensure this runs *after* the tab switch is complete
-            QTimer.singleShot(0, lambda: tab_widget.set_outline_selection(outline_id))
+            QTimer.singleShot(0, lambda: tab_widget.set_outline_selection(outline_id, item_link_id))
+            # --- END MODIFIED ---
 
     @Slot()
     def _on_tags_updated(self):
@@ -673,15 +680,23 @@ class ProjectDashboardWidget(QWidget):
             if hasattr(reading_tab, 'refresh_anchor_formatting'):
                 reading_tab.refresh_anchor_formatting()
 
+        # --- NEW: Refresh graph view ---
+        if self.graph_view_tab:
+            self.graph_view_tab.load_graph()
+        # --- END NEW ---
+
     # --- END NEW ---
 
     # --- NEW: Slots for Graph View Tab ---
-    @Slot(int)
-    def open_reading_from_graph(self, reading_id):
+    # --- MODIFIED: Pass all arguments ---
+    @Slot(int, int)
+    def open_reading_from_graph(self, reading_id, outline_id=0):
         """Slot to open a reading tab from the graph view."""
         # This re-uses the logic from the Synthesis tab's "jump to"
         # We pass 0 for outline_id to just open the reading.
-        self.open_reading_tab(reading_id, 0)
+        self.open_reading_tab(reading_id, outline_id, 0, '')
+
+    # --- END MODIFIED ---
 
     @Slot(int)
     def open_tag_from_graph(self, tag_id):

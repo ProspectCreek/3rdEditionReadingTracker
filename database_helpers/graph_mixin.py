@@ -22,14 +22,70 @@ class GraphMixin:
         edges_sql = """
             SELECT DISTINCT reading_id, tag_id
             FROM synthesis_anchors
-            WHERE project_id = ? AND tag_id IS NOT NULL
+            WHERE project_id = ? AND tag_id IS NOT NULL AND item_link_id IS NULL
         """
         self.cursor.execute(edges_sql, (project_id,))
         edges = self._map_rows(self.cursor.fetchall())
 
         return {"readings": readings, "tags": tags, "edges": edges}
 
-    # --- THIS IS THE FIX ---
+    # --- NEW: Function to get *all* data for the project graph ---
+    def get_graph_data_full(self, project_id):
+        """
+        Gets all readings, tags, and *all* anchors (text and virtual)
+        for a specific project.
+        """
+        # 1. Get Readings
+        readings_sql = "SELECT id, title, author, COALESCE(nickname, title) as name FROM readings WHERE project_id = ?"
+        self.cursor.execute(readings_sql, (project_id,))
+        readings = self._map_rows(self.cursor.fetchall())
+
+        # 2. Get Tags
+        tags_sql = """
+            SELECT DISTINCT t.id, t.name 
+            FROM synthesis_tags t
+            LEFT JOIN project_tag_links ptl ON t.id = ptl.tag_id
+            LEFT JOIN synthesis_anchors a ON t.id = a.tag_id AND a.project_id = ?
+            WHERE ptl.project_id = ? OR a.project_id = ?
+        """
+        self.cursor.execute(tags_sql, (project_id, project_id, project_id))
+        tags = self._map_rows(self.cursor.fetchall())
+
+        # 3. Get text-based anchor edges (Reading <-> Tag)
+        edges_sql = """
+            SELECT DISTINCT reading_id, tag_id
+            FROM synthesis_anchors
+            WHERE project_id = ? AND tag_id IS NOT NULL AND item_link_id IS NULL
+        """
+        self.cursor.execute(edges_sql, (project_id,))
+        edges = self._map_rows(self.cursor.fetchall())
+
+        # 4. Get "Virtual Anchors" (DQs, Terms, etc.)
+        # We join with reading_driving_questions to get the 'type'
+        virtual_anchors_sql = """
+            SELECT 
+                a.id, 
+                a.reading_id, 
+                a.tag_id, 
+                a.item_link_id, 
+                a.selected_text,
+                dq.type as item_type
+            FROM synthesis_anchors a
+            LEFT JOIN reading_driving_questions dq ON a.item_link_id = dq.id
+            WHERE a.project_id = ? AND a.item_link_id IS NOT NULL
+        """
+        self.cursor.execute(virtual_anchors_sql, (project_id,))
+        virtual_anchors = self._map_rows(self.cursor.fetchall())
+
+        return {
+            "readings": readings,
+            "tags": tags,
+            "edges": edges,
+            "virtual_anchors": virtual_anchors
+        }
+
+    # --- END NEW ---
+
     def get_global_graph_data(self):
         """
         Gets all tags, projects, and the links between them for the
@@ -88,12 +144,15 @@ class GraphMixin:
                 o.id as outline_id,
                 o.section_title as outline_title,
                 i.id as project_id,
-                i.name as project_name
+                i.name as project_name,
+                a.item_link_id,
+                dq.type as item_type
             FROM synthesis_anchors a
             JOIN synthesis_tags t ON a.tag_id = t.id
             LEFT JOIN readings r ON a.reading_id = r.id
             LEFT JOIN items i ON a.project_id = i.id
             LEFT JOIN reading_outline o ON a.outline_id = o.id
+            LEFT JOIN reading_driving_questions dq ON a.item_link_id = dq.id
             WHERE t.name = ?
             ORDER BY i.name, r.display_order, o.display_order, a.id
         """

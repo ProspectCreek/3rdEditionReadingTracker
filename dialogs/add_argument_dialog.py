@@ -9,6 +9,14 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Slot, Signal
 
+# --- NEW: Import ConnectTagsDialog ---
+try:
+    from dialogs.connect_tags_dialog import ConnectTagsDialog
+except ImportError:
+    print("Error: Could not import ConnectTagsDialog")
+    ConnectTagsDialog = None
+# --- END NEW ---
+
 
 class EvidenceWidget(QFrame):
     """
@@ -242,6 +250,25 @@ class AddArgumentDialog(QDialog):
             self.dq_combo.addItem(display_text, dq['id'])
         top_form_layout.addRow("Addresses which Question:", self.dq_combo)
 
+        # --- NEW: Synthesis Tags ---
+        tags_layout = QHBoxLayout()
+        tags_layout.setContentsMargins(0, 0, 0, 0)
+        self.tags_edit = QLineEdit()
+        self.tags_edit.setPlaceholderText("e.g., #gratitude, #leadership")
+        connect_btn = QPushButton("Connect...")
+
+        if self.db and self.project_id is not None and ConnectTagsDialog:
+            connect_btn.setEnabled(True)
+            connect_btn.clicked.connect(self._open_connect_tags_dialog)
+        else:
+            connect_btn.setEnabled(False)
+            connect_btn.setToolTip("Database connection not available or dialog not found")
+
+        tags_layout.addWidget(self.tags_edit)
+        tags_layout.addWidget(connect_btn)
+        top_form_layout.addRow("Synthesis Tags:", tags_layout)
+        # --- END NEW ---
+
         self.is_insight_check = QCheckBox("Mark as Insight")
         top_form_layout.addRow("", self.is_insight_check)
 
@@ -324,6 +351,7 @@ class AddArgumentDialog(QDialog):
         self.claim_edit.setText(data.get("claim_text", ""))
         self.because_edit.setText(data.get("because_text", ""))
         self.is_insight_check.setChecked(bool(data.get("is_insight", 0)))
+        self.tags_edit.setText(data.get("synthesis_tags", ""))  # <-- ADDED
 
         dq_id = data.get("driving_question_id")
         if dq_id:
@@ -348,5 +376,30 @@ class AddArgumentDialog(QDialog):
             "because_text": self.because_edit.text().strip(),
             "driving_question_id": self.dq_combo.currentData(),
             "is_insight": self.is_insight_check.isChecked(),
+            "synthesis_tags": self.tags_edit.text().strip(),  # <-- ADDED
             "evidence": evidence_list
         }
+
+    # --- NEW: Slot to open tag connector ---
+    @Slot()
+    def _open_connect_tags_dialog(self):
+        if not self.db or self.project_id is None:
+            QMessageBox.warning(self, "Error", "Database connection is not available.")
+            return
+        if not ConnectTagsDialog:
+            QMessageBox.critical(self, "Error", "ConnectTagsDialog could not be loaded.")
+            return
+
+        try:
+            all_project_tags = self.db.get_project_tags(self.project_id)
+            current_tags_text = self.tags_edit.text().strip()
+            selected_tag_names = [tag.strip() for tag in current_tags_text.split(',') if tag.strip()]
+
+            dialog = ConnectTagsDialog(all_project_tags, selected_tag_names, self)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                new_names = dialog.get_selected_tag_names()
+                self.tags_edit.setText(", ".join(new_names))
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not open tag connector: {e}")
+    # --- END NEW ---

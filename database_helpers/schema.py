@@ -784,10 +784,22 @@ class SchemaSetup:
             because_text TEXT,
             driving_question_id INTEGER,
             is_insight INTEGER DEFAULT 0,
+            synthesis_tags TEXT, 
             FOREIGN KEY (reading_id) REFERENCES readings(id) ON DELETE CASCADE,
             FOREIGN KEY (driving_question_id) REFERENCES reading_driving_questions(id) ON DELETE SET NULL
         )
         """)
+
+        # --- ADDITIVE MIGRATION FOR reading_arguments ---
+        self.cursor.execute("PRAGMA table_info(reading_arguments)")
+        existing_arg_cols = {row["name"] for row in self.cursor.fetchall()}
+
+        if "synthesis_tags" not in existing_arg_cols:
+            try:
+                self.cursor.execute(f"ALTER TABLE reading_arguments ADD COLUMN synthesis_tags TEXT")
+            except sqlite3.OperationalError:
+                pass
+        # --- END ADDITIVE MIGRATION ---
 
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS reading_argument_evidence (

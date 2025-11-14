@@ -54,6 +54,8 @@ try:
 except ImportError:
     print("Error: Could not import AddCitationDialog for SynthesisTab")
     AddCitationDialog = None
+
+
 # --- END NEW ---
 
 
@@ -263,7 +265,8 @@ class SynthesisTab(QWidget):
             return
 
         try:
-            anchors = self.db.get_anchors_for_tag_with_context(tag_id)
+            # --- MODIFIED: Pass project_id to the query ---
+            anchors = self.db.get_anchors_for_tag_with_context(tag_id, self.project_id)
             if not anchors:
                 self.anchor_display.setHtml("<i>No anchors found for this tag.</i>")
                 return
@@ -284,9 +287,13 @@ class SynthesisTab(QWidget):
                 if anchor['outline_title']:
                     context_parts.append(f"Section: {anchor['outline_title']}")
 
-                # Create a "jumpto" link
+                # --- NEW: Check if it's a 'virtual' or 'text' anchor ---
+                item_link_id = anchor.get('item_link_id')
+                item_type = anchor.get('item_type')  # e.g., 'term', 'proposition'
+
                 # Format: jumpto:reading_id:outline_id
-                jumpto_link = f"jumpto:{anchor['reading_id']}:{anchor['outline_id'] or 0}"
+                # --- MODIFIED: Add item_link_id and type to the link ---
+                jumpto_link = f"jumpto:{anchor['reading_id']}:{anchor['outline_id'] or 0}:{item_link_id or 0}:{item_type or ''}"
 
                 if context_parts:
                     html += f"<p><i><a href='{jumpto_link}'>({', '.join(context_parts)})</a></i></p>"
@@ -295,11 +302,24 @@ class SynthesisTab(QWidget):
 
                 # --- Build Anchor Body ---
                 html += f"<blockquote>"
-                html += f"<p>{anchor['selected_text']}</p>"
-                if anchor['comment']:
-                    # Format comment to preserve newlines
-                    comment_html = anchor['comment'].replace("\n", "<br>")
-                    html += f"<p><i>— {comment_html}</i></p>"
+
+                # --- NEW: Display based on anchor type ---
+                if item_link_id:
+                    # This is a VIRTUAL anchor (DQ, Term, etc.)
+                    # The 'selected_text' is our summary (e.g., "Key Term: [Name]")
+                    html += f"<p><b>{anchor['selected_text']}</b></p>"
+                    if anchor['comment']:
+                        comment_html = anchor['comment'].replace("\n", "<br>")
+                        html += f"<p><i>— {comment_html}</i></p>"
+                else:
+                    # This is a normal TEXT anchor
+                    html += f"<p>{anchor['selected_text']}</p>"
+                    if anchor['comment']:
+                        # Format comment to preserve newlines
+                        comment_html = anchor['comment'].replace("\n", "<br>")
+                        html += f"<p><i>— {comment_html}</i></p>"
+                # --- END NEW ---
+
                 html += "</blockquote>"
 
             self.anchor_display.setHtml(html)
@@ -317,7 +337,22 @@ class SynthesisTab(QWidget):
                 parts = url_str.split(":")
                 reading_id = int(parts[1])
                 outline_id = int(parts[2])
-                print(f"Emitting openReading signal for reading_id={reading_id}, outline_id={outline_id}")
+                # --- NEW: Get the new parts ---
+                item_link_id = int(parts[3])
+                item_type = parts[4]
+                # --- END NEW ---
+
+                print(
+                    f"Emitting openReading signal for reading_id={reading_id}, outline_id={outline_id}, item_id={item_link_id}, type={item_type}")
+
+                # --- MODIFIED: We just pass the IDs, the dashboard will handle the logic ---
+                # (The signal in reading_notes_tab.py already handles 4 args, but we'll need to modify it)
+                # Let's check the dashboard widget... ah, it only accepts (int, int).
+                # We will modify the dashboard to handle this.
+                # For now, just send the original two.
+                #
+                # TODO: Update project_dashboard_widget.py to handle the new jump-to-item logic.
+                # For now, we just jump to the reading/outline section.
                 self.openReading.emit(reading_id, outline_id)
             except Exception as e:
                 print(f"Error handling jumpto link: {e}")
@@ -491,6 +526,7 @@ class SynthesisTab(QWidget):
             if tag_id == tag_id_to_select:
                 self.tag_list.setCurrentItem(item)
                 return
+
     # --- END NEW ---
 
     # --- NEW: Citation Button Slot ---
@@ -516,3 +552,4 @@ class SynthesisTab(QWidget):
             else:
                 QMessageBox.warning(self, "Error", "Notes editor is not available.")
     # --- END NEW ---
+

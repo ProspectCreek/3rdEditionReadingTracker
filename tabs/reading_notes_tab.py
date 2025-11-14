@@ -840,26 +840,66 @@ class ReadingNotesTab(QWidget):
         except Exception as e:
             print(f"Warning: Could not enforce right split: {e}")
 
-    @Slot(int)
-    def set_outline_selection(self, outline_id: int):
+    # --- MODIFIED: Accept item_link_id ---
+    @Slot(int, int)
+    def set_outline_selection(self, outline_id: int, item_link_id: int):
         """
         Finds and selects an item in the outline tree.
-        Used by the Synthesis tab to "jump to" an anchor.
+        If item_link_id is provided, it tries to find and select
+        the item in the corresponding bottom tab.
         """
+        # --- Handle Outline Selection ---
         if outline_id == 0:  # 0 means "reading-level"
             self.outline_tree.clearSelection()
             self.on_outline_selection_changed(None, None)
-            return
+            # Do not return, still need to check for item_link_id
+        else:
+            it = QTreeWidgetItemIterator(self.outline_tree)
+            while it.value():
+                item = it.value()
+                if item.data(0, Qt.ItemDataRole.UserRole) == outline_id:
+                    self.outline_tree.setCurrentItem(item)
+                    self.outline_tree.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
+                    self.notes_editor.focus_editor()
+                    # We found the outline item, now check for item_link_id
+                    break
+                it += 1
 
-        it = QTreeWidgetItemIterator(self.outline_tree)
-        while it.value():
-            item = it.value()
-            if item.data(0, Qt.ItemDataRole.UserRole) == outline_id:
-                self.outline_tree.setCurrentItem(item)
-                self.outline_tree.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
-                self.notes_editor.focus_editor()
-                return
-            it += 1
+        # --- Handle Item Selection (e.g., jump to Key Term) ---
+        if item_link_id > 0:
+            print(f"Attempting to find item_link_id: {item_link_id}")
+            # This is a basic implementation. A more robust one would
+            # also get the item 'type' (term, dq, etc.) to know which tab
+            # to switch to. For now, we just iterate all known tabs.
+
+            tabs_to_check = [
+                (getattr(self, 'driving_question_tab', None),
+                 self.bottom_right_tabs.indexOf(getattr(self, 'driving_question_tab', None))),
+                (getattr(self, 'leading_propositions_tab', None),
+                 self.bottom_right_tabs.indexOf(getattr(self, 'leading_propositions_tab', None))),
+                (getattr(self, 'key_terms_tab', None),
+                 self.bottom_right_tabs.indexOf(getattr(self, 'key_terms_tab', None))),
+                (getattr(self, 'arguments_tab', None),
+                 self.bottom_right_tabs.indexOf(getattr(self, 'arguments_tab', None))),
+                (getattr(self, 'theories_tab', None),
+                 self.bottom_right_tabs.indexOf(getattr(self, 'theories_tab', None))),
+            ]
+
+            for tab, tab_index in tabs_to_check:
+                if tab and tab_index != -1 and hasattr(tab, 'tree_widget'):
+                    tree = tab.tree_widget
+                    it = QTreeWidgetItemIterator(tree)
+                    while it.value():
+                        item = it.value()
+                        if item.data(0, Qt.ItemDataRole.UserRole) == item_link_id:
+                            print(f"Found item {item_link_id} in tab {tab_index}!")
+                            self.bottom_right_tabs.setCurrentIndex(tab_index)
+                            tree.setCurrentItem(item)
+                            tree.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
+                            return  # Found it
+                        it += 1
+
+    # --- END MODIFIED ---
 
     @Slot()
     def refresh_anchor_formatting(self):
@@ -969,7 +1009,8 @@ class ReadingNotesTab(QWidget):
                     tag_id=tag_id,
                     selected_text=selected_text,
                     comment=comment,
-                    unique_doc_id=unique_doc_id
+                    unique_doc_id=unique_doc_id,
+                    item_link_id=None  # This is a text anchor, not a virtual one
                 )
 
                 if not anchor_id:

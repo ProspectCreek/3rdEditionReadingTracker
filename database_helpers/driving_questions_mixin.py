@@ -5,7 +5,7 @@ class DrivingQuestionsMixin:
 
     def get_driving_questions(self, reading_id, parent_id=None):
         # --- FIX: Added filter to exclude propositions, terms, and theories ---
-        sql = "SELECT * FROM reading_driving_questions WHERE reading_id = ? AND (type IS NULL OR type NOT IN ('proposition', 'term', 'theory'))"
+        sql = "SELECT * FROM reading_driving_questions WHERE reading_id = ? AND (type IS NULL OR type NOT IN ('proposition', 'term', 'theory', 'argument'))"
         params = [reading_id]
 
         if parent_id is None:
@@ -23,14 +23,14 @@ class DrivingQuestionsMixin:
     def get_driving_question_details(self, question_id):
         # --- FIX: Added filter to exclude propositions, terms, and theories ---
         self.cursor.execute(
-            "SELECT * FROM reading_driving_questions WHERE id = ? AND (type IS NULL OR type NOT IN ('proposition', 'term', 'theory'))",
+            "SELECT * FROM reading_driving_questions WHERE id = ? AND (type IS NULL OR type NOT IN ('proposition', 'term', 'theory', 'argument'))",
             (question_id,)
         )
         return self._rowdict(self.cursor.fetchone())
 
     def _next_driving_question_order(self, reading_id, parent_id):
         # --- FIX: Added filter to exclude propositions, terms, and theories ---
-        sql = "SELECT COALESCE(MAX(display_order), -1) FROM reading_driving_questions WHERE reading_id = ? AND (type IS NULL OR type NOT IN ('proposition', 'term', 'theory'))"
+        sql = "SELECT COALESCE(MAX(display_order), -1) FROM reading_driving_questions WHERE reading_id = ? AND (type IS NULL OR type NOT IN ('proposition', 'term', 'theory', 'argument'))"
         params = [reading_id]
 
         if parent_id is None:
@@ -72,7 +72,7 @@ class DrivingQuestionsMixin:
                 question_category = ?, scope = ?, outline_id = ?, 
                 pages = ?, why_question = ?, synthesis_tags = ?, 
                 is_working_question = ?
-            WHERE id = ? AND (type IS NULL OR type NOT IN ('proposition', 'term', 'theory'))
+            WHERE id = ? AND (type IS NULL OR type NOT IN ('proposition', 'term', 'theory', 'argument'))
         """, (
             data.get("parent_id"), data.get("question_text"), data.get("nickname"), data.get("type"),
             data.get("question_category"), data.get("scope"),
@@ -86,7 +86,7 @@ class DrivingQuestionsMixin:
     def delete_driving_question(self, question_id):
         # --- FIX: Added filter to exclude propositions, terms, and theories ---
         self.cursor.execute(
-            "DELETE FROM reading_driving_questions WHERE id = ? AND (type IS NULL OR type NOT IN ('proposition', 'term', 'theory'))",
+            "DELETE FROM reading_driving_questions WHERE id = ? AND (type IS NULL OR type NOT IN ('proposition', 'term', 'theory', 'argument'))",
             (question_id,)
         )
         self.conn.commit()
@@ -95,7 +95,7 @@ class DrivingQuestionsMixin:
         for order, q_id in enumerate(ordered_ids):
             # --- FIX: Added filter to exclude propositions, terms, and theories ---
             self.cursor.execute(
-                "UPDATE reading_driving_questions SET display_order = ? WHERE id = ? AND (type IS NULL OR type NOT IN ('proposition', 'term', 'theory'))",
+                "UPDATE reading_driving_questions SET display_order = ? WHERE id = ? AND (type IS NULL OR type NOT IN ('proposition', 'term', 'theory', 'argument'))",
                 (order, q_id)
             )
         self.conn.commit()
@@ -104,7 +104,7 @@ class DrivingQuestionsMixin:
         # --- FIX: Added filter to exclude propositions, terms, and theories ---
         self.cursor.execute(
             """SELECT * FROM reading_driving_questions 
-               WHERE reading_id = ? AND is_working_question = 1 AND (type IS NULL OR type NOT IN ('proposition', 'term', 'theory'))
+               WHERE reading_id = ? AND is_working_question = 1 AND (type IS NULL OR type NOT IN ('proposition', 'term', 'theory', 'argument'))
                LIMIT 1""",
             (reading_id,)
         )
@@ -113,7 +113,7 @@ class DrivingQuestionsMixin:
     def clear_all_working_questions(self, reading_id):
         # --- FIX: Added filter to exclude propositions, terms, and theories ---
         self.cursor.execute(
-            "UPDATE reading_driving_questions SET is_working_question = 0 WHERE reading_id = ? AND (type IS NULL OR type NOT IN ('proposition', 'term', 'theory'))",
+            "UPDATE reading_driving_questions SET is_working_question = 0 WHERE reading_id = ? AND (type IS NULL OR type NOT IN ('proposition', 'term', 'theory', 'argument'))",
             (reading_id,)
         )
         self.conn.commit()

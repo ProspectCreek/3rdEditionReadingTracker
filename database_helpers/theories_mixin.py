@@ -87,7 +87,8 @@ class TheoriesMixin:
                 id, 
                 question_text as theory_name, 
                 nickname as theory_author, 
-                why_question as purpose
+                why_question as purpose,
+                synthesis_tags
             FROM reading_driving_questions
             WHERE reading_id = ? AND type = 'theory'
             ORDER BY display_order, id

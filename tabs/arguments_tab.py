@@ -61,16 +61,20 @@ class ArgumentsTab(QWidget):
 
         # Tree widget
         self.tree_widget = QTreeWidget()
-        self.tree_widget.setHeaderLabels(["Insight", "Claim", "Because", "Details"])
+        # --- MODIFIED: Added 'Tags' column ---
+        self.tree_widget.setHeaderLabels(["Insight", "Claim", "Because", "Tags", "Details"])
 
         header = self.tree_widget.header()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)  # Tags column
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)  # Details column
 
         self.tree_widget.setColumnWidth(0, 50)
-        self.tree_widget.setColumnWidth(3, 150)
+        self.tree_widget.setColumnWidth(3, 120)  # Tags column width
+        self.tree_widget.setColumnWidth(4, 150)  # Details column width
+        # --- END MODIFIED ---
 
         self.tree_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         main_layout.addWidget(self.tree_widget)
@@ -115,7 +119,8 @@ class ArgumentsTab(QWidget):
 
         item.setText(1, arg_data.get("claim_text", "N/A"))
         item.setText(2, arg_data.get("because_text", ""))
-        item.setText(3, arg_data.get("details", ""))
+        item.setText(3, arg_data.get("synthesis_tags", ""))  # <-- ADDED
+        item.setText(4, arg_data.get("details", ""))
 
         item.setData(0, Qt.ItemDataRole.UserRole, arg_data["id"])
         item.setExpanded(True)
@@ -187,6 +192,18 @@ class ArgumentsTab(QWidget):
     def _handle_save(self, data, argument_id=None):
         """Central logic for saving an argument (add or edit)."""
         try:
+            # --- NEW: Process synthesis tags ---
+            tags_text = data.get("synthesis_tags", "")
+            if tags_text:
+                tag_names = [tag.strip() for tag in tags_text.split(',') if tag.strip()]
+                for tag_name in tag_names:
+                    try:
+                        # This creates the tag and links it to the project
+                        self.db.get_or_create_tag(tag_name, self.project_id)
+                    except Exception as e:
+                        print(f"Error processing tag '{tag_name}': {e}")
+            # --- END NEW ---
+
             if argument_id:
                 # Update existing
                 self.db.update_argument(argument_id, data)

@@ -29,14 +29,15 @@ class ArgumentsMixin:
                 self.cursor.execute("""
                     INSERT INTO reading_arguments (
                         reading_id, display_order, claim_text, because_text,
-                        driving_question_id, is_insight
-                    ) VALUES (?, ?, ?, ?, ?, ?)
+                        driving_question_id, is_insight, synthesis_tags
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, (
                     reading_id, new_order,
                     data.get("claim_text"),
                     data.get("because_text"),
                     data.get("driving_question_id"),
-                    1 if data.get("is_insight") else 0
+                    1 if data.get("is_insight") else 0,
+                    data.get("synthesis_tags")  # <-- ADDED
                 ))
                 argument_id = self.cursor.lastrowid
             else:
@@ -44,13 +45,15 @@ class ArgumentsMixin:
                 self.cursor.execute("""
                     UPDATE reading_arguments SET
                         claim_text = ?, because_text = ?,
-                        driving_question_id = ?, is_insight = ?
+                        driving_question_id = ?, is_insight = ?,
+                        synthesis_tags = ?
                     WHERE id = ? AND reading_id = ?
                 """, (
                     data.get("claim_text"),
                     data.get("because_text"),
                     data.get("driving_question_id"),
                     1 if data.get("is_insight") else 0,
+                    data.get("synthesis_tags"),  # <-- ADDED
                     argument_id,
                     reading_id
                 ))
@@ -114,6 +117,7 @@ class ArgumentsMixin:
                 ra.claim_text, 
                 ra.because_text, 
                 ra.is_insight,
+                ra.synthesis_tags,
                 GROUP_CONCAT(rae.argument_text, '; ') as details
             FROM reading_arguments ra
             LEFT JOIN reading_argument_evidence rae ON ra.id = rae.argument_id

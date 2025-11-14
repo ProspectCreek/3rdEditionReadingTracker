@@ -255,6 +255,18 @@ class DrivingQuestionTab(QWidget):
         # --- End Working Question Check ---
 
         try:
+            # --- NEW: Process synthesis tags ---
+            tags_text = data.get("synthesis_tags", "")
+            if tags_text:
+                tag_names = [tag.strip() for tag in tags_text.split(',') if tag.strip()]
+                for tag_name in tag_names:
+                    try:
+                        # This creates the tag and links it to the project
+                        self.db.get_or_create_tag(tag_name, self.project_id)
+                    except Exception as e:
+                        print(f"Error processing tag '{tag_name}': {e}")
+            # --- END NEW ---
+
             if question_id:
                 # Update existing
                 self.db.update_driving_question(question_id, data)

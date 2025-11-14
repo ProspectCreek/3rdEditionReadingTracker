@@ -39,13 +39,13 @@ class DatabaseManager(
     MindmapMixin,
     DrivingQuestionsMixin,
     SynthesisMixin,
-    GraphMixin,
+    GraphMixin,  # <-- THIS WAS MISSING
     TerminologyMixin,
     PropositionsMixin,
     TodoMixin,
     KeyTermsMixin,
     TheoriesMixin,
-    ArgumentsMixin,  # <-- ADDED
+    ArgumentsMixin,  # <-- THIS WAS MISSING
     UtilityMixin
 ):
     def __init__(self, db_file="reading_tracker.db"):

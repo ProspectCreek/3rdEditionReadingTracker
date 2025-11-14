@@ -194,6 +194,18 @@ class LeadingPropositionsTab(QWidget):
                 QMessageBox.warning(self, "Invalid", "Proposition text cannot be empty.")
                 return
             try:
+                # --- NEW: Process synthesis tags ---
+                tags_text = data.get("synthesis_tags", "")
+                if tags_text:
+                    tag_names = [tag.strip() for tag in tags_text.split(',') if tag.strip()]
+                    for tag_name in tag_names:
+                        try:
+                            # This creates the tag and links it to the project
+                            self.db.get_or_create_tag(tag_name, self.project_id)
+                        except Exception as e:
+                            print(f"Error processing tag '{tag_name}': {e}")
+                # --- END NEW ---
+
                 # --- FIX: Call new DB method ---
                 self.db.add_reading_proposition(self.reading_id, data)
                 self.load_propositions()
@@ -227,6 +239,18 @@ class LeadingPropositionsTab(QWidget):
                 QMessageBox.warning(self, "Invalid", "Proposition text cannot be empty.")
                 return
             try:
+                # --- NEW: Process synthesis tags ---
+                tags_text = data.get("synthesis_tags", "")
+                if tags_text:
+                    tag_names = [tag.strip() for tag in tags_text.split(',') if tag.strip()]
+                    for tag_name in tag_names:
+                        try:
+                            # This creates the tag and links it to the project
+                            self.db.get_or_create_tag(tag_name, self.project_id)
+                        except Exception as e:
+                            print(f"Error processing tag '{tag_name}': {e}")
+                # --- END NEW ---
+
                 # --- FIX: Call new DB method ---
                 self.db.update_reading_proposition(item_id, data)
                 self.load_propositions()

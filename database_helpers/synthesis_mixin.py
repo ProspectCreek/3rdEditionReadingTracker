@@ -71,14 +71,14 @@ class SynthesisMixin:
         """, (project_id, project_id))
         return self._map_rows(self.cursor.fetchall())
 
-    def create_anchor(self, project_id, reading_id, outline_id, tag_id, selected_text, comment, unique_doc_id):
+    def create_anchor(self, project_id, reading_id, outline_id, tag_id, selected_text, comment, unique_doc_id, item_link_id=None):
         try:
             self.cursor.execute("""
                 INSERT INTO synthesis_anchors 
-                (project_id, reading_id, outline_id, selected_text, comment, unique_doc_id, tag_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (project_id, reading_id, outline_id, selected_text, comment, unique_doc_id, tag_id, item_link_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                project_id, reading_id, outline_id, selected_text, comment, unique_doc_id, tag_id
+                project_id, reading_id, outline_id, selected_text, comment, unique_doc_id, tag_id, item_link_id
             ))
             anchor_id = self.cursor.lastrowid
 
@@ -131,6 +131,13 @@ class SynthesisMixin:
         self.cursor.execute("DELETE FROM synthesis_anchors WHERE id = ?", (anchor_id,))
         self.conn.commit()
 
+    def delete_anchors_by_item_link_id(self, item_id):
+        """Deletes all virtual anchors linked to a specific item_id."""
+        if not item_id:
+            return
+        self.cursor.execute("DELETE FROM synthesis_anchors WHERE item_link_id = ?", (item_id,))
+        self.conn.commit()
+
     def get_anchor_details(self, anchor_id):
         self.cursor.execute("""
             SELECT a.*, t.name as tag_name, t.id as tag_id
@@ -176,25 +183,32 @@ class SynthesisMixin:
         self.cursor.execute(sql, (project_id, project_id, project_id))
         return self._map_rows(self.cursor.fetchall())
 
-    def get_anchors_for_tag_with_context(self, tag_id):
+    def get_anchors_for_tag_with_context(self, tag_id, project_id):
+        """
+        Modified to accept project_id and join with reading_driving_questions
+        to get the item type (e.g., 'term', 'proposition').
+        """
         sql = """
             SELECT 
                 a.id, 
                 a.selected_text, 
                 a.comment,
+                a.item_link_id,
                 r.id as reading_id,
                 r.title as reading_title,
                 r.nickname as reading_nickname,
                 o.id as outline_id,
-                o.section_title as outline_title
+                o.section_title as outline_title,
+                dq.type as item_type
             FROM synthesis_anchors a
             JOIN anchor_tag_links l ON a.id = l.anchor_id
             LEFT JOIN readings r ON a.reading_id = r.id
             LEFT JOIN reading_outline o ON a.outline_id = o.id
-            WHERE l.tag_id = ?
+            LEFT JOIN reading_driving_questions dq ON a.item_link_id = dq.id
+            WHERE l.tag_id = ? AND a.project_id = ?
             ORDER BY r.display_order, o.display_order, a.id
         """
-        self.cursor.execute(sql, (tag_id,))
+        self.cursor.execute(sql, (tag_id, project_id))
         return self._map_rows(self.cursor.fetchall())
 
     def get_anchors_for_tag_simple(self, tag_id):
