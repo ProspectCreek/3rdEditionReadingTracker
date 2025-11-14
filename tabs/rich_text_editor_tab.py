@@ -1,4 +1,4 @@
-# tabs/rich_text_editor_tab.py
+# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-f9372c7f456315b9a3fa82060c18255c8574e1ea/tabs/rich_text_editor_tab.py
 import sys
 import uuid  # <-- NEW: For synthesis anchors
 from PySide6.QtWidgets import (
@@ -31,6 +31,8 @@ AnchorTagIDProperty = BaseAnchorProperty + 2
 AnchorTagNameProperty = BaseAnchorProperty + 3
 AnchorCommentProperty = BaseAnchorProperty + 4
 AnchorUUIDProperty = BaseAnchorProperty + 5
+
+
 # --- END NEW ---
 
 
@@ -67,10 +69,15 @@ class RichTextEditorTab(QWidget):
     anchorActionTriggered = Signal(str)  # Emits selected_text
     anchorEditTriggered = Signal(int)  # Emits anchor_id
     anchorDeleteTriggered = Signal(int)  # Emits anchor_id
+
     # --- END NEW ---
 
     def __init__(self, title: str = "Editor", parent=None):
         super().__init__(parent)
+
+        # --- FIX: Store the title as an instance variable ---
+        self.editor_title = title
+        # --- END FIX ---
 
         main = QVBoxLayout(self)
         main.setContentsMargins(6, 4, 6, 6)
@@ -272,6 +279,7 @@ class RichTextEditorTab(QWidget):
     def setPlaceholderText(self, text: str):
         """Sets the placeholder text for the underlying QTextEdit."""
         self.editor.setPlaceholderText(text)
+
     # --- END NEW METHOD ---
 
     # --- NEW: Anchor Formatting API ---
@@ -322,7 +330,6 @@ class RichTextEditorTab(QWidget):
         fmt.setToolTip("")
 
         _apply_char_format(self.editor, fmt)
-
 
     def find_and_update_anchor_format(self, anchor_id: int, tag_id: int, tag_name: str, comment: str):
         """

@@ -1,384 +1,284 @@
-# tabs/parts_order_relation_tab.py
+# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-f9372c7f456315b9a3fa82060c18255c8574e1ea/tabs/parts_order_relation_tab.py
+
 import sys
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QFormLayout, QComboBox,
     QLabel, QMessageBox, QFrame, QHBoxLayout,
     QPushButton, QScrollArea, QTreeWidget, QTreeWidgetItemIterator,
-    QGridLayout, QSizePolicy, QTreeWidgetItem, QTextEdit,  # --- FIX: Import QTextEdit ---
-    QTextBrowser  # --- FIX: Import QTextBrowser ---
+    QGridLayout, QSizePolicy, QTreeWidgetItem, QTextEdit,
+    QTextBrowser, QHeaderView, QDialog
 )
-from PySide6.QtCore import Qt, Slot, QSize, QUrl
-from PySide6.QtGui import QDesktopServices, QFont  # --- FIX: Import QDesktopServices, QFont ---
+from PySide6.QtCore import Qt, Slot, QSize, QUrl, Signal, QPoint
+from PySide6.QtGui import QDesktopServices, QFont, QAction, QColor
 
+# --- NEW: Import new dialog ---
+try:
+    from dialogs.add_part_dialog import AddPartDialog
+except ImportError:
+    print("Error: Could not import AddPartDialog")
+    AddPartDialog = None
 
-# --- REMOVED: RichTextEditorTab is no longer needed here ---
+# --- NEW: Import ReorderDialog ---
+try:
+    from dialogs.reorder_dialog import ReorderDialog
+except ImportError:
+    print("Error: Could not import ReorderDialog")
+    ReorderDialog = None
 
 
 class PartsOrderRelationTab(QWidget):
     """
     PySide6 implementation of the Parts: Order and Relation tab.
-    Uses plain QTextEdit widgets for input and a QTextBrowser for the flow view.
+    Uses a TreeWidget view and a pop-up dialog for editing.
     """
 
-    def __init__(self, db, project_id, reading_id, outline_tree_widget, parent=None):
+    def __init__(self, db, project_id, reading_id, parent=None):
         super().__init__(parent)
         self.db = db
         self.project_id = project_id
         self.reading_id = reading_id
-        self.outline_tree = outline_tree_widget  # Reference to the main outline tree
 
-        self._outline_map = {}  # {display_text: outline_id}
-        self._id_to_outline_map = {}  # {outline_id: display_text}
-        self._dq_map = {}  # {nickname: dq_id}
-        self._parts_data = {}  # {outline_id: {data}}
         self._is_loaded = False
 
-        # --- Main layout is a scroll area ---
+        # --- Main layout ---
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(4)
 
-        # --- The whole tab is a scroll area ---
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        main_layout.addWidget(scroll_area)
+        # --- Button bar ---
+        button_bar = QFrame()
+        button_layout = QHBoxLayout(button_bar)
+        button_layout.setContentsMargins(0, 0, 0, 0)
 
-        content_widget = QWidget()
-        scroll_area.setWidget(content_widget)
+        self.btn_add = QPushButton("Add/Edit Part Details")
+        self.btn_add.setToolTip("Select an outline item in the dialog to add or edit its details.")
 
-        content_layout = QVBoxLayout(content_widget)
-        content_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        button_layout.addWidget(self.btn_add)
+        button_layout.addStretch()
+        main_layout.addWidget(button_bar)
 
-        self.scroll_area = scroll_area
-        self.selection_frame = QFrame()  # Placeholder for scrolling
+        # --- Tree widget (the new main view) ---
+        self.tree_widget = QTreeWidget()
+        self.tree_widget.setHeaderLabels(["Part Name", "Function", "Relation", "Dependency"])
 
-        # --- Part Selection Row ---
-        self.selection_frame.setFrameShape(QFrame.Shape.StyledPanel)
-        selection_layout = QFormLayout(self.selection_frame)
-        selection_layout.setContentsMargins(10, 10, 10, 10)
+        header = self.tree_widget.header()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
 
-        self.part_combo = QComboBox()
-        self.part_combo.activated.connect(self._on_part_selected)
+        self.tree_widget.setColumnWidth(0, 200)
 
-        # Connect to the outline tree in the parent tab (ReadingNotesTab)
-        self.outline_tree.itemClicked.connect(self._refresh_part_list)
+        self.tree_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        main_layout.addWidget(self.tree_widget)
 
-        self.dq_combo = QComboBox()
-
-        selection_layout.addRow("Select Part:", self.part_combo)
-        selection_layout.addRow("Linked DQ:", self.dq_combo)
-        content_layout.addWidget(self.selection_frame)
-
-        # --- Detail Fields ---
-        details_frame = QFrame()
-        details_frame.setFrameShape(QFrame.Shape.StyledPanel)
-        details_layout = QFormLayout(details_frame)
-        details_layout.setContentsMargins(10, 10, 10, 10)
-
-        # --- FIX (1): Use simple QTextEdit ---
-        self.function_editor = QTextEdit()
-        self.function_editor.setPlaceholderText("Defines the problem; introduces theory; presents data…")
-        self.function_editor.setMinimumHeight(100)
-        details_layout.addRow("Function:", self.function_editor)
-
-        self.relation_editor = QTextEdit()
-        self.relation_editor.setPlaceholderText("Bridges theory to evidence; answers prior question…")
-        self.relation_editor.setMinimumHeight(100)
-        details_layout.addRow("Relation:", self.relation_editor)
-
-        self.dependency_editor = QTextEdit()
-        self.dependency_editor.setPlaceholderText("Later claims lose context; conclusions lack base…")
-        self.dependency_editor.setMinimumHeight(100)
-        details_layout.addRow("Dependency:", self.dependency_editor)
-        # --- END FIX (1) ---
-
-        content_layout.addWidget(details_frame)
-
-        # --- Action Buttons ---
-        btn_frame = QHBoxLayout()
-        btn_frame.addStretch()
-        btn_clear = QPushButton("Clear")
-        btn_save = QPushButton("Save / Update Part Details")
-        btn_frame.addWidget(btn_clear)
-        btn_frame.addWidget(btn_save)
-        content_layout.addLayout(btn_frame)
-
-        btn_clear.clicked.connect(self._clear_editor_fields)
-        btn_save.clicked.connect(self._save_current_part)
-
-        # --- FIX (2): Flow View Panel (rebuilt) ---
-        flow_frame = QFrame()
-        flow_frame.setFrameShape(QFrame.Shape.StyledPanel)
-        flow_layout = QVBoxLayout(flow_frame)
-        flow_layout.setContentsMargins(10, 10, 10, 10)
-
-        flow_header_layout = QHBoxLayout()
-        flow_header_label = QLabel("STRUCTURAL FLOW")
-        flow_header_label.setStyleSheet("font-weight: bold; font-size: 14px;")
-        flow_header_layout.addWidget(flow_header_label)
-        flow_header_layout.addStretch()
-
-        flow_layout.addLayout(flow_header_layout)
-
-        # --- Use QTextBrowser for professional look ---
-        self.flow_viewer = QTextBrowser()
-        self.flow_viewer.setMinimumHeight(300)
-        self.flow_viewer.setOpenLinks(False)  # Handle links manually
-        self.flow_viewer.anchorClicked.connect(self._on_flow_part_clicked)
-
-        flow_layout.addWidget(self.flow_viewer)
-        content_layout.addWidget(flow_frame, 1)  # Add stretch
-        # --- END FIX (2) ---
+        # --- Connections ---
+        self.btn_add.clicked.connect(self._add_item)  # "Add" button opens the dialog
+        self.tree_widget.itemDoubleClicked.connect(self._edit_item)
+        self.tree_widget.customContextMenuRequested.connect(self.show_context_menu)
 
         self._is_loaded = True
-
-    @Slot(QTreeWidgetItem, int)
-    def _refresh_part_list(self, item=None, column=None):
-        """Refreshes the list of outline parts in the combobox."""
-        current_selection_id = self.part_combo.currentData()
-        self.part_combo.clear()
-        self._outline_map.clear()
-        self._id_to_outline_map.clear()
-
-        self.part_combo.addItem("[Select a Part]", None)
-
-        it = QTreeWidgetItemIterator(self.outline_tree)
-        while it.value():
-            item_iter = it.value()
-            item_id = item_iter.data(0, Qt.ItemDataRole.UserRole)
-            item_text = item_iter.text(0)
-
-            # --- Build indented text ---
-            level = 0
-            temp_item = item_iter
-            while temp_item.parent():
-                level += 1
-                temp_item = temp_item.parent()
-            display_text = ("  " * level) + item_text
-            # --- End indented text ---
-
-            self._outline_map[display_text] = item_id
-            self._id_to_outline_map[item_id] = display_text
-            self.part_combo.addItem(display_text, item_id)
-            it += 1
-
-        if current_selection_id:
-            idx = self.part_combo.findData(current_selection_id)
-            if idx != -1:
-                self.part_combo.setCurrentIndex(idx)
 
     def load_data(self):
         """Called by ReadingNotesTab to load all data."""
         if not self._is_loaded:
             return
+        self.load_parts()
 
-        self._refresh_part_list()
-
-        self._dq_map.clear()
-        self.dq_combo.clear()
-        self.dq_combo.addItem("None", None)
-
-        all_dqs = self.db.get_driving_questions(self.reading_id, parent_id=True)
-
-        for dq in all_dqs:
-            nickname = dq.get('nickname')
-            if nickname and nickname.strip():
-                display_text = nickname
-            else:
-                q_text = (dq.get('question_text', '') or '')
-                display_text = (q_text[:70] + "...") if len(q_text) > 70 else q_text
-            self._dq_map[display_text] = dq['id']
-            self.dq_combo.addItem(display_text, dq['id'])
-
-        saved_parts_raw = self.db.get_parts_data(self.reading_id)
-        self._parts_data = {part['id']: dict(part) for part in saved_parts_raw} if saved_parts_raw else {}
-
-        self._refresh_flow_view()
-        self._clear_editor_fields()
-
-    @Slot()
-    def _on_part_selected(self):
-        outline_id = self.part_combo.currentData()
-        if not outline_id:
-            self._clear_editor_fields()
-            return
-
-        data = self._parts_data.get(outline_id, {})
-
-        # --- FIX (1): Load plain text into QTextEdit ---
-        self.function_editor.setPlainText(data.get('part_function_text_plain', ''))
-        self.relation_editor.setPlainText(data.get('part_relation_text_plain', ''))
-        self.dependency_editor.setPlainText(data.get('part_dependency_text_plain', ''))
-        # --- END FIX (1) ---
-
-        dq_id_to_select = data.get('part_dq_id')
-        if dq_id_to_select:
-            idx = self.dq_combo.findData(dq_id_to_select)
-            if idx != -1:
-                self.dq_combo.setCurrentIndex(idx)
-        else:
-            self.dq_combo.setCurrentIndex(0)  # "None"
-
-    @Slot()
-    def _save_current_part(self):
-        """Saves the data in the editor fields to the selected outline part."""
-        outline_id = self.part_combo.currentData()
-        if not outline_id:
-            QMessageBox.warning(self, "Error", "Please select a part from the dropdown first.")
-            return
-
-        # --- FIX (1): Get plain text from QTextEdit ---
-        data_to_save = {
-            'is_structural': True,
-            'driving_question_id': self.dq_combo.currentData(),
-            'function_text': self.function_editor.toPlainText().strip(),
-            'relation_text': self.relation_editor.toPlainText().strip(),
-            'dependency_text': self.dependency_editor.toPlainText().strip()
-        }
-        # --- END FIX (1) ---
-
+    def load_parts(self):
+        """Reloads all structural parts from the database into the tree."""
+        self.tree_widget.clear()
         try:
-            # --- FIX (1): Call the updated DB method ---
-            self.db.save_part_data(self.reading_id, outline_id, data_to_save)
-            # --- END FIX (1) ---
+            # This DB function already returns only structural parts
+            parts = self.db.get_parts_data(self.reading_id)
 
-            # Update local cache
-            self._parts_data[outline_id] = self.db.get_part_data(outline_id)
+            if not parts:
+                placeholder_item = QTreeWidgetItem(self.tree_widget, ["No structural parts defined yet."])
+                placeholder_item.setFlags(placeholder_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+                placeholder_item.setForeground(0, QColor("#888888"))
+                font = placeholder_item.font(0)
+                font.setItalic(True)
+                placeholder_item.setFont(0, font)
+                return
 
-            self._refresh_flow_view()
-            self._clear_editor_fields()
-            print(f"Part data saved for outline_id {outline_id}")
+            for part_data in parts:
+                item = QTreeWidgetItem(self.tree_widget)
+                item.setText(0, part_data.get("section_title", "N/A"))
+                item.setText(1, part_data.get("part_function_text_plain", ""))
+                item.setText(2, part_data.get("part_relation_text_plain", ""))
+                item.setText(3, part_data.get("part_dependency_text_plain", ""))
+                item.setData(0, Qt.ItemDataRole.UserRole, part_data["id"])  # Store outline_id
+                item.setExpanded(True)
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Could not save part data: {e}")
-            print(f"Error saving part data: {e}")
+            QMessageBox.critical(self, "Error", f"Could not load parts: {e}")
+
+    def _get_outline_items(self, parent_id=None):
+        """Recursively fetches outline items to build a nested list for the dialog."""
+        items = self.db.get_reading_outline(self.reading_id, parent_id=parent_id)
+        for item in items:
+            children = self._get_outline_items(parent_id=item['id'])
+            if children:
+                item['children'] = children
+        return items
+
+    def _get_driving_questions(self):
+        """Fetches all driving questions for this reading."""
+        return self.db.get_driving_questions(self.reading_id, parent_id=True)
+
+    def show_context_menu(self, position):
+        menu = QMenu(self)
+        item = self.tree_widget.itemAt(position)
+
+        menu.addAction("Add/Edit Part Details...", self._add_item)
+
+        if item and item.data(0, Qt.ItemDataRole.UserRole) is not None:
+            menu.addAction("Edit This Part...", self._edit_item)
+            menu.addAction("Remove Part Details (Clear)", self._delete_item)
+            menu.addSeparator()
+
+        if self.tree_widget.topLevelItemCount() > 1 and ReorderDialog:
+            reorder_action = QAction("Reorder Parts...", self._reorder_items)
+            menu.addAction(reorder_action)
+
+        menu.exec(self.tree_widget.viewport().mapToGlobal(position))
+
+    @Slot()
+    def _handle_save(self, data, outline_id):
+        """Central logic for saving part details."""
+        try:
+            # We are *always* updating, as the part is just an outline item
+            self.db.save_part_data(self.reading_id, outline_id, data)
+            self.load_parts()  # Refresh tree
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not save part details: {e}")
+
+    @Slot()
+    def _add_item(self):
+        """
+        Opens the dialog to add details to an *existing* outline item,
+        turning it into a "Part".
+        """
+        if not AddPartDialog:
+            QMessageBox.critical(self, "Error", "Add Part dialog not loaded.")
+            return
+
+        outline_items = self._get_outline_items()
+        driving_questions = self._get_driving_questions()
+
+        dialog = AddPartDialog(
+            db_manager=self.db,
+            reading_id=self.reading_id,
+            outline_items=outline_items,
+            driving_questions=driving_questions,
+            parent=self
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            data = dialog.get_data()
+            if data:
+                self._handle_save(data, data['outline_id'])
+
+    @Slot()
+    def _edit_item(self):
+        """Edits the selected part."""
+        item = self.tree_widget.currentItem()
+        if not item or item.data(0, Qt.ItemDataRole.UserRole) is None:
+            # If no item selected, just open the "Add" dialog
+            self._add_item()
+            return
+
+        outline_id = item.data(0, Qt.ItemDataRole.UserRole)
+        outline_items = self._get_outline_items()
+        driving_questions = self._get_driving_questions()
+
+        # Get the full data for this part
+        current_data = self.db.get_part_data(outline_id)
+
+        if not current_data:
+            QMessageBox.critical(self, "Error", "Could not find part details.")
+            return
+
+        dialog = AddPartDialog(
+            db_manager=self.db,
+            reading_id=self.reading_id,
+            outline_items=outline_items,
+            driving_questions=driving_questions,
+            current_data=current_data,
+            parent=self
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            data = dialog.get_data()
+            if data:
+                self._handle_save(data, data['outline_id'])
+
+    @Slot()
+    def _delete_item(self):
+        """
+        Deletes the *details* for a part, reverting it to a simple outline item.
+        It does not delete the outline item itself.
+        """
+        item = self.tree_widget.currentItem()
+        if not item or item.data(0, Qt.ItemDataRole.UserRole) is None:
+            return
+
+        outline_id = item.data(0, Qt.ItemDataRole.UserRole)
+        reply = QMessageBox.question(
+            self, "Remove Part Details",
+            f"Are you sure you want to remove all part details from '{item.text(0)}'?\n\nThis will not delete the outline section, only its part data.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                # Create an empty data dict to "clear" the part
+                empty_data = {
+                    'is_structural': False,  # Set to False
+                    'driving_question_id': None,
+                    'function_text': "",
+                    'relation_text': "",
+                    'dependency_text': ""
+                }
+                self.db.save_part_data(self.reading_id, outline_id, empty_data)
+                self.load_parts()
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Could not remove part details: {e}")
+
+    @Slot()
+    def _reorder_items(self):
+        """
+        Reorders the *structural parts* in the view.
+        This reorders the underlying *outline items*.
+        """
+        if not ReorderDialog:
+            QMessageBox.critical(self, "Error", "Reorder dialog is not available.")
+            return
+
+        try:
+            # We must reorder based on outline hierarchy.
+            # For now, we only support reordering root-level parts.
+            parts = self.db.get_parts_data(self.reading_id)
+            root_parts = [p for p in parts if p.get('parent_id') is None]
+
+            if len(root_parts) < 2:
+                QMessageBox.information(self, "Reorder", "Not enough root-level parts to reorder.")
+                return
+
+            items_to_reorder = [(q.get('section_title', '...'), q['id']) for q in root_parts]
+            dialog = ReorderDialog(items_to_reorder, self)
+
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                ordered_ids = dialog.ordered_db_ids
+                # This will reorder the outline items, which in turn
+                # reorders the parts list on next load.
+                self.db.update_outline_section_order(ordered_ids)
+                self.load_parts()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not reorder parts: {e}")
 
     def save_data(self):
-        """Public method for autosave."""
-        if self.part_combo.currentData():
-            self._save_current_part()
-
-    @Slot()
-    def _clear_editor_fields(self):
-        self.part_combo.setCurrentIndex(0)  # "[Select a Part]"
-        self.dq_combo.setCurrentIndex(0)  # "None"
-        # --- FIX (1): Use setPlainText ---
-        self.function_editor.setPlainText("")
-        self.relation_editor.setPlainText("")
-        self.dependency_editor.setPlainText("")
-        # --- END FIX (1) ---
-
-    @Slot()
-    def _load_part_for_editing(self, outline_id):
-        idx = self.part_combo.findData(outline_id)
-        if idx != -1:
-            self.part_combo.setCurrentIndex(idx)
-            self._on_part_selected()
-
-            # --- FIX (3): Scroll to the top editor ---
-            self.scroll_area.ensureWidgetVisible(self.selection_frame)
-            # --- END FIX (3) ---
-
-    # --- FIX (2): Flow View Logic (rebuilt) ---
-    @Slot()
-    def _refresh_flow_view(self):
-
-        all_outline_items = self.db.get_all_outline_items(self.reading_id)
-        if not all_outline_items:
-            self.flow_viewer.setHtml("")
-            return
-
-        structural_parts = []
-        for item in all_outline_items:
-            outline_id = item.get('id')
-            part_data = self._parts_data.get(outline_id)
-            if part_data:  # If any data exists, it's considered structural
-                structural_parts.append({
-                    'outline_id': outline_id,
-                    'text': item.get('section_title', ''),
-                    'data': part_data
-                })
-
-        # Build professional HTML
-        html = """
-        <style>
-            body { 
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; 
-                line-height: 1.5;
-            }
-            .card {
-                background: #ffffff;
-                border: 1px solid #ddd;
-                padding: 10px 15px;
-                border-radius: 5px;
-                margin-bottom: 8px;
-                box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-            }
-            h4 {
-                margin: 0 0 8px 0;
-                font-size: 1.1em;
-            }
-            h4 a {
-                color: #0055A4;
-                text-decoration: none;
-                font-weight: bold;
-            }
-            h4 a:hover {
-                text-decoration: underline;
-            }
-            p {
-                margin: 0 0 5px 0;
-                color: #333;
-                white-space: pre-wrap; /* This will respect newlines in the plain text */
-            }
-            b {
-                color: #111;
-            }
-        </style>
         """
-
-        if not structural_parts:
-            html += "<i>No structural parts have been defined yet. Select a part from the dropdown, add details, and click 'Save'.</i>"
-            self.flow_viewer.setHtml(html)
-            return
-
-        for i, part in enumerate(structural_parts):
-            title = part['text']
-            data = part['data']
-            outline_id = part['outline_id']
-
-            html += f"<div class='card'>"
-            # --- Add clickable link that calls _load_part_for_editing ---
-            html += f"<h4><a href='part:{outline_id}'>{i + 1}. {title}</a></h4>"
-
-            # --- Use plain text fields ---
-            func = data.get('part_function_text_plain', '')
-            rel = data.get('part_relation_text_plain', '')
-            dep = data.get('part_dependency_text_plain', '')
-
-            if func:
-                html += f"<p><b>Function:</b> {func}</p>"
-            if rel:
-                html += f"<p><b>Relation:</b> {rel}</p>"
-            if dep:
-                html += f"<p><b>Dependency:</b> {dep}</p>"
-
-            html += "</div>"
-
-        self.flow_viewer.setHtml(html)
-
-    @Slot(QUrl)
-    def _on_flow_part_clicked(self, url):
-        """Handles clicks on 'part:ID' links in the flow viewer."""
-        url_str = url.toString()
-        if url_str.startswith("part:"):
-            try:
-                outline_id = int(url_str.split(":")[-1])
-                self._load_part_for_editing(outline_id)
-            except Exception as e:
-                print(f"Error handling part link: {e}")
-        else:
-            # Open external links in browser
-            QDesktopServices.openUrl(url)
-
-    # --- END FIX (2) ---
+        Public save method for autosave.
+        In this new design, saving is modal (only via dialog),
+        so this method does nothing.
+        """
+        pass

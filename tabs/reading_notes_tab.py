@@ -1,5 +1,4 @@
-# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-d0eaa6c33c524aa054deaa3e5b81207eb93ba7d2/tabs/reading_notes_tab.py
-
+# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-f9372c7f456315b9a3fa82060c18255c8574e1ea/tabs/reading_notes_tab.py
 import sys
 import uuid  # <-- NEW: For synthesis anchors
 from PySide6.QtWidgets import (
@@ -51,37 +50,30 @@ except ImportError:
     print("Error: Could not import UnityTab")
     UnityTab = None
 
-# --- NEW: Import PartsOrderRelationTab ---
 try:
     from tabs.parts_order_relation_tab import PartsOrderRelationTab
 except ImportError:
     print("Error: Could not import PartsOrderRelationTab")
     PartsOrderRelationTab = None
-# --- END NEW ---
 
-# --- NEW: Import KeyTermsTab ---
 try:
     from tabs.key_terms_tab import KeyTermsTab
 except ImportError:
     print("Error: Could not import KeyTermsTab")
     KeyTermsTab = None
-# --- END NEW ---
 
-# --- NEW: Import TheoriesTab ---
 try:
     from tabs.theories_tab import TheoriesTab
 except ImportError:
     print("Error: Could not import TheoriesTab")
     TheoriesTab = None
-# --- END NEW ---
 
-# --- NEW: Import ArgumentsTab ---
 try:
     from tabs.arguments_tab import ArgumentsTab
 except ImportError:
     print("Error: Could not import ArgumentsTab")
     ArgumentsTab = None
-# --- END NEW ---
+# --- END IMPORTS ---
 
 
 # Import dialogs
@@ -128,7 +120,9 @@ class ReadingNotesTab(QWidget):
         self._block_outline_save = False  # prevent save-on-switch loops
         self._is_loaded = False  # <<< guard to avoid saving blanks
 
-        self.bottom_editors = {}
+        # --- FIX: Change from dict to list to handle duplicate keys ---
+        self.bottom_tabs_with_editors = []
+        # --- END FIX ---
 
         # Main Layout: A horizontal splitter
         main_layout = QHBoxLayout(self)
@@ -321,6 +315,10 @@ class ReadingNotesTab(QWidget):
     def _add_bottom_tabs(self):
         """Creates and adds all the tabs for the bottom-right panel."""
 
+        # --- FIX: Clear the list first ---
+        self.bottom_tabs_with_editors.clear()
+        # --- END FIX ---
+
         # --- Driving Question ---
         if DrivingQuestionTab:
             self.driving_question_tab = DrivingQuestionTab(self.db, self.reading_id)
@@ -338,7 +336,9 @@ class ReadingNotesTab(QWidget):
                 layout.addWidget(QLabel(instructions))
 
             editor = RichTextEditorTab(title)
-            self.bottom_editors[field_name] = editor  # Store editor
+            # --- FIX: Append to list as a tuple ---
+            self.bottom_tabs_with_editors.append((field_name, editor))
+            # --- END FIX ---
             layout.addWidget(editor)
 
             self.bottom_right_tabs.addTab(widget, title)
@@ -366,17 +366,13 @@ class ReadingNotesTab(QWidget):
 
         # --- Parts: Order and Relation ---
         if PartsOrderRelationTab:
-            # Pass the outline tree from this tab to the Parts tab
             self.parts_order_relation_tab = PartsOrderRelationTab(
-                self.db, self.project_id, self.reading_id, self.outline_tree
+                self.db, self.project_id, self.reading_id
             )
-            # --- MODIFICATION: Rename tab ---
             self.bottom_right_tabs.addTab(self.parts_order_relation_tab, "Parts: Order and Relation")
-            # --- END MODIFICATION ---
         else:
-            # Fallback
             create_editor_tab("Parts: Order and Relation", "Instructions for Parts: Order and Relation go here.",
-                              "personal_dialogue_html")
+                              "personal_dialogue_html")  # Fallback still uses shared field
 
         # --- Key Terms ---
         if KeyTermsTab:
@@ -386,13 +382,11 @@ class ReadingNotesTab(QWidget):
             create_editor_tab("Key Terms", "Instructions for Key Terms go here.", "key_terms_html")
 
         # --- Arguments ---
-        # --- MODIFIED: Replace placeholder with real tab ---
         if ArgumentsTab:
             self.arguments_tab = ArgumentsTab(self.db, self.project_id, self.reading_id)
             self.bottom_right_tabs.addTab(self.arguments_tab, "Arguments")
         else:
             create_editor_tab("Arguments", "Instructions for Arguments go here.", "arguments_html")
-        # --- END MODIFIED ---
 
         # --- Gaps ---
         create_editor_tab("Gaps", "Instructions for Gaps go here.", "gaps_html")
@@ -421,7 +415,6 @@ class ReadingNotesTab(QWidget):
         else:
             self.bottom_right_tabs.addTab(QLabel("Timers (Failed to load)"), "Timers")
 
-    # --- NEW: Menu placeholder ---
     def _create_reading_menu(self, menu_bar: QMenuBar):
         settings_menu = menu_bar.addMenu("Reading Settings")
         edit_instr_action = QAction("Edit Tab Instructions...", self)
@@ -488,45 +481,49 @@ class ReadingNotesTab(QWidget):
         if not self.reading_details_row:
             return
 
+        if DrivingQuestionTab and hasattr(self, 'driving_question_tab'):
+            self.driving_question_tab.load_questions()
+
         if LeadingPropositionsTab and hasattr(self, 'leading_propositions_tab'):
             self.leading_propositions_tab.load_propositions()
 
         if UnityTab and hasattr(self, 'unity_tab'):
             self.unity_tab.load_data()
 
-        # --- NEW: Load Parts Tab ---
         if PartsOrderRelationTab and hasattr(self, 'parts_order_relation_tab'):
             self.parts_order_relation_tab.load_data()
-        # --- END NEW ---
 
-        # --- NEW: Load Key Terms Tab ---
         if KeyTermsTab and hasattr(self, 'key_terms_tab'):
             self.key_terms_tab.load_key_terms()
-        # --- END NEW ---
 
-        # --- NEW: Load Theories Tab ---
         if TheoriesTab and hasattr(self, 'theories_tab'):
             self.theories_tab.load_theories()
-        # --- END NEW ---
 
-        # --- NEW: Load Arguments Tab ---
         if ArgumentsTab and hasattr(self, 'arguments_tab'):
             self.arguments_tab.load_arguments()
-        # --- END NEW ---
 
-        for field_name, editor in self.bottom_editors.items():
-            # --- FIX: Check if field_name is still in bottom_editors ---
+        # --- FIX: Iterate over the list of tuples ---
+        for field_name, editor in self.bottom_tabs_with_editors:
+            # Skip fields handled by dedicated tabs
+            if field_name == 'propositions_html' and LeadingPropositionsTab and hasattr(self,
+                                                                                        'leading_propositions_tab'):
+                continue
+            if field_name == 'unity_html' and UnityTab and hasattr(self, 'unity_tab'):
+                continue
             if field_name == 'key_terms_html' and KeyTermsTab and hasattr(self, 'key_terms_tab'):
-                continue  # Skip this, it's handled by the new tab
+                continue
             if field_name == 'theories_html' and TheoriesTab and hasattr(self, 'theories_tab'):
-                continue  # Skip this, it's handled by the new tab
-            # --- NEW: Skip arguments_html ---
+                continue
             if field_name == 'arguments_html' and ArgumentsTab and hasattr(self, 'arguments_tab'):
-                continue  # Skip this, it's handled by the new tab
-            # --- END NEW ---
-            # --- END FIX ---
+                continue
+            if field_name == 'personal_dialogue_html' and PartsOrderRelationTab and hasattr(self,
+                                                                                            'parts_order_relation_tab') and editor.editor_title == "Parts: Order and Relation":
+                continue  # This is the placeholder, skip it
+
+            # Load content
             html = self._get_detail(field_name, default="")
             editor.set_html(html)
+        # --- END FIX ---
 
     def save_bottom_tabs_content(self):
         """Saves data from the bottom-right tabs."""
@@ -536,50 +533,35 @@ class ReadingNotesTab(QWidget):
         if UnityTab and hasattr(self, 'unity_tab'):
             self.unity_tab.save_data()
 
-        # --- NEW: Save Parts Tab ---
         if PartsOrderRelationTab and hasattr(self, 'parts_order_relation_tab'):
             self.parts_order_relation_tab.save_data()
-        # --- END NEW ---
 
-        fields_to_save = list(self.bottom_editors.keys())  # Make a copy
-
-        if LeadingPropositionsTab and hasattr(self, 'leading_propositions_tab'):
-            if 'propositions_html' in fields_to_save:
-                fields_to_save.remove('propositions_html')
-
-        if UnityTab and hasattr(self, 'unity_tab'):
-            if 'unity_html' in fields_to_save:
-                fields_to_save.remove('unity_html')
-
-        if KeyTermsTab and hasattr(self, 'key_terms_tab'):
-            if 'key_terms_html' in fields_to_save:
-                fields_to_save.remove('key_terms_html')
-
-        if TheoriesTab and hasattr(self, 'theories_tab'):
-            if 'theories_html' in fields_to_save:
-                fields_to_save.remove('theories_html')
-
-        # --- NEW: Remove arguments_html if new tab exists ---
-        if ArgumentsTab and hasattr(self, 'arguments_tab'):
-            if 'arguments_html' in fields_to_save:
-                fields_to_save.remove('arguments_html')
-        # --- END NEW ---
-
-        if PartsOrderRelationTab and hasattr(self, 'parts_order_relation_tab'):
-            if 'personal_dialogue_html' in fields_to_save:
-                pass
-
-        for field_name in fields_to_save:
-            editor = self.bottom_editors.get(field_name)
-            if not editor:
+        # --- FIX: Iterate over the list of tuples ---
+        for field_name, editor in self.bottom_tabs_with_editors:
+            # Skip fields handled by dedicated tabs
+            if field_name == 'propositions_html' and LeadingPropositionsTab and hasattr(self,
+                                                                                        'leading_propositions_tab'):
                 continue
+            if field_name == 'unity_html' and UnityTab and hasattr(self, 'unity_tab'):
+                continue
+            if field_name == 'key_terms_html' and KeyTermsTab and hasattr(self, 'key_terms_tab'):
+                continue
+            if field_name == 'theories_html' and TheoriesTab and hasattr(self, 'theories_tab'):
+                continue
+            if field_name == 'arguments_html' and ArgumentsTab and hasattr(self, 'arguments_tab'):
+                continue
+            if field_name == 'personal_dialogue_html' and PartsOrderRelationTab and hasattr(self,
+                                                                                            'parts_order_relation_tab') and editor.editor_title == "Parts: Order and Relation":
+                continue  # This is the placeholder, skip it
 
+            # Create and call the save callback
             def create_callback(fname):
                 return lambda html: self.db.update_reading_field(
                     self.reading_id, fname, html
                 ) if html is not None else None
 
             editor.get_html(create_callback(field_name))
+        # --- END FIX ---
 
     def save_all(self):
         """Called by the dashboard to save all data on this tab."""
