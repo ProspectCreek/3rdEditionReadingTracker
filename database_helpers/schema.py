@@ -119,6 +119,9 @@ class SchemaSetup:
             self.cursor.execute("PRAGMA foreign_keys = ON")
 
     def setup_database(self):
+        # --- NEW: Print statement to confirm this function is running ---
+        print("--- Running SchemaSetup.setup_database() ---")
+
         # --- Items / Projects ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS items (
@@ -212,6 +215,99 @@ class SchemaSetup:
             FOREIGN KEY (unity_driving_question_id) REFERENCES reading_driving_questions(id) ON DELETE SET NULL
         )
         """)
+
+        # --- FIX: Check for and correct the bad _dq_old foreign key ---
+        needs_fk_fix = False
+        try:
+            self.cursor.execute("PRAGMA foreign_key_list(readings)")
+            f_keys = self.cursor.fetchall()
+            # --- NEW: Print all found foreign keys for debugging ---
+            if f_keys:
+                print(f"DEBUG: Found foreign keys for 'readings' table: {[dict(k) for k in f_keys]}")
+
+            for key in f_keys:
+                # Check if any foreign key points to the old table
+                # --- MODIFIED: Changed key['to'] to key['table'] ---
+                if (key['table'] in ('_dq_old', '"_dq_old"', 'main._dq_old')) and key[
+                    'from'] == 'unity_driving_question_id':
+                    needs_fk_fix = True
+                    print(f"DEBUG: Found bad foreign key: {dict(key)}")
+                    break
+        except Exception as e:
+            print(f"Note: Could not inspect foreign keys (may be new db): {e}")
+
+        if needs_fk_fix:
+            print("MIGRATION: Detected bad foreign key in 'readings' table. Rebuilding...")
+            try:
+                self.cursor.execute("PRAGMA foreign_keys = OFF")
+                # We must commit before schema changes
+                self.conn.commit()
+
+                # 1. Rename old table
+                self.cursor.execute("ALTER TABLE readings RENAME TO _readings_old_fk_fix")
+
+                # 2. Create new table with correct schema (copied from above)
+                self.cursor.execute("""
+                CREATE TABLE readings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id INTEGER NOT NULL,
+                    title TEXT NOT NULL,
+                    author TEXT,
+                    display_order INTEGER,
+                    reading_notes_text TEXT,
+                    nickname TEXT,
+                    published TEXT,
+                    pages TEXT,
+                    assignment TEXT,
+                    level TEXT,
+                    classification TEXT,
+                    propositions_html TEXT,
+                    unity_html TEXT,
+                    key_terms_html TEXT,
+                    arguments_html TEXT,
+                    gaps_html TEXT,
+                    theories_html TEXT,
+                    personal_dialogue_html TEXT,
+                    unity_kind_of_work TEXT,
+                    unity_driving_question_id INTEGER,
+                    FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE,
+                    FOREIGN KEY (unity_driving_question_id) REFERENCES reading_driving_questions(id) ON DELETE SET NULL
+                )
+                """)
+
+                # 3. Get columns from old table to copy
+                self.cursor.execute("PRAGMA table_info(_readings_old_fk_fix)")
+                old_cols = [row['name'] for row in self.cursor.fetchall()]
+
+                # Get columns from new table
+                self.cursor.execute("PRAGMA table_info(readings)")
+                new_cols = [row['name'] for row in self.cursor.fetchall()]
+
+                # Find common columns
+                cols_to_copy = [col for col in old_cols if col in new_cols]
+                cols_str = ", ".join(cols_to_copy)
+
+                # 4. Copy data
+                self.cursor.execute(f"INSERT INTO readings ({cols_str}) SELECT {cols_str} FROM _readings_old_fk_fix")
+
+                # 5. Drop old table
+                self.cursor.execute("DROP TABLE _readings_old_fk_fix")
+
+                self.conn.commit()  # Commit the schema change
+                self.cursor.execute("PRAGMA foreign_keys = ON")
+                print("MIGRATION: 'readings' table rebuilt successfully.")
+            except Exception as e:
+                print(f"CRITICAL MIGRATION ERROR (readings fk): {e}. Rolling back...")
+                self.conn.rollback()
+                # Try to restore
+                try:
+                    self.cursor.execute("DROP TABLE IF EXISTS readings")
+                    self.cursor.execute("ALTER TABLE _readings_old_fk_fix RENAME TO readings")
+                except Exception as re:
+                    print(f"CRITICAL ROLLBACK FAILED: {re}")
+            self.cursor.execute("PRAGMA foreign_keys = ON")
+        # --- END FIX ---
+
         self.cursor.execute("PRAGMA table_info(readings)")
         existing_read_cols = {row["name"] for row in self.cursor.fetchall()}
 
@@ -454,7 +550,8 @@ class SchemaSetup:
                 migration_needed = True
 
             if migration_needed:
-                self.cursor.execute("ALTER TABLE reading_driving_questions RENAME TO _dq_old")
+                # --- MODIFIED: Use a unique temp name to avoid conflicts ---
+                self.cursor.execute("ALTER TABLE reading_driving_questions RENAME TO _dq_temp_migration")
 
                 self.cursor.execute("""
                 CREATE TABLE IF NOT EXISTS reading_driving_questions (
@@ -479,7 +576,8 @@ class SchemaSetup:
                 )
                 """)
 
-                self.cursor.execute("PRAGMA table_info(_dq_old)")
+                # --- MODIFIED: Use a unique temp name ---
+                self.cursor.execute("PRAGMA table_info(_dq_temp_migration)")
                 old_cols = [row["name"] for row in self.cursor.fetchall()]
 
                 new_cols = [
@@ -501,9 +599,15 @@ class SchemaSetup:
                 cols_to_copy = [col for col in new_cols if col in old_cols]
                 cols_str = ", ".join(cols_to_copy)
 
+                # --- MODIFIED: Use a unique temp name ---
                 self.cursor.execute(
-                    f"INSERT INTO reading_driving_questions ({cols_str}) SELECT {cols_str} FROM _dq_old")
-                self.cursor.execute("DROP TABLE _dq_old")
+                    f"INSERT INTO reading_driving_questions ({cols_str}) SELECT {cols_str} FROM _dq_temp_migration")
+
+                # --- THIS IS THE FIX ---
+                # It now drops the correct temporary table name
+                self.cursor.execute("DROP TABLE _dq_temp_migration")
+                # --- END OF THE FIX ---
+
                 print("Successfully migrated reading_driving_questions table.")
 
         except Exception as e:
@@ -512,14 +616,16 @@ class SchemaSetup:
             self.conn.rollback()
             try:
                 # We still want to try to restore the old table if it's in a half-migrated state
-                self.cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='_dq_old'")
+                # --- MODIFIED: Use a unique temp name ---
+                self.cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='_dq_temp_migration'")
                 if self.cursor.fetchone():
                     self.cursor.execute("DROP TABLE IF EXISTS reading_driving_questions")
-                    self.cursor.execute("ALTER TABLE _dq_old RENAME TO reading_driving_questions")
+                    # --- MODIFIED: Use a unique temp name ---
+                    self.cursor.execute("ALTER TABLE _dq_temp_migration RENAME TO reading_driving_questions")
                     print("Rolled back reading_driving_questions migration.")
                     self.conn.commit()  # Commit the successful rollback
                 else:
-                    print("Rollback skipped: _dq_old not found.")
+                    print("Rollback skipped: _dq_temp_migration not found.")
             except Exception as re:
                 print(f"Critical error: Could not roll back migration. DB may be unstable. {re}")
                 self.conn.rollback()  # Rollback the failed rollback
