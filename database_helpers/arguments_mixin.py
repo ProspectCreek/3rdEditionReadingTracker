@@ -1,9 +1,58 @@
-# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-d0eaa6c33c524aa054deaa3e5b81207eb93ba7d2/database_helpers/arguments_mixin.py
+# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-0eada8809e03f78f9e304f58f06c5f5a03a32c4f/database_helpers/arguments_mixin.py
+import sqlite3
+
 
 class ArgumentsMixin:
     """
     Mixin for managing reading-specific Arguments and their Evidence.
     """
+
+    # --- START: Copied Helper Functions ---
+    def _get_project_id_for_reading(self, reading_id):
+        self.cursor.execute("SELECT project_id FROM readings WHERE id = ?", (reading_id,))
+        proj_data = self.cursor.fetchone()
+        if not proj_data:
+            raise Exception(f"Could not find project_id for reading_id {reading_id}")
+        return proj_data['project_id']
+
+    def _handle_virtual_anchor_tags(self, project_id, reading_id, item_id, item_type, data, summary_field_name):
+        tags_text = data.get("synthesis_tags", "")
+        tag_names = [tag.strip() for tag in tags_text.split(',') if tag.strip()]
+
+        self.cursor.execute("SELECT id FROM synthesis_anchors WHERE item_link_id = ?", (item_id,))
+        anchor_row = self.cursor.fetchone()
+
+        if not tag_names:
+            if anchor_row:
+                self.cursor.execute("DELETE FROM synthesis_anchors WHERE id = ?", (anchor_row['id'],))
+            return
+
+        summary_text = data.get(summary_field_name, f'{item_type.capitalize()} Item')
+        summary_text = f"{item_type.capitalize()}: {summary_text}"
+        summary_text = (summary_text[:75] + '...') if len(summary_text) > 75 else summary_text
+
+        if not anchor_row:
+            self.cursor.execute("""
+                INSERT INTO synthesis_anchors (project_id, reading_id, item_link_id, unique_doc_id, selected_text, item_type) 
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (project_id, reading_id, item_id, f"{item_type}_{item_id}", summary_text, item_type))
+            anchor_id = self.cursor.lastrowid
+        else:
+            anchor_id = anchor_row['id']
+            self.cursor.execute("UPDATE synthesis_anchors SET selected_text = ? WHERE id = ?",
+                                (summary_text, anchor_id))
+
+        self.cursor.execute("DELETE FROM anchor_tag_links WHERE anchor_id = ?", (anchor_id,))
+
+        for tag_name in tag_names:
+            tag = self.get_or_create_tag(tag_name, project_id)  # get_or_create_tag is in SynthesisMixin
+            if tag:
+                self.cursor.execute("""
+                    INSERT OR IGNORE INTO anchor_tag_links (anchor_id, tag_id) 
+                    VALUES (?, ?)
+                """, (anchor_id, tag['id']))
+
+    # --- END: Copied Helper Functions ---
 
     # ----------------- READING Argument Functions -----------------
 
@@ -23,6 +72,8 @@ class ArgumentsMixin:
         If argument_id is None, a new argument is created.
         """
         try:
+            project_id = self._get_project_id_for_reading(reading_id)
+
             if argument_id is None:
                 # Insert new argument
                 new_order = self._get_next_argument_order(reading_id)
@@ -30,14 +81,13 @@ class ArgumentsMixin:
                     INSERT INTO reading_arguments (
                         reading_id, display_order, claim_text, because_text,
                         driving_question_id, is_insight, synthesis_tags
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, NULL)
                 """, (
                     reading_id, new_order,
                     data.get("claim_text"),
                     data.get("because_text"),
                     data.get("driving_question_id"),
-                    1 if data.get("is_insight") else 0,
-                    data.get("synthesis_tags")  # <-- ADDED
+                    1 if data.get("is_insight") else 0
                 ))
                 argument_id = self.cursor.lastrowid
             else:
@@ -46,14 +96,13 @@ class ArgumentsMixin:
                     UPDATE reading_arguments SET
                         claim_text = ?, because_text = ?,
                         driving_question_id = ?, is_insight = ?,
-                        synthesis_tags = ?
+                        synthesis_tags = NULL
                     WHERE id = ? AND reading_id = ?
                 """, (
                     data.get("claim_text"),
                     data.get("because_text"),
                     data.get("driving_question_id"),
                     1 if data.get("is_insight") else 0,
-                    data.get("synthesis_tags"),  # <-- ADDED
                     argument_id,
                     reading_id
                 ))
@@ -62,6 +111,9 @@ class ArgumentsMixin:
                     "DELETE FROM reading_argument_evidence WHERE argument_id = ?",
                     (argument_id,)
                 )
+
+            # --- Handle Tags ---
+            self._handle_virtual_anchor_tags(project_id, reading_id, argument_id, 'argument', data, 'claim_text')
 
             # Insert new evidence items
             evidence_data = data.get("evidence", [])
@@ -101,7 +153,6 @@ class ArgumentsMixin:
 
     def update_argument(self, argument_id, data):
         """Public method to update an existing argument."""
-        # We need the reading_id to ensure data integrity
         self.cursor.execute("SELECT reading_id FROM reading_arguments WHERE id = ?", (argument_id,))
         res = self.cursor.fetchone()
         if not res:
@@ -117,7 +168,6 @@ class ArgumentsMixin:
                 ra.claim_text, 
                 ra.because_text, 
                 ra.is_insight,
-                ra.synthesis_tags,
                 GROUP_CONCAT(rae.argument_text, '; ') as details
             FROM reading_arguments ra
             LEFT JOIN reading_argument_evidence rae ON ra.id = rae.argument_id
@@ -125,17 +175,49 @@ class ArgumentsMixin:
             GROUP BY ra.id
             ORDER BY ra.display_order, ra.id
         """, (reading_id,))
-        return self._map_rows(self.cursor.fetchall())
+
+        results = self._map_rows(self.cursor.fetchall())
+        for item in results:
+            self.cursor.execute("SELECT sa.id FROM synthesis_anchors sa WHERE sa.item_link_id = ?", (item['id'],))
+            anchor_row = self.cursor.fetchone()
+
+            if anchor_row:
+                anchor_id = anchor_row['id']
+                self.cursor.execute("""
+                    SELECT t.name 
+                    FROM anchor_tag_links atl
+                    JOIN synthesis_tags t ON atl.tag_id = t.id
+                    WHERE atl.anchor_id = ?
+                """, (anchor_id,))
+                tag_names = [row['name'] for row in self.cursor.fetchall()]
+                item['synthesis_tags'] = ", ".join(tag_names)
+            else:
+                item['synthesis_tags'] = ""
+        return results
 
     def get_argument_details(self, argument_id):
         """Gets full details for one argument and all its evidence."""
-        # 1. Get main argument data
         self.cursor.execute("SELECT * FROM reading_arguments WHERE id = ?", (argument_id,))
         data = self._rowdict(self.cursor.fetchone())
         if not data:
             return None
 
-        # 2. Get all associated evidence
+        self.cursor.execute("SELECT sa.id FROM synthesis_anchors sa WHERE sa.item_link_id = ?", (argument_id,))
+        anchor_row = self.cursor.fetchone()
+
+        if anchor_row:
+            anchor_id = anchor_row['id']
+            self.cursor.execute("""
+                SELECT t.name 
+                FROM anchor_tag_links atl
+                JOIN synthesis_tags t ON atl.tag_id = t.id
+                WHERE atl.anchor_id = ?
+            """, (anchor_id,))
+            tag_names = [row['name'] for row in self.cursor.fetchall()]
+            data['synthesis_tags'] = ", ".join(tag_names)
+        else:
+            data['synthesis_tags'] = ""
+
         self.cursor.execute(
             "SELECT * FROM reading_argument_evidence WHERE argument_id = ?",
             (argument_id,)

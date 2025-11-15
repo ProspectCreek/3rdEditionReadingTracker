@@ -1,285 +1,163 @@
-import sqlite3
-
+# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-0eada8809e03f78f9e304f58f06c5f5a03a32c4f/database_helpers/synthesis_mixin.py
 class SynthesisMixin:
-    # --- Synthesis Functions (NOW GLOBAL) ---
 
     def get_all_tags(self):
-        """Gets all tags from the global table."""
         self.cursor.execute("SELECT id, name FROM synthesis_tags ORDER BY name")
-        return self._map_rows(self.cursor.fetchall())
-
-    def get_or_create_tag(self, tag_name, project_id=None):
-        tag_name = tag_name.strip()
-        if not tag_name:
-            return None
-
-        self.cursor.execute(
-            "SELECT * FROM synthesis_tags WHERE name = ?",
-            (tag_name,)
-        )
-        tag = self._rowdict(self.cursor.fetchone())
-
-        if not tag:
-            try:
-                self.cursor.execute(
-                    "INSERT INTO synthesis_tags (name) VALUES (?)",
-                    (tag_name,)
-                )
-                self.conn.commit()
-                new_id = self.cursor.lastrowid
-                tag = {'id': new_id, 'name': tag_name}
-            except sqlite3.IntegrityError:
-                self.cursor.execute(
-                    "SELECT * FROM synthesis_tags WHERE name = ?",
-                    (tag_name,)
-                )
-                tag = self._rowdict(self.cursor.fetchone())
-            except Exception as e:
-                print(f"Error in get_or_create_tag: {e}")
-                return None
-
-        if not tag:
-            return None
-
-        if project_id:
-            try:
-                self.cursor.execute(
-                    "INSERT OR IGNORE INTO project_tag_links (project_id, tag_id) VALUES (?, ?)",
-                    (project_id, tag['id'])
-                )
-                self.conn.commit()
-            except Exception as e:
-                print(f"Error linking tag {tag['id']} to project {project_id}: {e}")
-
-        return tag
+        return self.cursor.fetchall()
 
     def get_project_tags(self, project_id):
         self.cursor.execute("""
-            SELECT DISTINCT t.id, t.name 
-            FROM synthesis_tags t
-            JOIN synthesis_anchors a ON t.id = a.tag_id
-            WHERE a.project_id = ?
-
-            UNION
-
-            SELECT DISTINCT t.id, t.name
+            SELECT t.id, t.name 
             FROM synthesis_tags t
             JOIN project_tag_links ptl ON t.id = ptl.tag_id
             WHERE ptl.project_id = ?
-
             ORDER BY t.name
-        """, (project_id, project_id))
-        return self._map_rows(self.cursor.fetchall())
+        """, (project_id,))
+        return self.cursor.fetchall()
 
-    def create_anchor(self, project_id, reading_id, outline_id, tag_id, selected_text, comment, unique_doc_id, item_link_id=None):
+    def add_project_tag(self, project_id, tag_id):
+        try:
+            self.cursor.execute("INSERT OR IGNORE INTO project_tag_links (project_id, tag_id) VALUES (?, ?)",
+                                (project_id, tag_id))
+            self.conn.commit()
+        except Exception as e:
+            print(f"Error in add_project_tag: {e}")
+            self.conn.rollback()
+
+    def remove_project_tag(self, project_id, tag_id):
+        try:
+            self.cursor.execute("DELETE FROM project_tag_links WHERE project_id = ? AND tag_id = ?",
+                                (project_id, tag_id))
+            self.conn.commit()
+        except Exception as e:
+            print(f"Error in remove_project_tag: {e}")
+            self.conn.rollback()
+
+    def add_tag(self, name):
+        try:
+            self.cursor.execute("INSERT INTO synthesis_tags (name) VALUES (?)", (name,))
+            self.conn.commit()
+            return self.cursor.lastrowid
+        except Exception as e:
+            print(f"Error in add_tag: {e}")
+            self.conn.rollback()
+            return None
+
+    def update_tag(self, tag_id, name):
+        try:
+            self.cursor.execute("UPDATE synthesis_tags SET name = ? WHERE id = ?", (name, tag_id))
+            self.conn.commit()
+        except Exception as e:
+            print(f"Error in update_tag: {e}")
+            self.conn.rollback()
+
+    def delete_tag(self, tag_id):
+        try:
+            # Anchor links and project links will be deleted by CASCADE
+            self.cursor.execute("DELETE FROM synthesis_tags WHERE id = ?", (tag_id,))
+            self.conn.commit()
+        except Exception as e:
+            print(f"Error in delete_tag: {e}")
+            self.conn.rollback()
+
+    def get_anchors_for_tag(self, project_id, tag_id):
+        self.cursor.execute("""
+            SELECT a.* FROM synthesis_anchors a
+            JOIN anchor_tag_links l ON a.id = l.anchor_id
+            WHERE a.project_id = ? AND l.tag_id = ?
+        """, (project_id, tag_id))
+        return self.cursor.fetchall()
+
+    def get_anchors_and_tags_for_project(self, project_id):
+        # Get all tags for the project
+        tags = self.get_project_tags(project_id)
+        tags_dict = {tag['id']: dict(tag) for tag in tags}
+
+        # Get all anchors for the project
+        self.cursor.execute("""
+            SELECT id, reading_id, outline_id, selected_text, comment, unique_doc_id, item_link_id 
+            FROM synthesis_anchors 
+            WHERE project_id = ?
+        """, (project_id,))
+        anchors_raw = self.cursor.fetchall()
+
+        anchors_dict = {}
+        for anchor in anchors_raw:
+            anchor_id = anchor['id']
+            anchor_data = dict(anchor)
+
+            # --- FIX: Check for virtual anchors and format them for display ---
+            if anchor['item_link_id']:
+                # This is a virtual anchor, let's get the DQ text
+                self.cursor.execute("SELECT nickname, question_text FROM reading_driving_questions WHERE id = ?",
+                                    (anchor['item_link_id'],))
+                dq_data = self.cursor.fetchone()
+                if dq_data:
+                    display_text = dq_data['nickname'] if dq_data['nickname'] else dq_data['question_text']
+                    # Overwrite 'selected_text' with the DQ text for display
+                    anchor_data['selected_text'] = f"Driving Question: {display_text}"
+                    anchor_data['comment'] = ""  # Clear comment
+                else:
+                    # DQ was deleted, but anchor remains?
+                    anchor_data['selected_text'] = "Orphaned Driving Question"
+            # --- END FIX ---
+
+            # Get links for this anchor
+            self.cursor.execute("SELECT tag_id FROM anchor_tag_links WHERE anchor_id = ?", (anchor_id,))
+            anchor_data['tags'] = [row['tag_id'] for row in self.cursor.fetchall()]
+
+            anchors_dict[anchor_id] = anchor_data
+
+        return {'tags': tags_dict, 'anchors': anchors_dict}
+
+    def create_anchor(self, project_id, reading_id, outline_id, tag_id, unique_doc_id, selected_text, comment):
         try:
             self.cursor.execute("""
                 INSERT INTO synthesis_anchors 
-                (project_id, reading_id, outline_id, selected_text, comment, unique_doc_id, tag_id, item_link_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                project_id, reading_id, outline_id, selected_text, comment, unique_doc_id, tag_id, item_link_id
-            ))
+                (project_id, reading_id, outline_id, tag_id, unique_doc_id, selected_text, comment)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (project_id, reading_id, outline_id, tag_id, unique_doc_id, selected_text, comment))
             anchor_id = self.cursor.lastrowid
 
-            self.cursor.execute(
-                "INSERT OR IGNORE INTO anchor_tag_links (anchor_id, tag_id) VALUES (?, ?)",
-                (anchor_id, tag_id)
-            )
-
-            self.cursor.execute(
-                "INSERT OR IGNORE INTO project_tag_links (project_id, tag_id) VALUES (?, ?)",
-                (project_id, tag_id)
-            )
+            # Also create the link in anchor_tag_links
+            if tag_id:
+                self.cursor.execute("""
+                    INSERT INTO anchor_tag_links (anchor_id, tag_id) VALUES (?, ?)
+                """, (anchor_id, tag_id))
 
             self.conn.commit()
             return anchor_id
         except Exception as e:
+            print(f"Error in create_anchor: {e}")
             self.conn.rollback()
-            print(f"Error creating anchor: {e}")
             return None
 
-    def update_anchor(self, anchor_id, new_tag_id, new_comment):
+    def update_anchor(self, anchor_id, data):
         try:
-            self.cursor.execute(
-                "UPDATE synthesis_anchors SET comment = ?, tag_id = ? WHERE id = ?",
-                (new_comment, new_tag_id, anchor_id)
-            )
+            self.cursor.execute("""
+                UPDATE synthesis_anchors SET
+                selected_text = ?,
+                comment = ?
+                WHERE id = ?
+            """, (data['selected_text'], data['comment'], anchor_id))
 
+            # Handle tag links
             self.cursor.execute("DELETE FROM anchor_tag_links WHERE anchor_id = ?", (anchor_id,))
-
-            self.cursor.execute(
-                "INSERT OR IGNORE INTO anchor_tag_links (anchor_id, tag_id) VALUES (?, ?)",
-                (anchor_id, new_tag_id)
-            )
-
-            self.cursor.execute("SELECT project_id FROM synthesis_anchors WHERE id = ?", (anchor_id,))
-            res = self.cursor.fetchone()
-            if res:
-                project_id = res['project_id']
-                self.cursor.execute(
-                    "INSERT OR IGNORE INTO project_tag_links (project_id, tag_id) VALUES (?, ?)",
-                    (project_id, new_tag_id)
-                )
+            if data.get('tags'):
+                for tag_id in data['tags']:
+                    self.cursor.execute("INSERT INTO anchor_tag_links (anchor_id, tag_id) VALUES (?, ?)",
+                                        (anchor_id, tag_id))
 
             self.conn.commit()
         except Exception as e:
+            print(f"Error in update_anchor: {e}")
             self.conn.rollback()
-            print(f"Error updating anchor: {e}")
 
     def delete_anchor(self, anchor_id):
-        self.cursor.execute("DELETE FROM synthesis_anchors WHERE id = ?", (anchor_id,))
-        self.conn.commit()
-
-    def delete_anchors_by_item_link_id(self, item_id):
-        """Deletes all virtual anchors linked to a specific item_id."""
-        if not item_id:
-            return
-        self.cursor.execute("DELETE FROM synthesis_anchors WHERE item_link_id = ?", (item_id,))
-        self.conn.commit()
-
-    def get_anchor_details(self, anchor_id):
-        self.cursor.execute("""
-            SELECT a.*, t.name as tag_name, t.id as tag_id
-            FROM synthesis_anchors a
-            LEFT JOIN synthesis_tags t ON a.tag_id = t.id
-            WHERE a.id = ?
-        """, (anchor_id,))
-        return self._rowdict(self.cursor.fetchone())
-
-    def get_anchor_by_id(self, anchor_id):
-        self.cursor.execute("SELECT id FROM synthesis_anchors WHERE id = ?", (anchor_id,))
-        return self._rowdict(self.cursor.fetchone())
-
-    def get_anchors_for_project(self, project_id):
-        self.cursor.execute(
-            "SELECT * FROM synthesis_anchors WHERE project_id = ?", (project_id,)
-        )
-        return self._map_rows(self.cursor.fetchall())
-
-    def get_anchors_for_tag(self, tag_id):
-        self.cursor.execute("""
-            SELECT a.* FROM synthesis_anchors a
-            JOIN anchor_tag_links l ON a.id = l.anchor_id
-            WHERE l.tag_id = ?
-        """, (tag_id,))
-        return self._map_rows(self.cursor.fetchall())
-
-    # --- Synthesis Tab Functions ---
-
-    def get_tags_with_counts(self, project_id):
-        sql = """
-            SELECT 
-                t.id, 
-                t.name, 
-                COUNT(a.id) as anchor_count
-            FROM synthesis_tags t
-            LEFT JOIN project_tag_links ptl ON t.id = ptl.tag_id
-            LEFT JOIN synthesis_anchors a ON t.id = a.tag_id AND a.project_id = ?
-            WHERE ptl.project_id = ? OR a.project_id = ?
-            GROUP BY t.id, t.name
-            ORDER BY t.name
-        """
-        self.cursor.execute(sql, (project_id, project_id, project_id))
-        return self._map_rows(self.cursor.fetchall())
-
-    def get_anchors_for_tag_with_context(self, tag_id, project_id):
-        """
-        Modified to accept project_id and join with reading_driving_questions
-        to get the item type (e.g., 'term', 'proposition').
-        """
-        sql = """
-            SELECT 
-                a.id, 
-                a.selected_text, 
-                a.comment,
-                a.item_link_id,
-                r.id as reading_id,
-                r.title as reading_title,
-                r.nickname as reading_nickname,
-                o.id as outline_id,
-                o.section_title as outline_title,
-                dq.type as item_type
-            FROM synthesis_anchors a
-            JOIN anchor_tag_links l ON a.id = l.anchor_id
-            LEFT JOIN readings r ON a.reading_id = r.id
-            LEFT JOIN reading_outline o ON a.outline_id = o.id
-            LEFT JOIN reading_driving_questions dq ON a.item_link_id = dq.id
-            WHERE l.tag_id = ? AND a.project_id = ?
-            ORDER BY r.display_order, o.display_order, a.id
-        """
-        self.cursor.execute(sql, (tag_id, project_id))
-        return self._map_rows(self.cursor.fetchall())
-
-    def get_anchors_for_tag_simple(self, tag_id):
-        sql = """
-            SELECT a.id, a.selected_text, a.comment
-            FROM synthesis_anchors a
-            JOIN anchor_tag_links l ON a.id = l.anchor_id
-            WHERE l.tag_id = ?
-            ORDER BY a.id
-        """
-        self.cursor.execute(sql, (tag_id,))
-        return self._map_rows(self.cursor.fetchall())
-
-    # --- Tag Management Functions (now global) ---
-    def rename_tag(self, tag_id, new_name):
-        """Renames a tag globally. Checks for uniqueness conflict."""
         try:
-            self.cursor.execute(
-                "UPDATE synthesis_tags SET name = ? WHERE id = ?",
-                (new_name, tag_id)
-            )
-            self.conn.commit()
-        except sqlite3.IntegrityError:
-            raise Exception(f"A tag named '{new_name}' already exists.")
-
-    def delete_tag_and_anchors(self, tag_id):
-        try:
-            self.cursor.execute("SELECT anchor_id FROM anchor_tag_links WHERE tag_id = ?", (tag_id,))
-            anchor_ids = [row[0] for row in self.cursor.fetchall()]
-
-            if anchor_ids:
-                self.cursor.executemany(
-                    "DELETE FROM synthesis_anchors WHERE id = ?",
-                    [(aid,) for aid in anchor_ids]
-                )
-
-            self.cursor.execute("DELETE FROM project_tag_links WHERE tag_id = ?", (tag_id,))
-
-            self.cursor.execute("DELETE FROM synthesis_tags WHERE id = ?", (tag_id,))
-
+            # Links in anchor_tag_links will be deleted by CASCADE
+            self.cursor.execute("DELETE FROM synthesis_anchors WHERE id = ?", (anchor_id,))
             self.conn.commit()
         except Exception as e:
+            print(f"Error in delete_anchor: {e}")
             self.conn.rollback()
-            print(f"Error deleting tag and anchors: {e}")
-            raise
-
-    def merge_tags(self, source_tag_id, target_tag_id):
-        """Merges one tag into another, updating all anchors and links."""
-        try:
-            self.cursor.execute(
-                "UPDATE synthesis_anchors SET tag_id = ? WHERE tag_id = ?",
-                (target_tag_id, source_tag_id)
-            )
-            # --- FIX: Typo was here ---
-            self.cursor.execute(
-                "UPDATE OR IGNORE anchor_tag_links SET tag_id = ? WHERE tag_id = ?",
-                (target_tag_id, source_tag_id)
-            )
-            # --- END FIX ---
-            self.cursor.execute(
-                "DELETE FROM anchor_tag_links WHERE tag_id = ?", (source_tag_id,)
-            )
-            self.cursor.execute(
-                "UPDATE OR IGNORE project_tag_links SET tag_id = ? WHERE tag_id = ?",
-                (target_tag_id, source_tag_id)
-            )
-            self.cursor.execute(
-                "DELETE FROM project_tag_links WHERE tag_id = ?", (source_tag_id,)
-            )
-            self.cursor.execute("DELETE FROM synthesis_tags WHERE id = ?", (source_tag_id,))
-            self.conn.commit()
-        except Exception as e:
-            self.conn.rollback()
-            raise Exception(f"Failed to merge tags: {e}")

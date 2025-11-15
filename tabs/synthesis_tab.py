@@ -1,4 +1,4 @@
-# tabs/synthesis_tab.py
+# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-0eada8809e03f78f9e304f58f06c5f5a03a32c4f/tabs/synthesis_tab.py
 import sys
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel,
@@ -64,8 +64,8 @@ class SynthesisTab(QWidget):
     A widget for synthesizing information.
     Shows a master list of tags and a detail view of anchors.
     """
-    # Signal to open a reading tab: (reading_id, outline_id)
-    openReading = Signal(int, int)
+    # Signal to open a reading tab: (reading_id, outline_id, item_link_id, item_type)
+    openReading = Signal(int, int, int, str)
 
     # Signal that tags have been changed (deleted/renamed)
     tagsUpdated = Signal()
@@ -150,9 +150,6 @@ class SynthesisTab(QWidget):
             self.bottom_tab_widget.addTab(self.propositions_tab, "My Propositions")
 
         # (C) My Issues (REMOVED)
-        # self.issues_tab = QLabel("Placeholder for 'My Issues'")
-        # self.issues_tab.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # self.bottom_tab_widget.addTab(self.issues_tab, "My Issues")
 
         # (D) Notes (with Citation Button)
         notes_container = QWidget()
@@ -215,10 +212,6 @@ class SynthesisTab(QWidget):
 
         print("Saving synthesis editors...")
 
-        # We don't need to save Terminology, Propositions, or Issues here
-        # because they will have their own internal save logic.
-        # We ONLY need to save the "Notes" editor.
-
         if RichTextEditorTab and hasattr(self, 'notes_editor'):
             def create_callback(field_name):
                 # This closure captures the field_name
@@ -234,8 +227,6 @@ class SynthesisTab(QWidget):
         """Reloads the list of tags from the database."""
         self.tag_list.clear()
         try:
-            # This function now correctly gets tags for this project
-            # from the global pool.
             tags = self.db.get_tags_with_counts(self.project_id)
             if not tags:
                 item = QListWidgetItem("No tags created yet.")
@@ -265,7 +256,6 @@ class SynthesisTab(QWidget):
             return
 
         try:
-            # --- MODIFIED: Pass project_id to the query ---
             anchors = self.db.get_anchors_for_tag_with_context(tag_id, self.project_id)
             if not anchors:
                 self.anchor_display.setHtml("<i>No anchors found for this tag.</i>")
@@ -274,7 +264,6 @@ class SynthesisTab(QWidget):
             html = ""
             current_reading = None
             for anchor in anchors:
-                # --- Group by reading ---
                 reading_name = anchor['reading_nickname'] or anchor['reading_title']
                 if reading_name != current_reading:
                     if current_reading is not None:
@@ -282,43 +271,34 @@ class SynthesisTab(QWidget):
                     current_reading = reading_name
                     html += f"<h3>{current_reading}</h3>"
 
-                # --- Build Context Link ---
                 context_parts = []
                 if anchor['outline_title']:
                     context_parts.append(f"Section: {anchor['outline_title']}")
 
-                # --- NEW: Check if it's a 'virtual' or 'text' anchor ---
                 item_link_id = anchor.get('item_link_id')
-                item_type = anchor.get('item_type')  # e.g., 'term', 'proposition'
+                item_type = anchor.get('item_type') or ''
 
-                # Format: jumpto:reading_id:outline_id
-                # --- MODIFIED: Add item_link_id and type to the link ---
-                jumpto_link = f"jumpto:{anchor['reading_id']}:{anchor['outline_id'] or 0}:{item_link_id or 0}:{item_type or ''}"
+                # --- MODIFIED: Pass all 4 parts to the link ---
+                jumpto_link = f"jumpto:{anchor['reading_id']}:{anchor['outline_id'] or 0}:{item_link_id or 0}:{item_type}"
+                # --- END MODIFIED ---
 
                 if context_parts:
                     html += f"<p><i><a href='{jumpto_link}'>({', '.join(context_parts)})</a></i></p>"
                 else:
                     html += f"<p><i><a href='{jumpto_link}'>(Reading-Level Note)</a></i></p>"
 
-                # --- Build Anchor Body ---
                 html += f"<blockquote>"
 
-                # --- NEW: Display based on anchor type ---
                 if item_link_id:
-                    # This is a VIRTUAL anchor (DQ, Term, etc.)
-                    # The 'selected_text' is our summary (e.g., "Key Term: [Name]")
+                    # Virtual anchor
                     html += f"<p><b>{anchor['selected_text']}</b></p>"
-                    if anchor['comment']:
-                        comment_html = anchor['comment'].replace("\n", "<br>")
-                        html += f"<p><i>— {comment_html}</i></p>"
                 else:
-                    # This is a normal TEXT anchor
+                    # Text anchor
                     html += f"<p>{anchor['selected_text']}</p>"
-                    if anchor['comment']:
-                        # Format comment to preserve newlines
-                        comment_html = anchor['comment'].replace("\n", "<br>")
-                        html += f"<p><i>— {comment_html}</i></p>"
-                # --- END NEW ---
+
+                if anchor['comment']:
+                    comment_html = anchor['comment'].replace("\n", "<br>")
+                    html += f"<p><i>— {comment_html}</i></p>"
 
                 html += "</blockquote>"
 
@@ -337,23 +317,16 @@ class SynthesisTab(QWidget):
                 parts = url_str.split(":")
                 reading_id = int(parts[1])
                 outline_id = int(parts[2])
-                # --- NEW: Get the new parts ---
+                # --- FIX: Get all 4 parts ---
                 item_link_id = int(parts[3])
                 item_type = parts[4]
-                # --- END NEW ---
+                # --- END FIX ---
 
                 print(
                     f"Emitting openReading signal for reading_id={reading_id}, outline_id={outline_id}, item_id={item_link_id}, type={item_type}")
 
-                # --- MODIFIED: We just pass the IDs, the dashboard will handle the logic ---
-                # (The signal in reading_notes_tab.py already handles 4 args, but we'll need to modify it)
-                # Let's check the dashboard widget... ah, it only accepts (int, int).
-                # We will modify the dashboard to handle this.
-                # For now, just send the original two.
-                #
-                # TODO: Update project_dashboard_widget.py to handle the new jump-to-item logic.
-                # For now, we just jump to the reading/outline section.
-                self.openReading.emit(reading_id, outline_id)
+                # --- FIX: Emit all 4 parts ---
+                self.openReading.emit(reading_id, outline_id, item_link_id, item_type)
             except Exception as e:
                 print(f"Error handling jumpto link: {e}")
 
@@ -365,20 +338,16 @@ class SynthesisTab(QWidget):
         menu = QMenu(self)
         item = self.tag_list.itemAt(position)
 
-        # Action to create a new tag (always available)
         create_action = QAction("Create New Tag...", self)
         create_action.triggered.connect(self._create_new_tag)
         menu.addAction(create_action)
 
         if item and item.data(Qt.ItemDataRole.UserRole) is not None:
-            # Actions for a specific tag
             menu.addSeparator()
 
-            # --- NEW: Manage Anchors Action ---
             manage_action = QAction("Manage Anchors for this Tag...", self)
             manage_action.triggered.connect(self._manage_tag_anchors)
             menu.addAction(manage_action)
-            # --- END NEW ---
 
             rename_action = QAction("Rename Tag...", self)
             rename_action.triggered.connect(self._rename_tag)
@@ -405,9 +374,7 @@ class SynthesisTab(QWidget):
                 return
 
             try:
-                # --- FIX: Pass project_id to link the new tag ---
                 self.db.get_or_create_tag(new_name, self.project_id)
-                # --- END FIX ---
                 self.load_tags_list()
             except sqlite3.IntegrityError:
                 QMessageBox.warning(self, "Tag Exists", f"A tag named '{new_name}' already exists.")
@@ -435,9 +402,7 @@ class SynthesisTab(QWidget):
                 return
 
             try:
-                # --- GLOBAL TAGS FIX: Removed project_id ---
                 self.db.rename_tag(tag_id, new_name)
-                # --- END FIX ---
                 self.load_tags_list()  # Refresh list
                 self.tagsUpdated.emit()  # Refresh anchors
             except sqlite3.IntegrityError:
@@ -466,15 +431,12 @@ class SynthesisTab(QWidget):
         if reply == QMessageBox.StandardButton.Yes:
             try:
                 self.db.delete_tag_and_anchors(tag_id)
-                # Emit signal *before* reloading list
                 self.tagsUpdated.emit()
-                # Manually reload list *after* emit
                 self.load_tags_list()
-                self.anchor_display.clear()  # Clear detail view
+                self.anchor_display.clear()
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not delete tag: {e}")
 
-    # --- NEW: Slot for Manage Anchors ---
     @Slot()
     def _manage_tag_anchors(self):
         """Opens the new dialog to manage/delete individual anchors."""
@@ -490,7 +452,6 @@ class SynthesisTab(QWidget):
             return
 
         dialog = ManageAnchorsDialog(self.db, tag_id, tag_name, self)
-        # Connect the dialog's signal to our refresh slot
         dialog.anchorDeleted.connect(self._on_anchor_deleted_from_dialog)
         dialog.exec()
 
@@ -500,23 +461,14 @@ class SynthesisTab(QWidget):
         Called when the ManageAnchorsDialog emits a signal.
         This forces a full refresh of the UI.
         """
-        # 1. Emit the main signal to update all open reading tabs
         self.tagsUpdated.emit()
-
-        # 2. Refresh this tab's own views
-        self.load_tags_list()  # Reloads tag counts
-
-        # 3. Reload the anchor list for the currently selected tag
-        # We need to check if the tag still exists or if the list is empty
+        self.load_tags_list()
         current_item = self.tag_list.currentItem()
         if current_item:
             self.on_tag_selected(current_item, None)
         else:
             self.anchor_display.clear()
 
-    # --- END NEW ---
-
-    # --- NEW: Public slot for Graph View interactivity ---
     @Slot(int)
     def select_tag_by_id(self, tag_id_to_select):
         """Finds and selects a tag in the list by its ID."""
@@ -527,9 +479,6 @@ class SynthesisTab(QWidget):
                 self.tag_list.setCurrentItem(item)
                 return
 
-    # --- END NEW ---
-
-    # --- NEW: Citation Button Slot ---
     @Slot()
     def open_notes_citation_dialog(self):
         """Opens the Add Citation dialog and inserts the result into the Notes editor."""
@@ -551,5 +500,3 @@ class SynthesisTab(QWidget):
                 self.notes_editor.focus_editor()
             else:
                 QMessageBox.warning(self, "Error", "Notes editor is not available.")
-    # --- END NEW ---
-

@@ -1,4 +1,4 @@
-# tabs/graph_view_tab.py
+# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-0eada8809e03f78f9e304f58f06c5f5a03a32c4f/tabs/graph_view_tab.py
 import sys
 import math
 import sqlite3
@@ -240,11 +240,12 @@ class BaseGraphNode(QGraphicsItem):
         if change == QGraphicsItem.GraphicsItemChange.ItemSelectedChange:
             if self.scene():
                 if hasattr(self.scene(), 'update_highlights'):
-                    self.scene().update_highlights()
+                    # Use a QTimer to delay the update slightly, allowing
+                    # the scene to process all selection changes first.
+                    QTimer.singleShot(0, self.scene().update_highlights)
 
         return super().itemChange(change, value)
 
-    # --- FIX 2: Create a dedicated rename starter ---
     def start_rename_editor(self):
         """Starts the inline QLineEdit editor for renaming."""
         if isinstance(self, TagNodeItem) or isinstance(self, ReadingNodeItem):
@@ -267,28 +268,8 @@ class BaseGraphNode(QGraphicsItem):
             self.line_edit.editingFinished.connect(self._on_rename_finished)
 
     def mouseDoubleClickEvent(self, event):
-        """Allows editing node text on double-click."""
-        # --- FIX 1: This logic is now handled by subclasses ---
-        # if isinstance(self, TagNodeItem) or isinstance(self, ReadingNodeItem):
-        #     self.line_edit = QLineEdit()
-        #     self.line_edit.setText(self.name.strip())
-        #     self.line_edit.selectAll()
-        #
-        #     self.proxy = self.scene().addWidget(self.line_edit)
-        #     self.proxy.setParentItem(self)
-        #
-        #     self.proxy.setPos(self.text_item.pos())
-        #     self.proxy.resize(self.text_item.boundingRect().width(), self.text_item.boundingRect().height())
-        #
-        #     self.text_item.hide()
-        #     self.line_edit.setFocus()
-        #
-        #     self.line_edit.editingFinished.connect(self._on_rename_finished)
-        # else:
         if event:
             super().mouseDoubleClickEvent(event)
-
-    # --- END FIX 1 & 2 ---
 
     @Slot()
     def _on_rename_finished(self):
@@ -361,11 +342,9 @@ class ReadingNodeItem(BaseGraphNode):
 
     def mouseDoubleClickEvent(self, event):
         print(f"Reading node '{self.name}' double-clicked")
-        # --- FIX 1: Emit signal to open reading tab ---
         self.graph_view.emit_reading_double_clicked(self.reading_id)
         if event:
             event.accept()
-        # --- END FIX 1 ---
 
 
 class TagNodeItem(BaseGraphNode):
@@ -397,11 +376,9 @@ class TagNodeItem(BaseGraphNode):
 
     def mouseDoubleClickEvent(self, event):
         print(f"Tag node '{self.name}' double-clicked")
-        # --- FIX 1: Emit signal to open synthesis tab ---
         self.graph_view.emit_tag_double_clicked(self.tag_id)
         if event:
             event.accept()
-        # --- END FIX 1 ---
 
 
 # --- NEW: Virtual Anchor Node ---
@@ -433,7 +410,7 @@ class AnchorNodeItem(BaseGraphNode):
         self.text_item.setFont(font)
 
         self.update_geometry()  # Recalculate with new font
-        self.setToolTip(f"{self.summary_text}\nType: {self.item_type}")
+        self.setToolTip(f"{self.summary_text}\nType: {self.item_type or 'item'}")
 
     def update_geometry(self):
         """Calculates the node's bounds based on its text."""
@@ -542,11 +519,6 @@ class GraphViewTab(QWidget):
     readingDoubleClicked = Signal(int, int)  # (reading_id, outline_id)
     tagDoubleClicked = Signal(int)
 
-    # --- NEW: Signal for anchor clicks ---
-    # We will re-use readingDoubleClicked for this, just with outline_id
-    # anchorDoubleClicked = Signal(int) # anchor_id
-    # --- END NEW ---
-
     tagsUpdated = Signal()
 
     def __init__(self, db_manager, project_id, parent=None):
@@ -592,22 +564,18 @@ class GraphViewTab(QWidget):
     def emit_reading_double_clicked(self, reading_id):
         self.readingDoubleClicked.emit(reading_id, 0)  # 0 for outline_id
 
-    # --- NEW: Emit anchor click signal ---
     @Slot(int)
     def emit_anchor_double_clicked(self, anchor_id):
         """Finds the reading/outline info and emits the full signal."""
         try:
             anchor = self.db.get_anchor_details(anchor_id)
             if anchor:
-                # We emit the openReading signal, which the dashboard is already
-                # connected to. This will jump to the right place.
+                # Emits (reading_id, outline_id)
                 self.readingDoubleClicked.emit(anchor['reading_id'], anchor.get('outline_id', 0))
             else:
                 print(f"GraphViewTab: Could not find anchor details for id {anchor_id}")
         except Exception as e:
             print(f"GraphViewTab: Error emitting anchor click: {e}")
-
-    # --- END NEW ---
 
     @Slot(int)
     def emit_tag_double_clicked(self, tag_id):
@@ -623,9 +591,7 @@ class GraphViewTab(QWidget):
         self.edges.clear()
 
         try:
-            # --- MODIFIED: Call new 'full' graph data function ---
             data = self.db.get_graph_data_full(self.project_id)
-            # --- END MODIFIED ---
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not load graph data: {e}")
             return
@@ -633,9 +599,9 @@ class GraphViewTab(QWidget):
         pos_x, pos_y = 0, 0
         for reading in data['readings']:
             node_id = f"r_{reading['id']}"
-
-            node_item = ReadingNodeItem(reading['id'], reading['name'], self)
-            node_item.full_title = reading.get('title', reading['name'])
+            node_name = reading['name'] or 'Untitled Reading'
+            node_item = ReadingNodeItem(reading['id'], node_name, self)
+            node_item.full_title = reading.get('title', node_name)
             node_item.author = reading.get('author', '')
 
             node_item.setPos(pos_x, pos_y)
@@ -651,22 +617,61 @@ class GraphViewTab(QWidget):
             self.nodes[node_id] = node_item
             pos_x += 50
 
-        # --- NEW: Add Virtual Anchor Nodes ---
-        for anchor in data.get('virtual_anchors', []):
-            node_id = f"a_{anchor['id']}"
-            node_item = AnchorNodeItem(
-                anchor_id=anchor['id'],
-                item_link_id=anchor['item_link_id'],
-                summary_text=anchor['selected_text'],
-                item_type=anchor.get('item_type', 'item'),
-                graph_view=self
-            )
-            node_item.setPos(pos_x, pos_y + 50)
-            self.scene.add_node(node_item)
-            self.nodes[node_id] = node_item
-            pos_x += 50
-        # --- END NEW ---
+        # --- MODIFIED: Process Virtual Anchors ---
+        virtual_anchor_nodes = {}  # Map item_link_id to node_item
+        for anchor_link in data.get('virtual_anchors', []):
+            item_link_id = anchor_link['item_link_id']
 
+            if item_link_id not in virtual_anchor_nodes:
+                # Create the node
+                node_id = f"a_{anchor_link['id']}"
+                item_node = AnchorNodeItem(
+                    anchor_id=anchor_link['id'],
+                    item_link_id=item_link_id,
+                    summary_text=anchor_link['selected_text'],
+                    item_type=anchor_link.get('item_type', 'item'),
+                    graph_view=self
+                )
+                item_node.setPos(pos_x, pos_y + 50)
+                self.scene.add_node(item_node)
+                self.nodes[node_id] = item_node
+                virtual_anchor_nodes[item_link_id] = item_node
+                pos_x += 50
+
+            item_node = virtual_anchor_nodes[item_link_id]
+
+            # 1. Link Anchor <-> Tag
+            if anchor_link['tag_id']:
+                to_id = f"t_{anchor_link['tag_id']}"
+                to_node = self.nodes.get(to_id)
+                if to_node:
+                    edge_item = GraphEdgeItem(item_node, to_node)
+                    self.scene.add_edge(edge_item)
+                    self.edges.append(edge_item)
+                    item_node.add_edge(edge_item)
+                    to_node.add_edge(edge_item)
+
+            # 2. Link Anchor <-> Reading
+            reading_id_key = f"r_{anchor_link['reading_id']}"
+            reading_node = self.nodes.get(reading_id_key)
+            if reading_node:
+                exists = any(
+                    (edge.from_node == item_node and edge.to_node == reading_node) or \
+                    (edge.from_node == reading_node and edge.to_node == item_node)
+                    for edge in item_node.edges
+                )
+
+                if not exists:
+                    edge_item = GraphEdgeItem(item_node, reading_node)
+                    pen = QPen(QColor("#FFB0B0"), 1.5, Qt.PenStyle.DotLine)
+                    edge_item.setPen(pen)
+                    self.scene.add_edge(edge_item)
+                    self.edges.append(edge_item)
+                    item_node.add_edge(edge_item)
+                    reading_node.add_edge(edge_item)
+        # --- END MODIFIED ---
+
+        # --- Original Text Anchor Edges ---
         for edge in data['edges']:
             from_id = f"r_{edge['reading_id']}"
             to_id = f"t_{edge['tag_id']}"
@@ -682,48 +687,11 @@ class GraphViewTab(QWidget):
                 from_node.add_edge(edge_item)
                 to_node.add_edge(edge_item)
 
-        # --- NEW: Add edges for virtual anchors ---
-        # 1. Anchor <-> Tag
-        for anchor in data.get('virtual_anchors', []):
-            from_id = f"a_{anchor['id']}"
-            to_id = f"t_{anchor['tag_id']}"
-
-            if from_id in self.nodes and to_id in self.nodes:
-                from_node = self.nodes[from_id]
-                to_node = self.nodes[to_id]
-                edge_item = GraphEdgeItem(from_node, to_node)
-                self.scene.add_edge(edge_item)
-                self.edges.append(edge_item)
-                from_node.add_edge(edge_item)
-                to_node.add_edge(edge_item)
-
-        # 2. Anchor <-> Reading
-        for anchor in data.get('virtual_anchors', []):
-            from_id = f"a_{anchor['id']}"
-            to_id = f"r_{anchor['reading_id']}"
-
-            if from_id in self.nodes and to_id in self.nodes:
-                from_node = self.nodes[from_id]
-                to_node = self.nodes[to_id]
-                edge_item = GraphEdgeItem(from_node, to_node)
-                # Style this edge differently?
-                pen = QPen(QColor("#FFB0B0"), 1.5, Qt.PenStyle.DotLine)  # Light red, dotted
-                edge_item.setPen(pen)
-
-                self.scene.add_edge(edge_item)
-                self.edges.append(edge_item)
-                from_node.add_edge(edge_item)
-                to_node.add_edge(edge_item)
-        # --- END NEW ---
-
         for node in self.nodes.values():
             node.update_node_scale_and_tooltip()
 
         if self.nodes:
-            # --- FIX 3: Zoom out more by default ---
-            # Add more padding to the bounding box before fitting
             bounds = self.scene.itemsBoundingRect().adjusted(-200, -200, 200, 200)
-            # --- END FIX 3 ---
             self.view.setSceneRect(bounds)
             self.view.fitInView(bounds, Qt.AspectRatioMode.KeepAspectRatio)
 
@@ -732,13 +700,11 @@ class GraphViewTab(QWidget):
         if not self.nodes:
             return
 
-        # --- THIS IS THE FIX for overlapping project nodes ---
-        K_REPEL = 80000  # Repulsion force (was 150000, orig 50000)
-        K_ATTRACT = 0.03  # Attraction force (spring) (was 0.02)
-        DAMPING = 0.85  # Damping factor
-        CENTER_PULL = 0.002  # Force pulling nodes to center
-        MIN_DIST = 50.0  # Minimum distance
-        # --- END FIX ---
+        K_REPEL = 80000
+        K_ATTRACT = 0.03
+        DAMPING = 0.85
+        CENTER_PULL = 0.002
+        MIN_DIST = 50.0
 
         node_list = list(self.nodes.values())
 
@@ -754,28 +720,21 @@ class GraphViewTab(QWidget):
             for j, node_b in enumerate(node_list):
                 if i == j:
                     continue
-
                 delta = node_a.pos() - node_b.pos()
                 dist_sq = max(MIN_DIST, QPointF.dotProduct(delta, delta))
-
                 repel_force = K_REPEL / dist_sq
-
                 dist = math.sqrt(dist_sq)
                 force += (delta / dist) * repel_force
 
             # 2. Attraction from connected nodes (edges)
             for edge in node_a.edges:
                 other_node = edge.from_node if edge.to_node == node_a else edge.to_node
-
                 if other_node.isSelected():
                     continue
-
                 delta = other_node.pos() - node_a.pos()
                 dist_sq = max(MIN_DIST, QPointF.dotProduct(delta, delta))
-
                 dist = math.sqrt(dist_sq)
                 attract_force = dist * K_ATTRACT
-
                 force += (delta / dist) * attract_force
 
             # 3. Pull towards center
@@ -835,10 +794,8 @@ class GraphViewTab(QWidget):
                 self.scene.clearSelection()
                 node.setSelected(True)
 
-            # --- NEW: Disable rename for virtual anchors ---
             if not isinstance(node, AnchorNodeItem):
                 menu.addAction("Rename", lambda: node.start_rename_editor())
-            # --- END NEW ---
 
             menu.addAction("Delete", lambda: self.delete_node(node))
 
@@ -847,10 +804,7 @@ class GraphViewTab(QWidget):
 
         else:
             try:
-                # self (GraphViewTab) -> QStackedWidget -> QWidget -> ProjectDashboardWidget
-                # --- MODIFIED: Simpler parent finding ---
-                dashboard = self.parentWidget().parentWidget()
-                # --- END MODIFIED ---
+                dashboard = self.parentWidget()
                 if hasattr(dashboard, 'add_reading'):
                     menu.addAction("Add New Reading...", dashboard.add_reading)
                 else:
@@ -890,7 +844,6 @@ class GraphViewTab(QWidget):
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"Could not delete tag: {e}")
 
-        # --- NEW: Delete Virtual Anchor ---
         elif isinstance(node, AnchorNodeItem):
             reply = QMessageBox.question(self, "Delete Virtual Anchor",
                                          f"Are you sure you want to delete this virtual anchor?\n\n{node.summary_text}\n\nThis will only remove the tag link, not the item itself.",
@@ -904,7 +857,6 @@ class GraphViewTab(QWidget):
                     self.tagsUpdated.emit()
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"Could not delete virtual anchor: {e}")
-        # --- END NEW ---
 
     @Slot(GraphEdgeItem)
     def view_anchors(self, edge):

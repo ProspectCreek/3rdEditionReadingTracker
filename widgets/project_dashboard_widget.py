@@ -1,4 +1,4 @@
-# widgets/project_dashboard_widget.py
+# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-0eada8809e03f78f9e304f58f06c5f5a03a32c4f/widgets/project_dashboard_widget.py
 import sys
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
