@@ -228,8 +228,15 @@ class SchemaSetup:
             for key in f_keys:
                 # Check if any foreign key points to the old table
                 # --- MODIFIED: Changed key['to'] to key['table'] ---
-                if (key['table'] in ('_dq_old', '"_dq_old"', 'main._dq_old')) and key[
-                    'from'] == 'unity_driving_question_id':
+                # --- THIS IS THE FIX ---
+                # I added all known bad temporary table names to this check.
+                bad_tables = (
+                    '_dq_old', '"_dq_old"', 'main._dq_old',
+                    '_reading_driving_questions_old_fk_fix',
+                    '"_reading_driving_questions_old_fk_fix"'
+                )
+                if (key['table'] in bad_tables) and key['from'] == 'unity_driving_question_id':
+                # --- END FIX ---
                     needs_fk_fix = True
                     print(f"DEBUG: Found bad foreign key: {dict(key)}")
                     break
@@ -898,16 +905,38 @@ class SchemaSetup:
                     """)
                     create_sql = self.cursor.fetchone()[0]
 
-                    # 3. Replace the bad foreign key reference
-                    # This is a bit brittle, but safer than manually re-typing all schemas
+                    # 3. Replace ANY bad foreign key reference
+                    # This is the comprehensive fix
                     fixed_sql = create_sql.replace(
                         'REFERENCES "_readings_old_fk_fix"(id) ON DELETE CASCADE',
                         'REFERENCES "readings"(id) ON DELETE CASCADE'
                     )
+                    fixed_sql = fixed_sql.replace(
+                        'REFERENCES _readings_old_fk_fix(id) ON DELETE CASCADE',
+                        'REFERENCES readings(id) ON DELETE CASCADE'
+                    )
+                    fixed_sql = fixed_sql.replace(
+                        'REFERENCES "_reading_driving_questions_old_fk_fix"(id) ON DELETE SET NULL',
+                        'REFERENCES "reading_driving_questions"(id) ON DELETE SET NULL'
+                    )
+                    fixed_sql = fixed_sql.replace(
+                        'REFERENCES _reading_driving_questions_old_fk_fix(id) ON DELETE SET NULL',
+                        'REFERENCES reading_driving_questions(id) ON DELETE SET NULL'
+                    )
+                    fixed_sql = fixed_sql.replace(
+                        'REFERENCES "_dq_old"(id) ON DELETE SET NULL',
+                        'REFERENCES "reading_driving_questions"(id) ON DELETE SET NULL'
+                    )
+                    fixed_sql = fixed_sql.replace(
+                        'REFERENCES _dq_old(id) ON DELETE SET NULL',
+                        'REFERENCES reading_driving_questions(id) ON DELETE SET NULL'
+                    )
+                    # --- END COMPREHENSIVE FIX ---
 
                     # Ensure the table name in the CREATE statement is the original one
                     fixed_sql = fixed_sql.replace(f"CREATE TABLE \"{temp_table_name}\"", f"CREATE TABLE \"{table_name}\"")
                     fixed_sql = fixed_sql.replace(f"CREATE TABLE {temp_table_name}", f"CREATE TABLE {table_name}")
+
 
                     if fixed_sql == create_sql:
                         print(f"MIGRATION (v2): No change needed for {table_name}, skipping rebuild.")
