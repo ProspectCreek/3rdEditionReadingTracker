@@ -672,6 +672,18 @@ class SchemaSetup:
             except sqlite3.OperationalError as e:
                 print(f"Migration warning: {e}")
 
+        # --- NEW: Add item_link_id column for virtual anchors ---
+        if "item_link_id" not in anchor_cols:
+            try:
+                self.cursor.execute("""
+                    ALTER TABLE synthesis_anchors 
+                    ADD COLUMN item_link_id INTEGER 
+                    REFERENCES reading_driving_questions(id) ON DELETE CASCADE
+                """)
+            except sqlite3.OperationalError as e:
+                print(f"Migration warning (item_link_id): {e}")
+        # --- END NEW ---
+
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS anchor_tag_links (
             anchor_id INTEGER NOT NULL,
@@ -853,5 +865,79 @@ class SchemaSetup:
             except Exception as e:
                 print(f"MIGRATION ERROR (user_version 1): {e}")
                 self.conn.rollback()
+
+        # --- NEW MIGRATION (v2): Fix broken Foreign Keys ---
+        if user_version < 2:
+            print("MIGRATION (v2): Checking for and fixing broken foreign key references to 'readings' table...")
+            self.conn.commit()  # Commit before schema changes
+            self.cursor.execute("PRAGMA foreign_keys = OFF")
+            try:
+                # List of tables that reference the 'readings' table
+                tables_to_fix = [
+                    'reading_outline',
+                    'reading_attachments',
+                    'reading_driving_questions',
+                    'synthesis_anchors',
+                    'terminology_reading_links',
+                    'terminology_references',
+                    'proposition_reading_links',
+                    'proposition_references',
+                    'reading_arguments'
+                ]
+
+                for table_name in tables_to_fix:
+                    print(f"MIGRATION (v2): Rebuilding table '{table_name}'...")
+                    # 1. Rename old table
+                    temp_table_name = f"_{table_name}_old_fk_fix"
+                    self.cursor.execute(f"ALTER TABLE {table_name} RENAME TO {temp_table_name}")
+
+                    # 2. Get the *original* CREATE statement for the table
+                    self.cursor.execute(f"""
+                        SELECT sql FROM sqlite_master 
+                        WHERE type='table' AND name='{temp_table_name}'
+                    """)
+                    create_sql = self.cursor.fetchone()[0]
+
+                    # 3. Replace the bad foreign key reference
+                    # This is a bit brittle, but safer than manually re-typing all schemas
+                    fixed_sql = create_sql.replace(
+                        'REFERENCES "_readings_old_fk_fix"(id) ON DELETE CASCADE',
+                        'REFERENCES "readings"(id) ON DELETE CASCADE'
+                    )
+
+                    # Ensure the table name in the CREATE statement is the original one
+                    fixed_sql = fixed_sql.replace(f"CREATE TABLE \"{temp_table_name}\"", f"CREATE TABLE \"{table_name}\"")
+                    fixed_sql = fixed_sql.replace(f"CREATE TABLE {temp_table_name}", f"CREATE TABLE {table_name}")
+
+                    if fixed_sql == create_sql:
+                        print(f"MIGRATION (v2): No change needed for {table_name}, skipping rebuild.")
+                        # Rename back
+                        self.cursor.execute(f"ALTER TABLE {temp_table_name} RENAME TO {table_name}")
+                        continue
+
+                    # 4. Create the new, correct table
+                    self.cursor.execute(fixed_sql)
+
+                    # 5. Get columns from old table to copy
+                    self.cursor.execute(f"PRAGMA table_info({temp_table_name})")
+                    old_cols = [row['name'] for row in self.cursor.fetchall()]
+                    cols_str = ", ".join([f'"{col}"' for col in old_cols]) # Quote column names
+
+                    # 6. Copy data
+                    self.cursor.execute(f"INSERT INTO {table_name} ({cols_str}) SELECT {cols_str} FROM {temp_table_name}")
+
+                    # 7. Drop old table
+                    self.cursor.execute(f"DROP TABLE {temp_table_name}")
+                    print(f"MIGRATION (v2): Successfully rebuilt {table_name}.")
+
+                self.cursor.execute("PRAGMA user_version = 2")
+                self.conn.commit()
+                print("MIGRATION (v2): All foreign keys fixed.")
+            except Exception as e:
+                print(f"CRITICAL MIGRATION ERROR (user_version 2): {e}")
+                self.conn.rollback()
+            finally:
+                self.cursor.execute("PRAGMA foreign_keys = ON")
+        # --- END MIGRATION (v2) ---
 
         self.conn.commit()
