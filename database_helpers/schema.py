@@ -119,8 +119,13 @@ class SchemaSetup:
             self.cursor.execute("PRAGMA foreign_keys = ON")
 
     def setup_database(self):
-        # --- NEW: Print statement to confirm this function is running ---
         print("--- Running SchemaSetup.setup_database() ---")
+
+        # --- FIX: Check version *before* creating tables ---
+        self.cursor.execute("PRAGMA user_version")
+        user_version = self.cursor.fetchone()[0]
+        is_new_db = user_version == 0
+        # --- END FIX ---
 
         # --- Items / Projects ---
         self.cursor.execute("""
@@ -139,6 +144,7 @@ class SchemaSetup:
             unresolved_text TEXT,
             assignment_instructions_text TEXT,
             assignment_draft_text TEXT,
+            synthesis_notes_html TEXT,
             FOREIGN KEY (parent_id) REFERENCES items(id) ON DELETE CASCADE
         )
         """)
@@ -147,7 +153,6 @@ class SchemaSetup:
         self.cursor.execute("PRAGMA table_info(items)")
         existing_item_cols = {row["name"] for row in self.cursor.fetchall()}
 
-        # --- MODIFIED: Removed old HTML columns, added new ones ---
         cols_to_add = {
             "is_assignment": "INTEGER DEFAULT 0",
             "project_purpose_text": "TEXT",
@@ -158,7 +163,7 @@ class SchemaSetup:
             "unresolved_text": "TEXT",
             "assignment_instructions_text": "TEXT",
             "assignment_draft_text": "TEXT",
-            "synthesis_notes_html": "TEXT",  # Keep this one
+            "synthesis_notes_html": "TEXT",
         }
 
         for col_name, col_type in cols_to_add.items():
@@ -168,7 +173,6 @@ class SchemaSetup:
                 except sqlite3.OperationalError:
                     pass
 
-        # --- NEW: Drop old, unused HTML columns ---
         cols_to_drop = [
             "synthesis_terminology_html",
             "synthesis_propositions_html",
@@ -177,14 +181,58 @@ class SchemaSetup:
         for col_name in cols_to_drop:
             if col_name in existing_item_cols:
                 try:
-                    # Note: SQLite < 3.35 doesn't support DROP COLUMN.
-                    # This might fail, but it's low-risk.
                     self.cursor.execute(f"ALTER TABLE items DROP COLUMN {col_name}")
                 except sqlite3.OperationalError as e:
                     print(f"Note: Could not drop old column {col_name} (this is often ok): {e}")
-        # --- END MODIFICATION ---
 
-        # --- Readings ---
+        # --- Reading Driving Questions (CREATE EARLY - referenced by readings, outline) ---
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS reading_driving_questions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            reading_id INTEGER NOT NULL,
+            parent_id INTEGER,
+            display_order INTEGER,
+            question_text TEXT,
+            nickname TEXT,
+            type TEXT,
+            question_category TEXT,
+            scope TEXT,
+            outline_id INTEGER,
+            pages TEXT,
+            why_question TEXT,
+            synthesis_tags TEXT,
+            is_working_question INTEGER,
+            extra_notes_text TEXT,
+            FOREIGN KEY (reading_id) REFERENCES readings(id) ON DELETE CASCADE,
+            FOREIGN KEY (parent_id) REFERENCES reading_driving_questions(id) ON DELETE CASCADE,
+            FOREIGN KEY (outline_id) REFERENCES reading_outline(id) ON DELETE SET NULL
+        )
+        """)
+
+        # --- Reading Outline (CREATE EARLY - referenced by driving_questions) ---
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS reading_outline (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            reading_id INTEGER NOT NULL,
+            parent_id INTEGER,
+            section_title TEXT NOT NULL,
+            notes_html TEXT,
+            display_order INTEGER,
+            part_function_html TEXT,
+            part_relation_html TEXT,
+            part_dependency_html TEXT,
+            part_function_text_plain TEXT,
+            part_relation_text_plain TEXT,
+            part_dependency_text_plain TEXT,
+            part_is_structural INTEGER DEFAULT 0,
+            part_dq_id INTEGER,
+            FOREIGN KEY (reading_id) REFERENCES readings(id) ON DELETE CASCADE,
+            FOREIGN KEY (parent_id) REFERENCES reading_outline(id) ON DELETE CASCADE,
+            FOREIGN KEY (part_dq_id) REFERENCES reading_driving_questions(id) ON DELETE SET NULL
+        )
+        """)
+
+        # --- Readings (CREATE AFTER driving_questions and outline) ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS readings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -206,144 +254,61 @@ class SchemaSetup:
             gaps_html TEXT,
             theories_html TEXT,
             personal_dialogue_html TEXT,
-
-            -- NEW UNITY FIELDS --
             unity_kind_of_work TEXT,
             unity_driving_question_id INTEGER,
-
             FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE,
             FOREIGN KEY (unity_driving_question_id) REFERENCES reading_driving_questions(id) ON DELETE SET NULL
         )
         """)
 
-        # --- FIX: Check for and correct the bad _dq_old foreign key ---
-        needs_fk_fix = False
-        try:
-            self.cursor.execute("PRAGMA foreign_key_list(readings)")
-            f_keys = self.cursor.fetchall()
-            # --- NEW: Print all found foreign keys for debugging ---
-            if f_keys:
-                print(f"DEBUG: Found foreign keys for 'readings' table: {[dict(k) for k in f_keys]}")
-
-            for key in f_keys:
-                # Check if any foreign key points to the old table
-                # --- MODIFIED: Changed key['to'] to key['table'] ---
-                # --- THIS IS THE FIX ---
-                # I added all known bad temporary table names to this check.
-                bad_tables = (
-                    '_dq_old', '"_dq_old"', 'main._dq_old',
-                    '_reading_driving_questions_old_fk_fix',
-                    '"_reading_driving_questions_old_fk_fix"'
-                )
-                if (key['table'] in bad_tables) and key['from'] == 'unity_driving_question_id':
-                # --- END FIX ---
-                    needs_fk_fix = True
-                    print(f"DEBUG: Found bad foreign key: {dict(key)}")
-                    break
-        except Exception as e:
-            print(f"Note: Could not inspect foreign keys (may be new db): {e}")
-
-        if needs_fk_fix:
-            print("MIGRATION: Detected bad foreign key in 'readings' table. Rebuilding...")
-            try:
-                self.cursor.execute("PRAGMA foreign_keys = OFF")
-                # We must commit before schema changes
-                self.conn.commit()
-
-                # 1. Rename old table
-                self.cursor.execute("ALTER TABLE readings RENAME TO _readings_old_fk_fix")
-
-                # 2. Create new table with correct schema (copied from above)
-                self.cursor.execute("""
-                CREATE TABLE readings (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    project_id INTEGER NOT NULL,
-                    title TEXT NOT NULL,
-                    author TEXT,
-                    display_order INTEGER,
-                    reading_notes_text TEXT,
-                    nickname TEXT,
-                    published TEXT,
-                    pages TEXT,
-                    assignment TEXT,
-                    level TEXT,
-                    classification TEXT,
-                    propositions_html TEXT,
-                    unity_html TEXT,
-                    key_terms_html TEXT,
-                    arguments_html TEXT,
-                    gaps_html TEXT,
-                    theories_html TEXT,
-                    personal_dialogue_html TEXT,
-                    unity_kind_of_work TEXT,
-                    unity_driving_question_id INTEGER,
-                    FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE,
-                    FOREIGN KEY (unity_driving_question_id) REFERENCES reading_driving_questions(id) ON DELETE SET NULL
-                )
-                """)
-
-                # 3. Get columns from old table to copy
-                self.cursor.execute("PRAGMA table_info(_readings_old_fk_fix)")
-                old_cols = [row['name'] for row in self.cursor.fetchall()]
-
-                # Get columns from new table
-                self.cursor.execute("PRAGMA table_info(readings)")
-                new_cols = [row['name'] for row in self.cursor.fetchall()]
-
-                # Find common columns
-                cols_to_copy = [col for col in old_cols if col in new_cols]
-                cols_str = ", ".join(cols_to_copy)
-
-                # 4. Copy data
-                self.cursor.execute(f"INSERT INTO readings ({cols_str}) SELECT {cols_str} FROM _readings_old_fk_fix")
-
-                # 5. Drop old table
-                self.cursor.execute("DROP TABLE _readings_old_fk_fix")
-
-                self.conn.commit()  # Commit the schema change
-                self.cursor.execute("PRAGMA foreign_keys = ON")
-                print("MIGRATION: 'readings' table rebuilt successfully.")
-            except Exception as e:
-                print(f"CRITICAL MIGRATION ERROR (readings fk): {e}. Rolling back...")
-                self.conn.rollback()
-                # Try to restore
-                try:
-                    self.cursor.execute("DROP TABLE IF EXISTS readings")
-                    self.cursor.execute("ALTER TABLE _readings_old_fk_fix RENAME TO readings")
-                except Exception as re:
-                    print(f"CRITICAL ROLLBACK FAILED: {re}")
-            self.cursor.execute("PRAGMA foreign_keys = ON")
-        # --- END FIX ---
-
         self.cursor.execute("PRAGMA table_info(readings)")
         existing_read_cols = {row["name"] for row in self.cursor.fetchall()}
-
-        # --- MODIFIED: Added new columns to this check ---
         cols_to_add_readings = {
-            "nickname": "TEXT",
-            "published": "TEXT",
-            "pages": "TEXT",
-            "assignment": "TEXT",
-            "level": "TEXT",
-            "classification": "TEXT",
-            "propositions_html": "TEXT",
-            "unity_html": "TEXT",
-            "key_terms_html": "TEXT",
-            "arguments_html": "TEXT",
-            "gaps_html": "TEXT",
-            "theories_html": "TEXT",
-            "personal_dialogue_html": "TEXT",
-            "unity_kind_of_work": "TEXT",
+            "nickname": "TEXT", "published": "TEXT", "pages": "TEXT",
+            "assignment": "TEXT", "level": "TEXT", "classification": "TEXT",
+            "propositions_html": "TEXT", "unity_html": "TEXT", "key_terms_html": "TEXT",
+            "arguments_html": "TEXT", "gaps_html": "TEXT", "theories_html": "TEXT",
+            "personal_dialogue_html": "TEXT", "unity_kind_of_work": "TEXT",
             "unity_driving_question_id": "INTEGER REFERENCES reading_driving_questions(id) ON DELETE SET NULL"
         }
-
         for col_name, col_type in cols_to_add_readings.items():
             if col_name not in existing_read_cols:
                 try:
                     self.cursor.execute(f"ALTER TABLE readings ADD COLUMN {col_name} {col_type}")
                 except sqlite3.OperationalError:
                     pass
-        # --- END MODIFIED ---
+
+        # --- ADDITIVE MIGRATION FOR NEW OUTLINE COLUMNS ---
+        self.cursor.execute("PRAGMA table_info(reading_outline)")
+        existing_outline_cols = {row["name"] for row in self.cursor.fetchall()}
+        cols_to_add_outline = {
+            "part_function_html": "TEXT", "part_relation_html": "TEXT", "part_dependency_html": "TEXT",
+            "part_function_text_plain": "TEXT", "part_relation_text_plain": "TEXT",
+            "part_dependency_text_plain": "TEXT", "part_is_structural": "INTEGER DEFAULT 0",
+            "part_dq_id": "INTEGER REFERENCES reading_driving_questions(id) ON DELETE SET NULL"
+        }
+        for col_name, col_type in cols_to_add_outline.items():
+            if col_name not in existing_outline_cols:
+                try:
+                    self.cursor.execute(f"ALTER TABLE reading_outline ADD COLUMN {col_name} {col_type}")
+                except sqlite3.OperationalError:
+                    pass
+
+        # --- ADDITIVE MIGRATION FOR reading_driving_questions ---
+        self.cursor.execute("PRAGMA table_info(reading_driving_questions)")
+        existing_dq_cols = {row["name"] for row in self.cursor.fetchall()}
+        cols_to_add_dq = {
+            "nickname": "TEXT", "type": "TEXT", "question_category": "TEXT", "scope": "TEXT",
+            "outline_id": "INTEGER REFERENCES reading_outline(id) ON DELETE SET NULL",
+            "pages": "TEXT", "why_question": "TEXT", "synthesis_tags": "TEXT",
+            "is_working_question": "INTEGER", "extra_notes_text": "TEXT"
+        }
+        for col_name, col_type in cols_to_add_dq.items():
+            if col_name not in existing_dq_cols:
+                try:
+                    self.cursor.execute(f"ALTER TABLE reading_driving_questions ADD COLUMN {col_name} {col_type}")
+                except sqlite3.OperationalError:
+                    pass
 
         # --- Rubric ---
         self.cursor.execute("""
@@ -385,19 +350,16 @@ class SchemaSetup:
             FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE
         )
         """)
-
         self.cursor.execute("PRAGMA table_info(mindmaps)")
         existing_mindmap_cols = {row["name"] for row in self.cursor.fetchall()}
         if "title" in existing_mindmap_cols and "name" not in existing_mindmap_cols:
             self.cursor.execute("ALTER TABLE mindmaps RENAME COLUMN title TO name")
-
         if "default_font_family" not in existing_mindmap_cols:
             self.cursor.execute("ALTER TABLE mindmaps ADD COLUMN default_font_family TEXT")
             self.cursor.execute("ALTER TABLE mindmaps ADD COLUMN default_font_size INTEGER")
             self.cursor.execute("ALTER TABLE mindmaps ADD COLUMN default_font_weight TEXT")
             self.cursor.execute("ALTER TABLE mindmaps ADD COLUMN default_font_slant TEXT")
             self.cursor.execute("ALTER TABLE mindmaps ADD COLUMN display_order INTEGER")
-
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS mindmap_nodes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -420,7 +382,6 @@ class SchemaSetup:
             UNIQUE(mindmap_id, node_id_text)
         )
         """)
-
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS mindmap_edges (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -435,78 +396,6 @@ class SchemaSetup:
         )
         """)
 
-        self.cursor.execute("PRAGMA table_info(mindmap_edges)")
-        edge_cols = {row["name"] for row in self.cursor.fetchall()}
-        if "from_node_id" in edge_cols:
-            print("Detected old mindmap_edges schema, attempting to rebuild...")
-            try:
-                self.cursor.execute("DROP TABLE mindmap_edges")
-                self.cursor.execute("""
-                CREATE TABLE IF NOT EXISTS mindmap_edges (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    mindmap_id INTEGER NOT NULL,
-                    from_node_id_text TEXT NOT NULL,
-                    to_node_id_text TEXT NOT NULL,
-                    color TEXT,
-                    style TEXT,
-                    width INTEGER,
-                    arrow_style TEXT,
-                    FOREIGN KEY (mindmap_id) REFERENCES mindmaps(id) ON DELETE CASCADE
-                )
-                """)
-            except Exception as e:
-                print(f"Error rebuilding mindmap_edges: {e}")
-
-        # --- Reading Outline ---
-        # --- MODIFIED: Added new columns for Parts tab ---
-        self.cursor.execute("""
-        CREATE TABLE IF NOT EXISTS reading_outline (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            reading_id INTEGER NOT NULL,
-            parent_id INTEGER,
-            section_title TEXT NOT NULL,
-            notes_html TEXT,
-            display_order INTEGER,
-
-            -- NEW PARTS TAB FIELDS --
-            part_function_html TEXT,
-            part_relation_html TEXT,
-            part_dependency_html TEXT,
-            part_function_text_plain TEXT,
-            part_relation_text_plain TEXT,
-            part_dependency_text_plain TEXT,
-            part_is_structural INTEGER DEFAULT 0,
-            part_dq_id INTEGER,
-
-            FOREIGN KEY (reading_id) REFERENCES readings(id) ON DELETE CASCADE,
-            FOREIGN KEY (parent_id) REFERENCES reading_outline(id) ON DELETE CASCADE,
-            FOREIGN KEY (part_dq_id) REFERENCES reading_driving_questions(id) ON DELETE SET NULL
-        )
-        """)
-
-        # --- ADDITIVE MIGRATION FOR NEW OUTLINE COLUMNS ---
-        self.cursor.execute("PRAGMA table_info(reading_outline)")
-        existing_outline_cols = {row["name"] for row in self.cursor.fetchall()}
-
-        cols_to_add_outline = {
-            "part_function_html": "TEXT",
-            "part_relation_html": "TEXT",
-            "part_dependency_html": "TEXT",
-            "part_function_text_plain": "TEXT",
-            "part_relation_text_plain": "TEXT",
-            "part_dependency_text_plain": "TEXT",
-            "part_is_structural": "INTEGER DEFAULT 0",
-            "part_dq_id": "INTEGER REFERENCES reading_driving_questions(id) ON DELETE SET NULL"
-        }
-
-        for col_name, col_type in cols_to_add_outline.items():
-            if col_name not in existing_outline_cols:
-                try:
-                    self.cursor.execute(f"ALTER TABLE reading_outline ADD COLUMN {col_name} {col_type}")
-                except sqlite3.OperationalError:
-                    pass
-        # --- END ADDITIVE MIGRATION ---
-
         # --- Reading Attachments ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS reading_attachments (
@@ -519,126 +408,6 @@ class SchemaSetup:
         )
         """)
 
-        # --- Reading Driving Questions ---
-        self.cursor.execute("""
-        CREATE TABLE IF NOT EXISTS reading_driving_questions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            reading_id INTEGER NOT NULL,
-            parent_id INTEGER,
-            display_order INTEGER,
-            question_text TEXT,
-            nickname TEXT,
-            type TEXT,
-            question_category TEXT,
-            scope TEXT,
-            outline_id INTEGER,
-            pages TEXT,
-            why_question TEXT,
-            synthesis_tags TEXT,
-            is_working_question INTEGER,
-            extra_notes_text TEXT,
-            FOREIGN KEY (reading_id) REFERENCES readings(id) ON DELETE CASCADE,
-            FOREIGN KEY (parent_id) REFERENCES reading_driving_questions(id) ON DELETE CASCADE,
-            FOREIGN KEY (outline_id) REFERENCES reading_outline(id) ON DELETE SET NULL
-        )
-        """)
-
-        self.cursor.execute("PRAGMA foreign_keys = OFF")
-        try:
-            self.cursor.execute("PRAGMA table_info(reading_driving_questions)")
-            existing_dq_cols = {row["name"] for row in self.cursor.fetchall()}
-
-            # --- MODIFIED: Added check for new column to trigger rebuild if needed ---
-            migration_needed = False
-            if "reading_has_parts" in existing_dq_cols or \
-                    "include_in_summary" in existing_dq_cols or \
-                    "where_in_book" in existing_dq_cols or \
-                    "extra_notes_text" not in existing_dq_cols:
-                migration_needed = True
-
-            if migration_needed:
-                # --- MODIFIED: Use a unique temp name to avoid conflicts ---
-                self.cursor.execute("ALTER TABLE reading_driving_questions RENAME TO _dq_temp_migration")
-
-                self.cursor.execute("""
-                CREATE TABLE IF NOT EXISTS reading_driving_questions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    reading_id INTEGER NOT NULL,
-                    parent_id INTEGER,
-                    display_order INTEGER,
-                    question_text TEXT,
-                    nickname TEXT,
-                    type TEXT,
-                    question_category TEXT,
-                    scope TEXT,
-                    outline_id INTEGER,
-                    pages TEXT,
-                    why_question TEXT,
-                    synthesis_tags TEXT,
-                    is_working_question INTEGER,
-                    extra_notes_text TEXT, -- <-- ADDED
-                    FOREIGN KEY (reading_id) REFERENCES readings(id) ON DELETE CASCADE,
-                    FOREIGN KEY (parent_id) REFERENCES reading_driving_questions(id) ON DELETE CASCADE,
-                    FOREIGN KEY (outline_id) REFERENCES reading_outline(id) ON DELETE SET NULL
-                )
-                """)
-
-                # --- MODIFIED: Use a unique temp name ---
-                self.cursor.execute("PRAGMA table_info(_dq_temp_migration)")
-                old_cols = [row["name"] for row in self.cursor.fetchall()]
-
-                new_cols = [
-                    "id", "reading_id", "parent_id", "display_order", "question_text", "nickname",
-                    "type", "question_category", "scope", "pages", "why_question",
-                    "synthesis_tags", "is_working_question", "outline_id", "extra_notes_text"  # <-- ADDED
-                ]
-
-                if "where_in_book" in old_cols:
-                    try:
-                        idx = old_cols.index("where_in_book")
-                        if 'outline_id' not in old_cols:
-                            old_cols[idx] = "outline_id"
-                        else:
-                            old_cols.pop(idx)
-                    except ValueError:
-                        pass
-
-                cols_to_copy = [col for col in new_cols if col in old_cols]
-                cols_str = ", ".join(cols_to_copy)
-
-                # --- MODIFIED: Use a unique temp name ---
-                self.cursor.execute(
-                    f"INSERT INTO reading_driving_questions ({cols_str}) SELECT {cols_str} FROM _dq_temp_migration")
-
-                # --- THIS IS THE FIX ---
-                # It now drops the correct temporary table name
-                self.cursor.execute("DROP TABLE _dq_temp_migration")
-                # --- END OF THE FIX ---
-
-                print("Successfully migrated reading_driving_questions table.")
-
-        except Exception as e:
-            print(f"Warning: Could not perform migration on reading_driving_questions. {e}")
-            # --- FIX: Added rollback to ensure connection is clean ---
-            self.conn.rollback()
-            try:
-                # We still want to try to restore the old table if it's in a half-migrated state
-                # --- MODIFIED: Use a unique temp name ---
-                self.cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='_dq_temp_migration'")
-                if self.cursor.fetchone():
-                    self.cursor.execute("DROP TABLE IF EXISTS reading_driving_questions")
-                    # --- MODIFIED: Use a unique temp name ---
-                    self.cursor.execute("ALTER TABLE _dq_temp_migration RENAME TO reading_driving_questions")
-                    print("Rolled back reading_driving_questions migration.")
-                    self.conn.commit()  # Commit the successful rollback
-                else:
-                    print("Rollback skipped: _dq_temp_migration not found.")
-            except Exception as re:
-                print(f"Critical error: Could not roll back migration. DB may be unstable. {re}")
-                self.conn.rollback()  # Rollback the failed rollback
-
-        self.cursor.execute("PRAGMA foreign_keys = ON")
-
         # --- Synthesis Tables ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS synthesis_tags (
@@ -646,12 +415,6 @@ class SchemaSetup:
             name TEXT NOT NULL UNIQUE
         )
         """)
-
-        self.cursor.execute("PRAGMA table_info(synthesis_tags)")
-        tag_cols = {row["name"] for row in self.cursor.fetchall()}
-        if "project_id" in tag_cols:
-            self._migrate_to_global_tags()
-
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS synthesis_anchors (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -662,24 +425,22 @@ class SchemaSetup:
             unique_doc_id TEXT NOT NULL,
             selected_text TEXT,
             comment TEXT,
+            item_link_id INTEGER,
             FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE,
             FOREIGN KEY (reading_id) REFERENCES readings(id) ON DELETE CASCADE,
             FOREIGN KEY (outline_id) REFERENCES reading_outline(id) ON DELETE CASCADE,
-            FOREIGN KEY (tag_id) REFERENCES synthesis_tags(id) ON DELETE SET NULL
+            FOREIGN KEY (tag_id) REFERENCES synthesis_tags(id) ON DELETE SET NULL,
+            FOREIGN KEY (item_link_id) REFERENCES reading_driving_questions(id) ON DELETE CASCADE
         )
         """)
-
         self.cursor.execute("PRAGMA table_info(synthesis_anchors)")
         anchor_cols = {row["name"] for row in self.cursor.fetchall()}
         if "tag_id" not in anchor_cols:
-            print("Migrating synthesis_anchors: adding tag_id column...")
             try:
                 self.cursor.execute(
                     "ALTER TABLE synthesis_anchors ADD COLUMN tag_id INTEGER REFERENCES synthesis_tags(id) ON DELETE SET NULL")
             except sqlite3.OperationalError as e:
-                print(f"Migration warning: {e}")
-
-        # --- NEW: Add item_link_id column for virtual anchors ---
+                pass
         if "item_link_id" not in anchor_cols:
             try:
                 self.cursor.execute("""
@@ -688,9 +449,7 @@ class SchemaSetup:
                     REFERENCES reading_driving_questions(id) ON DELETE CASCADE
                 """)
             except sqlite3.OperationalError as e:
-                print(f"Migration warning (item_link_id): {e}")
-        # --- END NEW ---
-
+                pass
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS anchor_tag_links (
             anchor_id INTEGER NOT NULL,
@@ -700,7 +459,6 @@ class SchemaSetup:
             PRIMARY KEY (anchor_id, tag_id)
         )
         """)
-
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS project_tag_links (
             project_id INTEGER NOT NULL,
@@ -711,7 +469,7 @@ class SchemaSetup:
         )
         """)
 
-        # --- NEW: Terminology Tables ---
+        # --- Terminology Tables ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS project_terminology (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -722,8 +480,6 @@ class SchemaSetup:
             FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE
         )
         """)
-
-        # --- NEW: Table to link terminology to readings and store status ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS terminology_reading_links (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -735,8 +491,6 @@ class SchemaSetup:
             UNIQUE(terminology_id, reading_id)
         )
         """)
-        # --- END NEW ---
-
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS terminology_references (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -751,9 +505,8 @@ class SchemaSetup:
             FOREIGN KEY (outline_id) REFERENCES reading_outline(id) ON DELETE SET NULL
         )
         """)
-        # --- END NEW ---
 
-        # --- NEW: Proposition Tables ---
+        # --- Proposition Tables ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS project_propositions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -764,7 +517,6 @@ class SchemaSetup:
             FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE
         )
         """)
-
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS proposition_reading_links (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -776,7 +528,6 @@ class SchemaSetup:
             UNIQUE(proposition_id, reading_id)
         )
         """)
-
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS proposition_references (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -791,9 +542,8 @@ class SchemaSetup:
             FOREIGN KEY (outline_id) REFERENCES reading_outline(id) ON DELETE SET NULL
         )
         """)
-        # --- END NEW ---
 
-        # --- NEW: Argument Tables ---
+        # --- Argument Tables ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS reading_arguments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -808,18 +558,13 @@ class SchemaSetup:
             FOREIGN KEY (driving_question_id) REFERENCES reading_driving_questions(id) ON DELETE SET NULL
         )
         """)
-
-        # --- ADDITIVE MIGRATION FOR reading_arguments ---
         self.cursor.execute("PRAGMA table_info(reading_arguments)")
         existing_arg_cols = {row["name"] for row in self.cursor.fetchall()}
-
         if "synthesis_tags" not in existing_arg_cols:
             try:
                 self.cursor.execute(f"ALTER TABLE reading_arguments ADD COLUMN synthesis_tags TEXT")
             except sqlite3.OperationalError:
                 pass
-        # --- END ADDITIVE MIGRATION ---
-
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS reading_argument_evidence (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -836,9 +581,8 @@ class SchemaSetup:
             FOREIGN KEY (outline_id) REFERENCES reading_outline(id) ON DELETE SET NULL
         )
         """)
-        # --- END NEW ---
 
-        # --- NEW: To-Do List Table ---
+        # --- To-Do List Table ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS project_todo_list (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -851,10 +595,18 @@ class SchemaSetup:
             FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE
         )
         """)
-        # --- END NEW ---
 
-        self.cursor.execute("PRAGMA user_version")
-        user_version = self.cursor.fetchone()[0]
+        # --- MIGRATION LOGIC ---
+
+        # If this is a brand new DB, set version to 2 and exit.
+        if is_new_db:
+            print("MIGRATION: New database detected. Setting to latest version (v2) and skipping migrations.")
+            self.cursor.execute("PRAGMA user_version = 2")
+            self.conn.commit()
+            return  # <-- EXIT EARLY
+
+        # --- If it's an old DB, run migrations in order ---
+
         if user_version < 1:
             try:
                 print("MIGRATION (v1): Populating project_tag_links from existing anchors...")
@@ -873,89 +625,110 @@ class SchemaSetup:
                 print(f"MIGRATION ERROR (user_version 1): {e}")
                 self.conn.rollback()
 
-        # --- NEW MIGRATION (v2): Fix broken Foreign Keys ---
+        # Re-check version in case it was just updated
+        self.cursor.execute("PRAGMA user_version")
+        user_version = self.cursor.fetchone()[0]
+
         if user_version < 2:
-            print("MIGRATION (v2): Checking for and fixing broken foreign key references to 'readings' table...")
-            self.conn.commit()  # Commit before schema changes
+            print("MIGRATION (v2): Checking for and fixing broken foreign key references...")
+            self.conn.commit()
             self.cursor.execute("PRAGMA foreign_keys = OFF")
             try:
-                # List of tables that reference the 'readings' table
+                # --- THIS IS THE FIX: Re-ordered list. Dependents come AFTER dependencies. ---
                 tables_to_fix = [
+                    # Level 0 (no FKs to other tables in this list)
                     'reading_outline',
-                    'reading_attachments',
                     'reading_driving_questions',
+
+                    # Level 1 (depend on Level 0)
+                    'readings',
+                    'reading_arguments',
                     'synthesis_anchors',
+
+                    # Level 2 (depend on Level 1)
+                    'reading_attachments',
                     'terminology_reading_links',
                     'terminology_references',
                     'proposition_reading_links',
                     'proposition_references',
-                    'reading_arguments'
+                    'reading_argument_evidence'
                 ]
+                # --- END FIX ---
 
                 for table_name in tables_to_fix:
+                    self.cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{table_name}'")
+                    if not self.cursor.fetchone():
+                        print(f"MIGRATION (v2): Table '{table_name}' does not exist, skipping rebuild.")
+                        continue
+
                     print(f"MIGRATION (v2): Rebuilding table '{table_name}'...")
-                    # 1. Rename old table
                     temp_table_name = f"_{table_name}_old_fk_fix"
+
+                    try:
+                        self.cursor.execute(f"DROP TABLE IF EXISTS {temp_table_name}")
+                    except sqlite3.OperationalError:
+                        pass
+
                     self.cursor.execute(f"ALTER TABLE {table_name} RENAME TO {temp_table_name}")
 
-                    # 2. Get the *original* CREATE statement for the table
                     self.cursor.execute(f"""
                         SELECT sql FROM sqlite_master 
                         WHERE type='table' AND name='{temp_table_name}'
                     """)
-                    create_sql = self.cursor.fetchone()[0]
+                    create_sql_row = self.cursor.fetchone()
+                    if not create_sql_row:
+                        print(f"MIGRATION (v2) ERROR: Could not get SQL for temp table {temp_table_name}. Skipping.")
+                        continue
+                    create_sql = create_sql_row[0]
 
-                    # 3. Replace ANY bad foreign key reference
-                    # This is the comprehensive fix
+                    # --- THIS IS THE CRITICAL FIX ---
+                    # More robustly replace all known old/temp table names with the correct new ones.
                     fixed_sql = create_sql.replace(
-                        'REFERENCES "_readings_old_fk_fix"(id) ON DELETE CASCADE',
-                        'REFERENCES "readings"(id) ON DELETE CASCADE'
+                        'REFERENCES "_readings_old_fk_fix"', 'REFERENCES "readings"'
+                    ).replace(
+                        'REFERENCES _readings_old_fk_fix', 'REFERENCES readings'
+                    ).replace(
+                        'REFERENCES "_reading_outline_old_fk_fix"', 'REFERENCES "reading_outline"'
+                    ).replace(
+                        'REFERENCES _reading_outline_old_fk_fix', 'REFERENCES reading_outline'
+                    ).replace(
+                        'REFERENCES "_dq_old"', 'REFERENCES "reading_driving_questions"'
+                    ).replace(
+                        'REFERENCES _dq_old', 'REFERENCES reading_driving_questions'
+                    ).replace(
+                        'REFERENCES "_reading_driving_questions_old_fk_fix"', 'REFERENCES "reading_driving_questions"'
+                    ).replace(
+                        'REFERENCES _reading_driving_questions_old_fk_fix', 'REFERENCES reading_driving_questions'
+                    ).replace(
+                        'REFERENCES "_reading_arguments_old_fk_fix"', 'REFERENCES "reading_arguments"'
+                    ).replace(
+                        'REFERENCES _reading_arguments_old_fk_fix', 'REFERENCES reading_arguments'
                     )
-                    fixed_sql = fixed_sql.replace(
-                        'REFERENCES _readings_old_fk_fix(id) ON DELETE CASCADE',
-                        'REFERENCES readings(id) ON DELETE CASCADE'
-                    )
-                    fixed_sql = fixed_sql.replace(
-                        'REFERENCES "_reading_driving_questions_old_fk_fix"(id) ON DELETE SET NULL',
-                        'REFERENCES "reading_driving_questions"(id) ON DELETE SET NULL'
-                    )
-                    fixed_sql = fixed_sql.replace(
-                        'REFERENCES _reading_driving_questions_old_fk_fix(id) ON DELETE SET NULL',
-                        'REFERENCES reading_driving_questions(id) ON DELETE SET NULL'
-                    )
-                    fixed_sql = fixed_sql.replace(
-                        'REFERENCES "_dq_old"(id) ON DELETE SET NULL',
-                        'REFERENCES "reading_driving_questions"(id) ON DELETE SET NULL'
-                    )
-                    fixed_sql = fixed_sql.replace(
-                        'REFERENCES _dq_old(id) ON DELETE SET NULL',
-                        'REFERENCES reading_driving_questions(id) ON DELETE SET NULL'
-                    )
-                    # --- END COMPREHENSIVE FIX ---
+                    # --- END CRITICAL FIX ---
 
-                    # Ensure the table name in the CREATE statement is the original one
-                    fixed_sql = fixed_sql.replace(f"CREATE TABLE \"{temp_table_name}\"", f"CREATE TABLE \"{table_name}\"")
+                    fixed_sql = fixed_sql.replace(f"CREATE TABLE \"{temp_table_name}\"",
+                                                  f"CREATE TABLE \"{table_name}\"")
                     fixed_sql = fixed_sql.replace(f"CREATE TABLE {temp_table_name}", f"CREATE TABLE {table_name}")
-
 
                     if fixed_sql == create_sql:
                         print(f"MIGRATION (v2): No change needed for {table_name}, skipping rebuild.")
-                        # Rename back
                         self.cursor.execute(f"ALTER TABLE {temp_table_name} RENAME TO {table_name}")
                         continue
 
-                    # 4. Create the new, correct table
                     self.cursor.execute(fixed_sql)
 
-                    # 5. Get columns from old table to copy
                     self.cursor.execute(f"PRAGMA table_info({temp_table_name})")
                     old_cols = [row['name'] for row in self.cursor.fetchall()]
-                    cols_str = ", ".join([f'"{col}"' for col in old_cols]) # Quote column names
 
-                    # 6. Copy data
-                    self.cursor.execute(f"INSERT INTO {table_name} ({cols_str}) SELECT {cols_str} FROM {temp_table_name}")
+                    self.cursor.execute(f"PRAGMA table_info({table_name})")
+                    new_cols = [row['name'] for row in self.cursor.fetchall()]
 
-                    # 7. Drop old table
+                    cols_to_copy = [col for col in old_cols if col in new_cols]
+                    cols_str = ", ".join([f'"{col}"' for col in cols_to_copy])
+
+                    self.cursor.execute(
+                        f"INSERT INTO {table_name} ({cols_str}) SELECT {cols_str} FROM {temp_table_name}")
+
                     self.cursor.execute(f"DROP TABLE {temp_table_name}")
                     print(f"MIGRATION (v2): Successfully rebuilt {table_name}.")
 
