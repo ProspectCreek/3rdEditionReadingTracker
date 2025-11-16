@@ -1,5 +1,4 @@
-# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-d0eaa6c33c524aa054deaa3e5b81207eb93ba7d2/tabs/theories_tab.py
-
+# tabs/theories_tab.py
 import sys
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTreeWidget,
@@ -126,28 +125,48 @@ class TheoriesTab(QWidget):
     def _handle_save(self, data, theory_id=None):
         """Central logic for saving a theory (add or edit)."""
         try:
-            # --- NEW: Process synthesis tags ---
-            tags_text = data.get("synthesis_tags", "")
-            if tags_text:
-                tag_names = [tag.strip() for tag in tags_text.split(',') if tag.strip()]
-                for tag_name in tag_names:
-                    try:
-                        # This creates the tag and links it to the project
-                        self.db.get_or_create_tag(tag_name, self.project_id)
-                    except Exception as e:
-                        print(f"Error processing tag '{tag_name}': {e}")
-            # --- END NEW ---
-
+            item_id = None
             if theory_id:
                 # Update existing
                 self.db.update_reading_theory(theory_id, data)
+                item_id = theory_id
             else:
                 # Add new
-                self.db.add_reading_theory(self.reading_id, data)
+                item_id = self.db.add_reading_theory(self.reading_id, data)
+
+            if not item_id:
+                raise Exception("Failed to get item ID after save/update.")
+
+            # --- VIRTUAL ANCHOR FIX ---
+            # 1. Clear all existing virtual anchors for this item
+            self.db.delete_anchors_by_item_link_id(item_id)
+
+            # 2. Add new ones based on the tags
+            tags_text = data.get("synthesis_tags", "")
+            if tags_text:
+                tag_names = [tag.strip() for tag in tags_text.split(',') if tag.strip()]
+                summary_text = f"Theory: {data.get('theory_name', '')[:50]}..."
+
+                for tag_name in tag_names:
+                    tag_data = self.db.get_or_create_tag(tag_name, self.project_id)
+                    if tag_data:
+                        self.db.create_anchor(
+                            project_id=self.project_id,
+                            reading_id=self.reading_id,
+                            outline_id=data.get("outline_id"),
+                            tag_id=tag_data['id'],
+                            selected_text=summary_text,
+                            comment=f"Linked to Theory ID {item_id}",
+                            unique_doc_id=f"theory-{item_id}-{tag_data['id']}",
+                            item_link_id=item_id
+                        )
+            # --- END VIRTUAL ANCHOR FIX ---
 
             self.load_theories()  # Refresh tree
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not save theory: {e}")
+            import traceback
+            traceback.print_exc()
 
     @Slot()
     def _add_item(self):
@@ -212,12 +231,13 @@ class TheoriesTab(QWidget):
         theory_id = item.data(0, Qt.ItemDataRole.UserRole)
         reply = QMessageBox.question(
             self, "Delete Theory",
-            f"Are you sure you want to delete this theory: '{item.text(0)}'?",
+            f"Are you sure you want to delete this theory: '{item.text(0)}'?\n\nThis will also delete any linked synthesis tags.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
         if reply == QMessageBox.StandardButton.Yes:
             try:
+                # Cascade delete will handle the linked anchors
                 self.db.delete_reading_theory(theory_id)
                 self.load_theories()
             except Exception as e:

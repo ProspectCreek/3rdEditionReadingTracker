@@ -226,9 +226,7 @@ class DrivingQuestionTab(QWidget):
         if data.get("is_working_question"):
             current_working_q = self.db.find_current_working_question(self.reading_id)
 
-            # Check if we are trying to set a *different* question as the working one
             if current_working_q and current_working_q['id'] != question_id:
-                # A different question is already the working question. Ask to replace.
                 wq_name = current_working_q.get('nickname') or current_working_q.get('question_text',
                                                                                      'another question')
                 msg = f"This will replace '{wq_name[:50]}...' as the working question. Continue?"
@@ -239,44 +237,57 @@ class DrivingQuestionTab(QWidget):
                     QMessageBox.StandardButton.No
                 )
                 if reply == QMessageBox.StandardButton.No:
-                    return  # User cancelled
+                    data["is_working_question"] = False  # Uncheck it if user cancelled
 
+            if data.get("is_working_question"):  # Check again in case user cancelled
                 # Unset all others
                 self.db.clear_all_working_questions(self.reading_id)
 
-            elif not current_working_q:
-                # No working question exists, so no need to clear anything.
-                # This check handles the first-time case.
-                pass
-
-            # If current_working_q['id'] == question_id, we are just re-saving
-            # the same question as working, so no action is needed.
-
-        # --- End Working Question Check ---
-
         try:
-            # --- NEW: Process synthesis tags ---
-            tags_text = data.get("synthesis_tags", "")
-            if tags_text:
-                tag_names = [tag.strip() for tag in tags_text.split(',') if tag.strip()]
-                for tag_name in tag_names:
-                    try:
-                        # This creates the tag and links it to the project
-                        self.db.get_or_create_tag(tag_name, self.project_id)
-                    except Exception as e:
-                        print(f"Error processing tag '{tag_name}': {e}")
-            # --- END NEW ---
-
+            item_id = None
             if question_id:
                 # Update existing
                 self.db.update_driving_question(question_id, data)
+                item_id = question_id
             else:
                 # Add new
-                self.db.add_driving_question(self.reading_id, data)
+                item_id = self.db.add_driving_question(self.reading_id, data)
+
+            if not item_id:
+                raise Exception("Failed to get item ID after save/update.")
+
+            # --- VIRTUAL ANCHOR FIX ---
+            # 1. Clear all existing virtual anchors for this item
+            self.db.delete_anchors_by_item_link_id(item_id)
+
+            # 2. Add new ones based on the tags
+            tags_text = data.get("synthesis_tags", "")
+            if tags_text:
+                tag_names = [tag.strip() for tag in tags_text.split(',') if tag.strip()]
+                q_text = data.get('question_text', '')[:50]
+                nickname = data.get('nickname', '')
+                summary_text = f"Driving Question: {nickname or q_text}..."
+
+                for tag_name in tag_names:
+                    tag_data = self.db.get_or_create_tag(tag_name, self.project_id)
+                    if tag_data:
+                        self.db.create_anchor(
+                            project_id=self.project_id,
+                            reading_id=self.reading_id,
+                            outline_id=data.get("outline_id"),
+                            tag_id=tag_data['id'],
+                            selected_text=summary_text,
+                            comment=f"Linked to Driving Question ID {item_id}",
+                            unique_doc_id=f"dq-{item_id}-{tag_data['id']}",  # Make unique doc_id
+                            item_link_id=item_id
+                        )
+            # --- END VIRTUAL ANCHOR FIX ---
 
             self.load_questions()  # Refresh tree
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not save question: {e}")
+            import traceback
+            traceback.print_exc()
 
     @Slot()
     def _add_question(self):
@@ -287,8 +298,8 @@ class DrivingQuestionTab(QWidget):
         dialog = EditDrivingQuestionDialog(
             all_questions=all_questions,
             outline_items=outline_items,
-            db_manager=self.db,  # <-- ADD
-            project_id=self.project_id,  # <-- ADD
+            db_manager=self.db,
+            project_id=self.project_id,
             parent=self
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -313,8 +324,8 @@ class DrivingQuestionTab(QWidget):
             current_question_data=initial_data,
             all_questions=all_questions,
             outline_items=outline_items,
-            db_manager=self.db,  # <-- ADD
-            project_id=self.project_id,  # <-- ADD
+            db_manager=self.db,
+            project_id=self.project_id,
             parent=self
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -341,13 +352,13 @@ class DrivingQuestionTab(QWidget):
             current_question_data=current_data,
             all_questions=all_questions,
             outline_items=outline_items,
-            db_manager=self.db,  # <-- ADD
-            project_id=self.project_id,  # <-- ADD
+            db_manager=self.db,
+            project_id=self.project_id,
             parent=self
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             data = dialog.get_data()
-            self.load_questions()  # Refresh tree before save to get fresh data for check
+            # self.load_questions() # No longer need to reload here
             self._handle_save(data, question_id=question_id)
 
     @Slot()
@@ -360,13 +371,15 @@ class DrivingQuestionTab(QWidget):
         question_id = item.data(0, Qt.ItemDataRole.UserRole)
         reply = QMessageBox.question(
             self, "Delete Question",
-            "Are you sure you want to delete this question and all its sub-questions?",
+            "Are you sure you want to delete this question and all its sub-questions?\n\nThis will also delete any linked synthesis tags.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
         if reply == QMessageBox.StandardButton.Yes:
             try:
-                self.db.delete_driving_question(question_id)  # Relies on foreign keys cascade
+                # Deleting the question will automatically cascade-delete
+                # the linked anchors thanks to the schema.
+                self.db.delete_driving_question(question_id)
                 self.load_questions()
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not delete question: {e}")
