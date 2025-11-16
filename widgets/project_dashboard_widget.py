@@ -1,4 +1,4 @@
-# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-0eada8809e03f78f9e304f58f06c5f5a03a32c4f/widgets/project_dashboard_widget.py
+# prospectcreek/3rdeditionreadingtracker/widgets/project_dashboard_widget.py
 import sys
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
@@ -6,10 +6,9 @@ from PySide6.QtWidgets import (
     QFrame, QDialog, QTreeWidgetItem, QMenuBar,
     QMessageBox, QMenu, QApplication
 )
-# --- NEW: Import QIcon ---
 from PySide6.QtCore import Qt, Signal, Slot, QTimer, QPoint
-from PySide6.QtGui import QAction, QIcon
-# --- END NEW ---
+from PySide6.QtGui import QAction, QIcon, QPixmap, QPainter
+from PySide6.QtSvg import QSvgRenderer
 
 # Import all the tab types
 from tabs.project_editor_tab import ProjectEditorTab
@@ -19,15 +18,11 @@ from tabs.assignment_tab import AssignmentTab
 from tabs.reading_notes_tab import ReadingNotesTab
 from tabs.synthesis_tab import SynthesisTab
 from tabs.graph_view_tab import GraphViewTab
-# --- NEW: Import TodoListTab ---
 from tabs.todo_list_tab import TodoListTab
-
-# --- END NEW ---
 
 try:
     from dialogs.add_reading_dialog import AddReadingDialog
     from dialogs.edit_instructions_dialog import EditInstructionsDialog
-    # --- NEW: Import ReorderDialog ---
     from dialogs.reorder_dialog import ReorderDialog
 except ImportError:
     print("Error: Could not import Dialogs")
@@ -46,7 +41,10 @@ class ProjectDashboardWidget(QWidget):
         self.bottom_tabs = []
         self.reading_tabs = {}  # Stores {reading_id: ReadingNotesTab}
         self.synthesis_tab = None
-        self.graph_view_tab = None  # --- RENAMED: Still keep old variable name ---
+        self.graph_view_tab = None
+        self.todo_list_tab = None  # Added
+        self.assignment_tab = None  # Added
+        self.mindmaps_tab = None  # Added
 
         # --- NEW: Book Icon ---
         self.book_icon = QIcon()
@@ -56,8 +54,7 @@ class ProjectDashboardWidget(QWidget):
           <path d="M6 8.5h8v-1H6v1zm6 3H6v-1h6v1zm-6 3h8v-1H6v1z"/>
         </svg>
         """
-        from PySide6.QtSvg import QSvgRenderer
-        from PySide6.QtGui import QPixmap, QPainter
+
         renderer = QSvgRenderer(book_svg.encode('utf-8'))
         pixmap = QPixmap(16, 16)
         pixmap.fill(Qt.GlobalColor.transparent)
@@ -96,8 +93,8 @@ class ProjectDashboardWidget(QWidget):
         self.dashboard_tab = QWidget()
         self._build_dashboard_tab()
 
-        # --- FIX: Connect to tab changed *after* building tabs ---
-        # self.top_tab_widget.currentChanged.connect(self.save_all_editors)
+        # Connect tab changed signal *after* building tabs
+        self.top_tab_widget.currentChanged.connect(self.on_top_tab_changed)
         QTimer.singleShot(0, self._enforce_equal_splits)
 
     def _build_dashboard_tab(self):
@@ -192,6 +189,10 @@ class ProjectDashboardWidget(QWidget):
             self.top_tab_widget.currentChanged.disconnect()
         except RuntimeError:
             pass  # Already disconnected
+        try:
+            self.editor_tab_widget.currentChanged.disconnect()
+        except RuntimeError:
+            pass  # Already disconnected
         # ---
 
         self.project_details = dict(project_details)
@@ -265,6 +266,7 @@ class ProjectDashboardWidget(QWidget):
 
         # --- Reconnect signals ---
         self.top_tab_widget.currentChanged.connect(self.on_top_tab_changed)
+        self.editor_tab_widget.currentChanged.connect(self.save_all_editors)
 
     def load_all_editor_content(self):
         """
@@ -350,6 +352,10 @@ class ProjectDashboardWidget(QWidget):
 
         # Listen for nickname/title changes from within the tab
         tab.readingTitleChanged.connect(self._handle_reading_title_change)
+
+        # --- NEW: Connect signal for anchor clicks ---
+        tab.openSynthesisTab.connect(self.open_tag_from_graph)
+        # --- END NEW ---
 
         self.reading_tabs[reading_id] = tab
 
@@ -658,7 +664,7 @@ class ProjectDashboardWidget(QWidget):
         if hasattr(tab_widget, 'set_outline_selection'):
             # --- MODIFIED: Pass all arguments to the selection function ---
             # Use QTimer to ensure this runs *after* the tab switch is complete
-            QTimer.singleShot(0, lambda: tab_widget.set_outline_selection(outline_id, item_link_id))
+            QTimer.singleShot(0, lambda: tab_widget.set_outline_selection(outline_id, item_link_id, item_type))
             # --- END MODIFIED ---
 
     @Slot()

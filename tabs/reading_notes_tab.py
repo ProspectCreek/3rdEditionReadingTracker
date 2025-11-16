@@ -87,7 +87,7 @@ except ImportError:
 try:
     from tabs.personal_dialogue_tab import PersonalDialogueTab
 except ImportError:
-    print("Error: Could not import PersonalDialogueTab")
+    print("Error: CouldL not import PersonalDialogueTab")
     PersonalDialogueTab = None
 
 # Import dialogs
@@ -117,6 +117,7 @@ class ReadingNotesTab(QWidget):
     """
 
     readingTitleChanged = Signal(int, object)  # (reading_id, self)
+    openSynthesisTab = Signal(int)  # --- NEW: Signal to open synth tab ---
 
     def __init__(self, db, project_id: int, reading_id: int, parent=None):
         super().__init__(parent)
@@ -232,6 +233,8 @@ class ReadingNotesTab(QWidget):
         self.notes_editor.anchorActionTriggered.connect(self._on_create_anchor)
         self.notes_editor.anchorEditTriggered.connect(self._on_edit_anchor)
         self.notes_editor.anchorDeleteTriggered.connect(self._on_delete_anchor)
+        # --- NEW: Connect click signal ---
+        self.notes_editor.anchorClicked.connect(self._on_anchor_clicked)
 
         self.notes_stack.setCurrentWidget(self.notes_placeholder)
 
@@ -470,8 +473,6 @@ class ReadingNotesTab(QWidget):
 
             self.load_bottom_tabs_content()
 
-            print(f"Loading details for reading {self.reading_id}: {dict(self.reading_details_row)}")
-
         except Exception as e:
             QMessageBox.critical(self, "Error Loading Reading", f"An error occurred: {e}")
             import traceback;
@@ -597,9 +598,8 @@ class ReadingNotesTab(QWidget):
             if html is not None:
                 try:
                     self.db.update_outline_section_notes(section_id, html)
-                    print(f"Save complete for outline section {section_id}")
                 except Exception as e:
-                    print(f"Error saving notes for outline section {section_id}: {e}")
+                    print(f"DEBUG: Error saving notes for outline section {section_id}: {e}")
 
         self.notes_editor.get_html(save_callback)
 
@@ -802,7 +802,7 @@ class ReadingNotesTab(QWidget):
         except Exception as e:
             print(f"Warning: Could not enforce right split: {e}")
 
-    @Slot(int, int, int, str)
+    @Slot(int, int, str)
     def set_outline_selection(self, outline_id: int, item_link_id: int, item_type: str = ''):
         """
         Finds and selects an item in the outline tree.
@@ -824,7 +824,6 @@ class ReadingNotesTab(QWidget):
                 it += 1
 
         if item_link_id > 0:
-            print(f"Attempting to find item_link_id: {item_link_id}")
             tabs_to_check = [
                 (getattr(self, 'driving_question_tab', None),
                  self.bottom_right_tabs.indexOf(getattr(self, 'driving_question_tab', None))),
@@ -845,7 +844,6 @@ class ReadingNotesTab(QWidget):
                     while it.value():
                         item = it.value()
                         if item.data(0, Qt.ItemDataRole.UserRole) == item_link_id:
-                            print(f"Found item {item_link_id} in tab {tab_index}!")
                             self.bottom_right_tabs.setCurrentIndex(tab_index)
                             tree.setCurrentItem(item)
                             tree.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
@@ -853,20 +851,19 @@ class ReadingNotesTab(QWidget):
 
     # ##################################################################
     # #
-    # #                 --- THIS IS THE FIX ---
+    # #                 --- REFRESH ANCHOR FIX ---
     # #
     # ##################################################################
     @Slot()
     def refresh_anchor_formatting(self):
         """
-        Iterates through the document and removes highlighting from
+        Iterates through the document and removes highlighting/links from
         any anchors that no longer exist in the database, preserving
         other formatting.
         """
         if not self._is_loaded or self.notes_stack.currentWidget() != self.notes_editor:
             return
 
-        print(f"Reading {self.reading_id}: Refreshing anchor formatting...")
         doc = self.notes_editor.editor.document()
         cursor = QTextCursor(doc)
         cursor.setPosition(0)
@@ -877,18 +874,9 @@ class ReadingNotesTab(QWidget):
             cursor.movePosition(QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.KeepAnchor, 1)
             fmt = cursor.charFormat()
 
-            # Check if the current character is part of an anchor
-            anchor_id_qvar = fmt.property(AnchorIDProperty)
-            anchor_id = None
-            if anchor_id_qvar is not None:
-                try:
-                    if hasattr(anchor_id_qvar, 'toInt'):
-                        val, ok = anchor_id_qvar.toInt()
-                        if ok: anchor_id = val
-                    else:
-                        anchor_id = int(anchor_id_qvar)
-                except Exception:
-                    pass
+            # --- MODIFIED: Use new helper ---
+            anchor_id = self.notes_editor._get_anchor_id_from_format(fmt)
+            # --- END MODIFIED ---
 
             if anchor_id:
                 # This character is part of an anchor. Check if it still exists.
@@ -901,20 +889,10 @@ class ReadingNotesTab(QWidget):
                         cursor.movePosition(QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.KeepAnchor)
                         fmt = cursor.charFormat()
 
-                        # Check the *next* character's anchor ID
-                        next_anchor_id_qvar = fmt.property(AnchorIDProperty)
-                        next_anchor_id = None
-                        if next_anchor_id_qvar is not None:
-                            try:
-                                if hasattr(next_anchor_id_qvar, 'toInt'):
-                                    val, ok = next_anchor_id_qvar.toInt()
-                                    if ok: next_anchor_id = val
-                                else:
-                                    next_anchor_id = int(next_anchor_id_qvar)
-                            except Exception:
-                                pass
+                        # --- MODIFIED: Use new helper ---
+                        next_anchor_id = self.notes_editor._get_anchor_id_from_format(fmt)
+                        # --- END MODIFIED ---
 
-                        # If the next char is not part of the *same* anchor, stop
                         if next_anchor_id != anchor_id:
                             cursor.movePosition(QTextCursor.MoveOperation.PreviousCharacter,
                                                 QTextCursor.MoveMode.KeepAnchor)
@@ -926,12 +904,17 @@ class ReadingNotesTab(QWidget):
 
                     # Clear *only* the anchor properties, preserving font, bold, etc.
                     current_fmt.clearBackground()
+                    current_fmt.setAnchor(False)
+                    current_fmt.setAnchorHref("")
+                    current_fmt.setToolTip("")
                     current_fmt.clearProperty(AnchorIDProperty)
                     current_fmt.clearProperty(AnchorTagIDProperty)
                     current_fmt.clearProperty(AnchorTagNameProperty)
                     current_fmt.clearProperty(AnchorCommentProperty)
                     current_fmt.clearProperty(AnchorUUIDProperty)
-                    current_fmt.setToolTip("")
+                    # Reset text color and underline
+                    current_fmt.setForeground(self.notes_editor.default_format.foreground())
+                    current_fmt.setFontUnderline(self.notes_editor.default_format.fontUnderline())
 
                     # Merge the "clean" format back onto the selection
                     cursor.mergeCharFormat(current_fmt)
@@ -1063,11 +1046,28 @@ class ReadingNotesTab(QWidget):
         if reply == QMessageBox.StandardButton.Yes:
             try:
                 self.db.delete_anchor(anchor_id)
-                # This function now correctly *only* removes the highlight
                 self.notes_editor.remove_anchor_format()
                 self.save_current_outline_notes()
             except Exception as e:
                 QMessageBox.critical(self, "Error Deleting Anchor", f"{e}")
+
+    # --- NEW SLOT ---
+    @Slot(QUrl)
+    def _on_anchor_clicked(self, url):
+        """Handles when a user clicks on a synthesis anchor link."""
+        url_str = url.toString()
+        if url_str.startswith("anchor://"):
+            try:
+                anchor_id = int(url_str.split("://")[1])
+                # We need the tag_id to switch tabs.
+                details = self.db.get_anchor_details(anchor_id)
+                if details and details.get('tag_id'):
+                    tag_id = details['tag_id']
+                    self.openSynthesisTab.emit(tag_id)
+                else:
+                    print(f"DEBUG: Could not find tag_id for anchor {anchor_id}")
+            except Exception as e:
+                print(f"DEBUG: Error in _on_anchor_clicked: {e}")
 
     def _create_reading_menu(self, menu_bar: QMenuBar):
         settings_menu = menu_bar.addMenu("Reading Settings")
