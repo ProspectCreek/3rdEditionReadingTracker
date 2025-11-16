@@ -224,22 +224,12 @@ class RichTextEditorTab(QWidget):
         self.editor = QTextBrowser(self)
         self.editor.setReadOnly(False)  # Make it editable
 
-        # ##################################################################
-        # #
-        # #                 --- MODIFICATION START ---
-        # #
-        # ##################################################################
         # We need BOTH flags: TextEditorInteraction for editing,
         # and LinksAccessibleByMouse for the hand cursor and click signal.
         self.editor.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextEditorInteraction |
             Qt.TextInteractionFlag.LinksAccessibleByMouse
         )
-        # ##################################################################
-        # #
-        # #                 --- MODIFICATION END ---
-        # #
-        # ##################################################################
 
         self.editor.setOpenLinks(False)  # Intercept link clicks
         # --- END FIX ---
@@ -257,8 +247,9 @@ class RichTextEditorTab(QWidget):
         # Apply defaults to the current typing format immediately
         # --- FIX: Store the default format as an instance attribute ---
         self.default_format = QTextCharFormat()
-        default_font = "Times New Roman" if "Times New Roman" in installed else (
-            "Times" if "Times" in installed else QFont().defaultFamily())
+        installed_families = set(QFontDatabase().families())
+        default_font = "Times New Roman" if "Times New Roman" in installed_families else (
+            "Times" if "Times" in installed_families else QFont().defaultFamily())
         idx = next((i for i in range(self.fontCombo.count()) if self.fontCombo.itemData(i) == default_font), 0)
         self.fontCombo.setCurrentIndex(idx)
 
@@ -316,29 +307,24 @@ class RichTextEditorTab(QWidget):
         if not self.editor.textCursor().hasSelection():
             return
 
-        fmt = QTextCharFormat()
+        # --- FIX for Symptom 4: Save current format ---
+        # Save the format the user is *currently* typing with *before* we change it.
+        # This is not self.default_format, but the active format.
+        cursor = self.editor.textCursor()
+        pre_anchor_typing_format = cursor.charFormat()
+        if not cursor.hasSelection():
+            # If no selection, get the format for new text
+            pre_anchor_typing_format = self.editor.currentCharFormat()
+        # --- END FIX ---
 
-        # ##################################################################
-        # #
-        # #                 --- MODIFICATION START ---
-        # #
-        # ##################################################################
+        fmt = QTextCharFormat()
 
         # 1. Visual style: Standard hyperlink style
         fmt.setForeground(QColor("#0000EE"))  # Standard link blue
         fmt.setFontUnderline(True)
-        # REMOVED: fmt.setBackground(QColor("#E0EFFF"))
-
-        # ##################################################################
-        # #
-        # #                 --- MODIFICATION END ---
-        # #
-        # ##################################################################
 
         # 2. Persist anchor ID in HTML as an href
         fmt.setAnchor(True)
-
-        # [FIX] Use simpler 'anchor:' protocol
         fmt.setAnchorHref(f"anchor:{anchor_id}")
 
         # 3. Store in-memory properties (for live editing)
@@ -357,11 +343,17 @@ class RichTextEditorTab(QWidget):
         # 5. Apply format
         _apply_char_format(self.editor, fmt)
 
-    # ##################################################################
-    # #
-    # #         --- BUG FIX 2 (Formatting on Delete) ---
-    # #
-    # ##################################################################
+        # --- FIX for Symptom 4: Reset typing format ---
+        # Move cursor to the end of the selection (unselecting it)
+        cursor = self.editor.textCursor()
+        cursor.setPosition(cursor.selectionEnd())
+        self.editor.setTextCursor(cursor)
+
+        # Reset the current format for *new* typing to be
+        # whatever the user was typing with before.
+        self.editor.setCurrentCharFormat(pre_anchor_typing_format)
+        # --- END FIX ---
+
     def remove_anchor_format(self):
         """
         Clears ONLY the anchor formatting (background, properties, tooltip, link)
@@ -370,11 +362,8 @@ class RichTextEditorTab(QWidget):
         """
         cursor = self.editor.textCursor()
         if not cursor.hasSelection():
-            # If no selection, we can't know what to de-format.
-            # The right-click menu should have selected the anchor.
             return
 
-        # Get the current format of the selection
         fmt = cursor.charFormat()
 
         # Clear *only* the anchor properties and link-specific styling
@@ -389,28 +378,14 @@ class RichTextEditorTab(QWidget):
         fmt.setToolTip("")
 
         # Revert link styling to default, preserving other colors
-        # If the text wasn't default color, this preserves it.
         if fmt.foreground() == QBrush(QColor("#0000EE")):
             fmt.setForeground(self.default_format.foreground())
 
-        # --- THIS IS THE FIX ---
-        # Explicitly remove the underline, as requested by the user.
         fmt.setFontUnderline(False)
-        # --- END FIX ---
-
-        # We assume non-anchor highlights are not used with anchors
         fmt.clearBackground()
 
-        # Re-apply the modified format
-        # This preserves Font, Size, Bold, Italic, etc.
         cursor.setCharFormat(fmt)
         self.editor.setTextCursor(cursor)
-
-    # ##################################################################
-    # #
-    # #                 --- END OF BUG FIX 2 ---
-    # #
-    # ##################################################################
 
     def find_and_update_anchor_format(self, anchor_id: int, tag_id: int, tag_name: str, comment: str):
         """
@@ -421,16 +396,13 @@ class RichTextEditorTab(QWidget):
         cursor.setPosition(0)  # Start at the beginning
         doc = self.editor.document()
 
-        # We iterate through the document, finding blocks of text with the matching AnchorIDProperty
         current_pos = 0
         while current_pos < doc.characterCount() - 1:
             cursor.setPosition(current_pos)
             cursor.movePosition(QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.KeepAnchor, 1)
             fmt = cursor.charFormat()
 
-            # --- MODIFIED: Use new helper ---
             aid = self._get_anchor_id_from_format(fmt)
-            # --- END MODIFIED ---
 
             if aid and aid == anchor_id:
                 # Found the start of an anchor. Expand selection until property changes.
@@ -438,10 +410,7 @@ class RichTextEditorTab(QWidget):
                 while not cursor.atEnd():
                     cursor.movePosition(QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.KeepAnchor)
                     fmt = cursor.charFormat()
-
-                    # --- MODIFIED: Use new helper ---
                     next_aid = self._get_anchor_id_from_format(fmt)
-                    # --- END MODIFIED ---
 
                     if next_aid != anchor_id:
                         # We went one char too far
@@ -456,16 +425,12 @@ class RichTextEditorTab(QWidget):
                 new_fmt.setProperty(AnchorTagNameProperty, tag_name)
                 new_fmt.setProperty(AnchorCommentProperty, comment)
 
-                # --- NEW: Update Href and Tooltip ---
-
-                # [FIX] Use simpler 'anchor:' protocol
                 new_fmt.setAnchorHref(f"anchor:{anchor_id}")  # Ensure href is correct
 
                 tooltip = f"Tag: {tag_name}"
                 if comment:
                     tooltip += f"\n\nComment: {comment}"
                 new_fmt.setToolTip(tooltip)
-                # --- END NEW ---
 
                 # Also re-apply hyperlink styles in case they were cleared
                 new_fmt.setForeground(QColor("#0000EE"))
@@ -477,11 +442,6 @@ class RichTextEditorTab(QWidget):
             else:
                 current_pos += 1
 
-    # ##################################################################
-    # #
-    # #            --- NEW FUNCTION (Bug 1 Fix) ---
-    # #
-    # ##################################################################
     def find_and_remove_anchor_format(self, anchor_id):
         """
         Finds an anchor by its ID, selects it, and then calls
@@ -517,23 +477,15 @@ class RichTextEditorTab(QWidget):
             else:
                 current_pos += 1
 
-    # ##################################################################
-    # #
-    # #                 --- END NEW FUNCTION ---
-    # #
-    # ##################################################################
-
-    # --- NEW HELPER FUNCTION ---
     def _get_anchor_id_from_format(self, char_format: QTextCharFormat):
         """Helper to find anchor_id, prioritizing persistent href."""
 
         # 1. Try persistent href first (survives save/load)
         href = char_format.anchorHref()
 
-        # [FIX] Use simpler 'anchor:' protocol
         if href and href.startswith("anchor:"):
             try:
-                anchor_id = int(href.split(":")[1])
+                anchor_id = int(href.split(":")[-1])  # Get last part
                 return anchor_id
             except Exception as e:
                 pass  # Not a valid anchor href
@@ -553,8 +505,6 @@ class RichTextEditorTab(QWidget):
 
         return None
 
-    # --- END NEW HELPER ---
-
     @Slot(QPoint)
     def show_context_menu(self, pos):
         """Shows a custom context menu."""
@@ -562,9 +512,7 @@ class RichTextEditorTab(QWidget):
         cursor = self.editor.cursorForPosition(pos)
         char_format = cursor.charFormat()
 
-        # --- MODIFIED: Use new helper ---
         anchor_id = self._get_anchor_id_from_format(char_format)
-        # --- END MODIFIED ---
 
         menu.addSeparator()
 
@@ -599,11 +547,8 @@ class RichTextEditorTab(QWidget):
     def select_anchor_at_cursor(self, cursor):
         """Expands the given cursor to select the entire anchor it's in."""
 
-        # --- MODIFIED: Use new helper ---
         def get_anchor_id(fmt):
             return self._get_anchor_id_from_format(fmt)
-
-        # --- END MODIFIED ---
 
         anchor_id = get_anchor_id(cursor.charFormat())
         if not anchor_id:
@@ -619,6 +564,17 @@ class RichTextEditorTab(QWidget):
         if get_anchor_id(cursor.charFormat()) != anchor_id:
             cursor.movePosition(QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.MoveAnchor)
 
+        start_pos = cursor.position()
+        # Try Qt's built-in anchor navigation first
+        cursor.movePosition(QTextCursor.MoveOperation.StartOfAnchor, QTextCursor.MoveMode.MoveAnchor)
+        if cursor.position() != start_pos:
+            cursor.movePosition(QTextCursor.MoveOperation.EndOfAnchor, QTextCursor.MoveMode.KeepAnchor)
+            self.editor.setTextCursor(cursor)
+            return
+
+        # Fallback manual method if StartOfAnchor is not supported
+        cursor.setPosition(start_pos)
+
         # Move forward to the end of the anchor
         while get_anchor_id(cursor.charFormat()) == anchor_id:
             if cursor.atBlockEnd():
@@ -633,7 +589,6 @@ class RichTextEditorTab(QWidget):
 
     # ---- Handlers ----
 
-    # --- NEW FIX: Handle editor becoming empty ---
     @Slot()
     def _on_text_changed(self):
         """
@@ -644,8 +599,6 @@ class RichTextEditorTab(QWidget):
         if self.editor.toPlainText() == "":
             self.editor.setCurrentCharFormat(self.default_format)
 
-    # --- END NEW FIX ---
-
     @Slot()
     def _on_selection_changed(self):
         """Updates toolbar button states to reflect cursor's format."""
@@ -655,26 +608,19 @@ class RichTextEditorTab(QWidget):
         self.underlineBtn.setChecked(fmt.fontUnderline())
         self.strikeBtn.setChecked(fmt.fontStrikeOut())
 
-        # Note: We don't try to update combo boxes as it's complex
-        # and can be annoying to the user.
-
     def _on_font(self, idx: int):
         fam = self.fontCombo.itemData(idx)
         fmt = QTextCharFormat();
         fmt.setFontFamily(fam)
         _apply_char_format(self.editor, fmt)
-        # --- FIX: Update default format ---
         self.default_format.setFontFamily(fam)
-        # --- END FIX ---
 
     def _on_size(self, idx: int):
         pt = self.sizeCombo.itemData(idx)
         fmt = QTextCharFormat();
         fmt.setFontPointSize(float(pt))
         _apply_char_format(self.editor, fmt)
-        # --- FIX: Update default format ---
         self.default_format.setFontPointSize(float(pt))
-        # --- END FIX ---
 
     def _on_bold(self, on: bool):
         fmt = QTextCharFormat();
@@ -741,12 +687,8 @@ class RichTextEditorTab(QWidget):
     def _on_header(self, idx: int):
         level = self.headerCombo.itemData(idx)  # 0,1,2,3
 
-        # --- FIX: Apply default size *before* setting header ---
-        # This ensures non-header text reverts to the default size (e.g., 16)
-        # instead of inheriting the last header's size.
         fmt = QTextCharFormat()
         fmt.setFontPointSize(self.default_format.fontPointSize())
-        # --- END FIX ---
 
         if level == 0:
             fmt.setFontWeight(QFont.Weight.Normal)
@@ -763,12 +705,10 @@ class RichTextEditorTab(QWidget):
             want = QTextListFormat.ListDecimal if ordered else QTextListFormat.ListDisc
             if st == want:
                 # --- FIX: properly remove list ---
-                # Get all blocks in the selection
                 start_block = c.selectionStart()
                 end_block = c.selectionEnd()
                 c.setPosition(start_block)
 
-                # Iterate over all blocks in the selection
                 while c.position() <= end_block or c.blockNumber() == c.document().findBlock(end_block).blockNumber():
                     list_item = c.block().textList()
                     if list_item:
@@ -800,12 +740,10 @@ class RichTextEditorTab(QWidget):
         if not ok or not url.strip():
             return
 
-        # --- NEW GUARD ---
         href = c.charFormat().anchorHref()
         if href and href.startswith("anchor:"):
             QMessageBox.warning(self, "Action Not Allowed", "Cannot turn a synthesis anchor into a regular link.")
             return
-        # --- END NEW GUARD ---
 
         fmt = QTextCharFormat()
         fmt.setAnchor(True);
@@ -818,13 +756,11 @@ class RichTextEditorTab(QWidget):
         c = self.editor.textCursor()
         if not c.hasSelection(): return
 
-        # --- NEW GUARD ---
         href = c.charFormat().anchorHref()
         if href and href.startswith("anchor:"):
             QMessageBox.warning(self, "Action Not Allowed",
                                 "Cannot unlink a synthesis anchor. Use 'Delete Synthesis Anchor' from the context menu.")
             return  # Do not allow unlink to clear anchors
-        # --- END NEW GUARD ---
 
         fmt = QTextCharFormat()
         fmt.setAnchor(False);
@@ -834,7 +770,6 @@ class RichTextEditorTab(QWidget):
 
     def _on_clear(self):
         c = self.editor.textCursor()
-        # --- FIX: Apply the stored default format, not a blank one ---
         if not c.hasSelection():
             self.editor.setCurrentCharFormat(self.default_format)
         else:
@@ -843,4 +778,3 @@ class RichTextEditorTab(QWidget):
             fmt = QTextCharFormat(self.default_format)
             c.setCharFormat(fmt)
             self.editor.setTextCursor(c)
-        # --- END FIX ---

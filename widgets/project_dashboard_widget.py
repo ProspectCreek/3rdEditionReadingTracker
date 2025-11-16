@@ -46,6 +46,10 @@ class ProjectDashboardWidget(QWidget):
         self.assignment_tab = None  # Added
         self.mindmaps_tab = None  # Added
 
+        # --- FIX: Add flag to prevent save-on-jump ---
+        self._programmatic_tab_change = False
+        # --- END FIX ---
+
         # --- NEW: Book Icon ---
         self.book_icon = QIcon()
         book_svg = """
@@ -432,7 +436,13 @@ class ProjectDashboardWidget(QWidget):
     @Slot(int)
     def on_top_tab_changed(self, index):
         """Called when the main tab (Dashboard, Mindmap, Reading, etc) changes."""
-        # First, save everything
+
+        # --- FIX: If this change was programmatic, do nothing. ---
+        if self._programmatic_tab_change:
+            return
+        # --- END FIX ---
+
+        # First, save everything (now only happens on USER clicks)
         self.save_all_editors()
 
         # Next, check if we switched *to* the Synthesis tab
@@ -640,7 +650,7 @@ class ProjectDashboardWidget(QWidget):
     # --- NEW: Slots for Synthesis Tab ---
     # ##################################################################
     # #
-    # #                 --- MODIFICATION START ---
+    # #                 --- MODIFICATION START (DIAGNOSTICS) ---
     # #
     # ##################################################################
     @Slot(int, int, int, str)
@@ -649,6 +659,9 @@ class ProjectDashboardWidget(QWidget):
         Finds or creates a reading tab, switches to it,
         and tells it to select a specific outline item and/or item.
         """
+        print(f"--- JUMP START ---")
+        print(f"  Dashboard: Current focus is: {QApplication.instance().focusWidget()}")
+
         tab_widget = self.reading_tabs.get(reading_id)
 
         if not tab_widget:
@@ -657,18 +670,29 @@ class ProjectDashboardWidget(QWidget):
             if not reading_row:
                 QMessageBox.critical(self, "Error", f"Could not find reading data for ID {reading_id}")
                 return
+
+            self._programmatic_tab_change = True
             tab_widget = self._create_and_add_reading_tab(reading_row, set_current=True)
+            self._programmatic_tab_change = False
+
             # Need to load data *before* trying to select item
             tab_widget.load_data()
         else:
             # Tab exists, just switch to it
+            self._programmatic_tab_change = True
             self.top_tab_widget.setCurrentWidget(tab_widget)
+            self._programmatic_tab_change = False
 
         # Tell the tab to select the outline item
         if hasattr(tab_widget, 'set_outline_selection'):
             # [FIX] Use a 50ms timer to ensure the tab switch is
             # fully processed before we try to select items and set focus.
-            QTimer.singleShot(50, lambda: tab_widget.set_outline_selection(outline_id, item_link_id, item_type))
+            print(f"  Dashboard: Queuing set_outline_selection with 50ms timer...")
+            QTimer.singleShot(50, lambda: (
+                print(f"  Dashboard: 50ms timer FIRED. Calling set_outline_selection."),
+                tab_widget.set_outline_selection(outline_id, item_link_id, item_type)
+            ))
+
     # ##################################################################
     # #
     # #                 --- MODIFICATION END ---
@@ -718,11 +742,20 @@ class ProjectDashboardWidget(QWidget):
             return
 
         # 1. Switch to the Synthesis tab
+        self._programmatic_tab_change = True
         self.top_tab_widget.setCurrentWidget(self.synthesis_tab)
+        self.top_tab_widget.repaint()  # Force a repaint
+        self._programmatic_tab_change = False
 
         # 2. Tell the synthesis tab to select the tag
         if hasattr(self.synthesis_tab, 'select_tag_by_id'):
+            # --- FIX for Symptom 3: Load data *before* selecting ---
+            print(f"  Dashboard: Jumping to Synthesis. Loading tab data...")
+            self.synthesis_tab.load_tab_data(self.project_details)
+            print(f"  Dashboard: Telling Synthesis tab to select tag {tag_id}")
             self.synthesis_tab.select_tag_by_id(tag_id)
+            print(f"  Dashboard: Synthesis jump complete.")
+            # --- END FIX ---
 
     # --- END NEW ---
 

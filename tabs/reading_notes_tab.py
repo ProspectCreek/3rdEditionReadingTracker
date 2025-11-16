@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QPoint, Slot, QTimer, QUrl
 from PySide6.QtGui import (
     QAction, QTextCharFormat, QColor, QTextCursor, QTextListFormat, QFont,
-    QDesktopServices  # <--- IMPORT THIS
+    QDesktopServices
 )
 
 from tabs.rich_text_editor_tab import (
@@ -649,6 +649,11 @@ class ReadingNotesTab(QWidget):
 
     def on_outline_selection_changed(self, current, previous):
         """Handles switching the notes editor when the tree selection changes."""
+        # --- DIAGNOSTIC PRINT ---
+        print(
+            f"      ReadingTab.on_outline_selection_changed: Triggered. Current focus: {QApplication.instance().focusWidget()}")
+        # --- END DIAGNOSTIC ---
+
         if previous:
             prev_id = previous.data(0, Qt.ItemDataRole.UserRole)
             if prev_id is not None and self._is_loaded:
@@ -730,7 +735,6 @@ class ReadingNotesTab(QWidget):
                 self.load_outline()
                 # --- MODIFICATION: Select new item ---
                 self._find_and_select_outline_item(new_id)
-                # --- END MODIFICATION ---
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not add section: {e}")
 
@@ -843,32 +847,38 @@ class ReadingNotesTab(QWidget):
 
     # ##################################################################
     # #
-    # #                 --- MODIFICATION START ---
+    # #                 --- MODIFICATION START (DIAGNOSTICS) ---
     # #
     # ##################################################################
-    @Slot(int, int, str)
+    @Slot(int, int, int, str)
     def set_outline_selection(self, outline_id: int, item_link_id: int, item_type: str = ''):
         """
         Finds and selects an item in the outline tree.
         If item_link_id is provided, it tries to find and select
         the item in the corresponding bottom tab.
         """
+        print(f"    ReadingTab.set_outline_selection: START. Current focus: {QApplication.instance().focusWidget()}")
+
+        # --- Part 1: Select Outline Item ---
         if outline_id == 0:
             self.outline_tree.clearSelection()
+            # This call is fine, it will clear the notes editor
             self.on_outline_selection_changed(None, None)
         else:
             it = QTreeWidgetItemIterator(self.outline_tree)
             while it.value():
                 item = it.value()
                 if item.data(0, Qt.ItemDataRole.UserRole) == outline_id:
+                    # This triggers on_outline_selection_changed, loading the notes
                     self.outline_tree.setCurrentItem(item)
                     self.outline_tree.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
-                    # [FIX] REMOVED focus_editor call
                     break
                 it += 1
 
+        # --- Part 2: Select Bottom Tab Item ---
         if item_link_id > 0:
             tabs_to_check = [
+                # (Tab object, Tab index)
                 (getattr(self, 'driving_question_tab', None),
                  self.bottom_right_tabs.indexOf(getattr(self, 'driving_question_tab', None))),
                 (getattr(self, 'leading_propositions_tab', None),
@@ -888,19 +898,44 @@ class ReadingNotesTab(QWidget):
                     while it.value():
                         item = it.value()
                         if item.data(0, Qt.ItemDataRole.UserRole) == item_link_id:
+                            # 1. Switch the bottom tab
                             self.bottom_right_tabs.setCurrentIndex(tab_index)
+
+                            # 2. Select the item in that tab's tree
                             tree.setCurrentItem(item)
                             tree.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
+                            print(
+                                f"    ReadingTab.set_outline_selection: Set item in BOTTOM tab. Focus is now: {QApplication.instance().focusWidget()}")
 
-                            # [FIX] Use a 0-ms timer to set focus *after*
-                            # all selection events have processed.
-                            QTimer.singleShot(0, lambda: self.outline_tree.setFocus())
-                            return
+                            # --- FIX: Re-introduce 0ms timer to set focus ---
+                            # This queues the focus change to happen *after*
+                            # all event processing for the tab switch is complete.
+                            print(f"    ReadingTab.set_outline_selection: Queuing 0ms timer to focus outline_tree...")
+                            QTimer.singleShot(0, lambda: (
+                                print(
+                                    f"    ReadingTab.set_outline_selection: 0ms timer FIRED. Setting focus to outline_tree."),
+                                self.outline_tree.setFocus(),
+                                print(
+                                    f"    ReadingTab.set_outline_selection: FINAL focus is: {QApplication.instance().focusWidget()}")
+                            ))
+                            # --- END FIX ---
+                            return  # We are done.
+                        it += 1
 
-        # [FIX] If we only selected an outline item (no item_link_id),
-        # set focus using the same timer trick.
+        # --- Part 3: Fallback Focus ---
+        # If we only selected an outline item (no item_link_id),
+        # or if the item_link_id wasn't found.
         if outline_id != 0:
-            QTimer.singleShot(0, lambda: self.outline_tree.setFocus())
+            # --- FIX: Re-introduce 0ms timer to set focus ---
+            print(f"    ReadingTab.set_outline_selection: (Fallback) Queuing 0ms timer to focus outline_tree...")
+            QTimer.singleShot(0, lambda: (
+                print(
+                    f"    ReadingTab.set_outline_selection: (Fallback) 0ms timer FIRED. Setting focus to outline_tree."),
+                self.outline_tree.setFocus(),
+                print(
+                    f"    ReadingTab.set_outline_selection: (Fallback) FINAL focus is: {QApplication.instance().focusWidget()}")
+            ))
+            # --- END FIX ---
 
     # ##################################################################
     # #
