@@ -1,4 +1,4 @@
-# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-0eada8809e03f78f9e304f58f06c5f5a03a32c4f/tabs/graph_view_tab.py
+# prospectcreek/3rdeditionreadingtracker/tabs/graph_view_tab.py
 import sys
 import math
 import sqlite3
@@ -240,8 +240,6 @@ class BaseGraphNode(QGraphicsItem):
         if change == QGraphicsItem.GraphicsItemChange.ItemSelectedChange:
             if self.scene():
                 if hasattr(self.scene(), 'update_highlights'):
-                    # Use a QTimer to delay the update slightly, allowing
-                    # the scene to process all selection changes first.
                     QTimer.singleShot(0, self.scene().update_highlights)
 
         return super().itemChange(change, value)
@@ -381,7 +379,6 @@ class TagNodeItem(BaseGraphNode):
             event.accept()
 
 
-# --- NEW: Virtual Anchor Node ---
 class AnchorNodeItem(BaseGraphNode):
     """
     A node representing a 'virtual anchor' (a DQ, Term, Theory, or Argument).
@@ -392,15 +389,13 @@ class AnchorNodeItem(BaseGraphNode):
         self.anchor_id = anchor_id
         self.item_link_id = item_link_id
         self.item_type = item_type
-        # Use a simpler name for the node text
-        name = summary_text
-        if len(name) > 30:
-            name = name[:30] + "..."
+
+        # Replace the *first* colon with a colon and a newline
+        name = summary_text.replace(":", ":\n", 1)
 
         super().__init__(name, graph_view, parent)
         self.summary_text = summary_text
 
-        # Make it smaller and less prominent
         self.width = max(100, self.text_item.boundingRect().width() + H_PAD)
         self.height = max(30, self.text_item.boundingRect().height() + V_PAD)
         self.text_item.setPos(-self.width / 2 + H_PAD / 2, -self.height / 2 + V_PAD / 2)
@@ -429,7 +424,6 @@ class AnchorNodeItem(BaseGraphNode):
 
         self.height = max(NODE_MIN_HEIGHT / 1.5, text_rect.height() + V_PAD)
 
-        # Center text
         text_x = -text_rect.width() / 2
         text_y = -text_rect.height() / 2
         self.text_item.setPos(text_x, text_y)
@@ -442,7 +436,6 @@ class AnchorNodeItem(BaseGraphNode):
     def paint(self, painter, option, widget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         path = self.shape()
-        # Use a light grey, neutral color
         brush = QBrush(QColor("#f0f0f0"))
         painter.fillPath(path, brush)
         pen = QPen(QColor("#999999"), 1)
@@ -454,9 +447,6 @@ class AnchorNodeItem(BaseGraphNode):
         print(f"Anchor node '{self.name}' double-clicked")
         self.graph_view.emit_anchor_double_clicked(self.anchor_id)
         event.accept()
-
-
-# --- END NEW ---
 
 
 class GraphViewScene(QGraphicsScene):
@@ -570,7 +560,6 @@ class GraphViewTab(QWidget):
         try:
             anchor = self.db.get_anchor_details(anchor_id)
             if anchor:
-                # Emits (reading_id, outline_id)
                 self.readingDoubleClicked.emit(anchor['reading_id'], anchor.get('outline_id', 0))
             else:
                 print(f"GraphViewTab: Could not find anchor details for id {anchor_id}")
@@ -617,13 +606,11 @@ class GraphViewTab(QWidget):
             self.nodes[node_id] = node_item
             pos_x += 50
 
-        # --- MODIFIED: Process Virtual Anchors ---
         virtual_anchor_nodes = {}  # Map item_link_id to node_item
         for anchor_link in data.get('virtual_anchors', []):
             item_link_id = anchor_link['item_link_id']
 
             if item_link_id not in virtual_anchor_nodes:
-                # Create the node
                 node_id = f"a_{anchor_link['id']}"
                 item_node = AnchorNodeItem(
                     anchor_id=anchor_link['id'],
@@ -633,14 +620,17 @@ class GraphViewTab(QWidget):
                     graph_view=self
                 )
                 item_node.setPos(pos_x, pos_y + 50)
+
+                # --- THIS IS THE FIX ---
                 self.scene.add_node(item_node)
+                # --- END FIX ---
+
                 self.nodes[node_id] = item_node
                 virtual_anchor_nodes[item_link_id] = item_node
                 pos_x += 50
 
             item_node = virtual_anchor_nodes[item_link_id]
 
-            # 1. Link Anchor <-> Tag
             if anchor_link['tag_id']:
                 to_id = f"t_{anchor_link['tag_id']}"
                 to_node = self.nodes.get(to_id)
@@ -651,7 +641,6 @@ class GraphViewTab(QWidget):
                     item_node.add_edge(edge_item)
                     to_node.add_edge(edge_item)
 
-            # 2. Link Anchor <-> Reading
             reading_id_key = f"r_{anchor_link['reading_id']}"
             reading_node = self.nodes.get(reading_id_key)
             if reading_node:
@@ -669,9 +658,7 @@ class GraphViewTab(QWidget):
                     self.edges.append(edge_item)
                     item_node.add_edge(edge_item)
                     reading_node.add_edge(edge_item)
-        # --- END MODIFIED ---
 
-        # --- Original Text Anchor Edges ---
         for edge in data['edges']:
             from_id = f"r_{edge['reading_id']}"
             to_id = f"t_{edge['tag_id']}"
@@ -716,7 +703,6 @@ class GraphViewTab(QWidget):
 
             force = QPointF(0, 0)
 
-            # 1. Repulsion from all other nodes
             for j, node_b in enumerate(node_list):
                 if i == j:
                     continue
@@ -726,7 +712,6 @@ class GraphViewTab(QWidget):
                 dist = math.sqrt(dist_sq)
                 force += (delta / dist) * repel_force
 
-            # 2. Attraction from connected nodes (edges)
             for edge in node_a.edges:
                 other_node = edge.from_node if edge.to_node == node_a else edge.to_node
                 if other_node.isSelected():
@@ -737,7 +722,6 @@ class GraphViewTab(QWidget):
                 attract_force = dist * K_ATTRACT
                 force += (delta / dist) * attract_force
 
-            # 3. Pull towards center
             center_delta = -node_a.pos()
             force += center_delta * CENTER_PULL
 

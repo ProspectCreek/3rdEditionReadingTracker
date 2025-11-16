@@ -1,12 +1,12 @@
-# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-f9372c7f456315b9a3fa82060c18255c8574e1ea/tabs/rich_text_editor_tab.py
+# prospectcreek/3rdeditionreadingtracker/tabs/rich_text_editor_tab.py
 import sys
-import uuid  # <-- NEW: For synthesis anchors
+import uuid
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QComboBox, QPushButton,
     QTextEdit, QInputDialog, QMessageBox, QSizePolicy, QColorDialog,
     QMenu
 )
-from PySide6.QtCore import Qt, Signal, QPoint, Slot  # <-- Added Slot
+from PySide6.QtCore import Qt, Signal, QPoint, Slot
 from PySide6.QtGui import (
     QFontDatabase, QTextCharFormat, QTextCursor, QTextListFormat,
     QColor, QFont, QAction
@@ -23,8 +23,6 @@ _FONTS = [
 
 _CUSTOM = "__custom__"
 
-# --- NEW: Custom Property IDs for Anchors ---
-# Qt reserves property IDs up to 1000. User properties should start above that.
 BaseAnchorProperty = 1001
 AnchorIDProperty = BaseAnchorProperty + 1
 AnchorTagIDProperty = BaseAnchorProperty + 2
@@ -33,16 +31,11 @@ AnchorCommentProperty = BaseAnchorProperty + 4
 AnchorUUIDProperty = BaseAnchorProperty + 5
 
 
-# --- END NEW ---
-
-
 def _apply_char_format(editor: QTextEdit, fmt: QTextCharFormat):
     c = editor.textCursor()
     if not c.hasSelection():
-        # This modifies the *current* format for new text
         editor.mergeCurrentCharFormat(fmt)
     else:
-        # This modifies the *selected* text
         c.mergeCharFormat(fmt)
         editor.setTextCursor(c)
 
@@ -59,31 +52,19 @@ def _set_indent(editor: QTextEdit, delta: int):
 class RichTextEditorTab(QWidget):
     """
     Native Qt rich-text editor with a minimal, label-free toolbar.
-    Public API:
-      - set_html(html: str)
-      - get_html(callback)
-      - focus_editor()
     """
-
-    # --- NEW: Signals for Synthesis Anchors ---
-    anchorActionTriggered = Signal(str)  # Emits selected_text
-    anchorEditTriggered = Signal(int)  # Emits anchor_id
-    anchorDeleteTriggered = Signal(int)  # Emits anchor_id
-
-    # --- END NEW ---
+    anchorActionTriggered = Signal(str)
+    anchorEditTriggered = Signal(int)
+    anchorDeleteTriggered = Signal(int)
 
     def __init__(self, title: str = "Editor", parent=None):
         super().__init__(parent)
-
-        # --- FIX: Store the title as an instance variable ---
         self.editor_title = title
-        # --- END FIX ---
 
         main = QVBoxLayout(self)
         main.setContentsMargins(6, 4, 6, 6)
         main.setSpacing(4)
 
-        # ===== Toolbar (compact, no labels) =====
         bar = QWidget(self)
         bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         h = QHBoxLayout(bar)
@@ -104,7 +85,6 @@ class RichTextEditorTab(QWidget):
         COMBO_TXTCLR_W = 110
         COMBO_BGCLR_W = 120
 
-        # Font family (default: Times New Roman if present, else Times)
         self.fontCombo = QComboBox(bar);
         self.fontCombo.setToolTip("Font family")
         self.fontCombo.setMinimumWidth(COMBO_FONT_W);
@@ -119,10 +99,8 @@ class RichTextEditorTab(QWidget):
             if fam == "Monospace":
                 mapped = "Courier New" if "Courier New" in installed else "Courier"
             self.fontCombo.addItem(fam, mapped)
-
         h.addWidget(self.fontCombo)
 
-        # Size (default 16 pt)
         self.sizeCombo = QComboBox(bar);
         self.sizeCombo.setToolTip("Font size (pt)")
         self.sizeCombo.setMinimumWidth(COMBO_SIZE_W);
@@ -134,7 +112,6 @@ class RichTextEditorTab(QWidget):
             self.sizeCombo.setCurrentIndex(idx_sz)
         h.addWidget(self.sizeCombo)
 
-        # Header level
         self.headerCombo = QComboBox(bar);
         self.headerCombo.setToolTip("Paragraph / H1 / H2 / H3")
         self.headerCombo.setMinimumWidth(COMBO_HDR_W);
@@ -145,7 +122,6 @@ class RichTextEditorTab(QWidget):
         self.headerCombo.addItem("H3", 3)
         h.addWidget(self.headerCombo)
 
-        # Inline toggles
         def mkbtn(text, tip):
             b = QPushButton(text);
             b.setCheckable(True);
@@ -160,24 +136,22 @@ class RichTextEditorTab(QWidget):
         self.strikeBtn = mkbtn("S", "Strikethrough")
         for w in (self.boldBtn, self.italicBtn, self.underlineBtn, self.strikeBtn): h.addWidget(w)
 
-        # Text Color (with Custom…)
         self.textColorCombo = QComboBox(bar);
         self.textColorCombo.setToolTip("Text Color")
         self.textColorCombo.setMinimumWidth(COMBO_TXTCLR_W);
         self.textColorCombo.setMaximumWidth(COMBO_TXTCLR_W)
-        self.textColorCombo.addItem("Text Color", None)  # default/clear
+        self.textColorCombo.addItem("Text Color", None)
         for hexval, label in [("#000000", "Black"), ("#FF0000", "Red"), ("#008000", "Green"), ("#0000FF", "Blue"),
                               ("#FA8000", "Orange"), ("#8000FF", "Purple"), ("#808080", "Gray")]:
             self.textColorCombo.addItem(label, hexval)
         self.textColorCombo.addItem("Custom…", _CUSTOM)
         h.addWidget(self.textColorCombo)
 
-        # Highlight (with No highlight + Custom…)
         self.bgColorCombo = QComboBox(bar);
         self.bgColorCombo.setToolTip("Highlight")
         self.bgColorCombo.setMinimumWidth(COMBO_BGCLR_W);
         self.bgColorCombo.setMaximumWidth(COMBO_BGCLR_W)
-        self.bgColorCombo.addItem("Highlight", None)  # clear highlight
+        self.bgColorCombo.addItem("Highlight", None)
         self.bgColorCombo.addItem("No highlight (White)", "#FFFFFF")
         for hexval, label in [("#FFFF00", "Yellow"), ("#FFCCCC", "L.Red"), ("#CCFFCC", "L.Green"),
                               ("#CCCCFF", "L.Blue"), ("#FFF2CC", "L.Orange"), ("#F3E5F5", "Lavender")]:
@@ -185,7 +159,6 @@ class RichTextEditorTab(QWidget):
         self.bgColorCombo.addItem("Custom…", _CUSTOM)
         h.addWidget(self.bgColorCombo)
 
-        # Lists / Indent
         def mkbtn2(text, tip):
             b = QPushButton(text);
             b.setToolTip(tip)
@@ -199,7 +172,6 @@ class RichTextEditorTab(QWidget):
         self.indentBtn = mkbtn2("⟶", "Indent")
         for w in (self.olBtn, self.ulBtn, self.outdentBtn, self.indentBtn): h.addWidget(w)
 
-        # Alignment
         self.alignCombo = QComboBox(bar);
         self.alignCombo.setToolTip("Alignment")
         self.alignCombo.setMinimumWidth(COMBO_ALIGN_W);
@@ -209,7 +181,6 @@ class RichTextEditorTab(QWidget):
             self.alignCombo.addItem(label, int(val))
         h.addWidget(self.alignCombo)
 
-        # Links + Clear
         def mkbtn1(text, tip):
             b = QPushButton(text);
             b.setToolTip(tip)
@@ -225,7 +196,6 @@ class RichTextEditorTab(QWidget):
         h.addStretch(1)
         main.addWidget(bar)
 
-        # ===== Editor =====
         self.editor = QTextEdit(self)
         self.editor.setAcceptRichText(True)
         self.editor.setPlaceholderText("Start typing…")
@@ -243,7 +213,6 @@ class RichTextEditorTab(QWidget):
         self.default_format.setFontPointSize(float(self.sizeCombo.currentData()))
         _apply_char_format(self.editor, self.default_format)
 
-        # Wire signals
         self.fontCombo.currentIndexChanged.connect(self._on_font)
         self.sizeCombo.currentIndexChanged.connect(self._on_size)
         self.boldBtn.clicked.connect(self._on_bold)
@@ -275,52 +244,32 @@ class RichTextEditorTab(QWidget):
     def focus_editor(self):
         self.editor.setFocus()
 
-    # --- NEW METHOD TO FIX 'setPlaceholderText' ATTRIBUTE ERROR ---
     def setPlaceholderText(self, text: str):
         """Sets the placeholder text for the underlying QTextEdit."""
         self.editor.setPlaceholderText(text)
 
-    # --- END NEW METHOD ---
-
     # --- NEW: Anchor Formatting API ---
     def apply_anchor_format(self, anchor_id: int, tag_id: int, tag_name: str, comment: str, unique_doc_id: str):
-        """
-        Applies a special format to the current selection to mark it as an anchor.
-        """
         if not self.editor.textCursor().hasSelection():
             return
-
         fmt = QTextCharFormat()
-        # Visual style: light blue background
         fmt.setBackground(QColor("#E0EFFF"))
-
-        # Store metadata
         fmt.setProperty(AnchorIDProperty, anchor_id)
         fmt.setProperty(AnchorTagIDProperty, tag_id)
         fmt.setProperty(AnchorTagNameProperty, tag_name)
         fmt.setProperty(AnchorCommentProperty, comment)
         fmt.setProperty(AnchorUUIDProperty, unique_doc_id)
-
-        # Tooltip
         tooltip = f"Tag: {tag_name}"
         if comment:
             tooltip += f"\n\nComment: {comment}"
         fmt.setToolTip(tooltip)
-
         _apply_char_format(self.editor, fmt)
 
     def remove_anchor_format(self):
-        """
-        Clears the anchor formatting from the current selection,
-        preserving all other formatting (font, size, bold, etc.).
-        """
         cursor = self.editor.textCursor()
         if not cursor.hasSelection():
             return
-
         fmt = cursor.charFormat()
-
-        # Clear ONLY the anchor properties and background
         fmt.clearBackground()
         fmt.clearProperty(AnchorIDProperty)
         fmt.clearProperty(AnchorTagIDProperty)
@@ -328,43 +277,33 @@ class RichTextEditorTab(QWidget):
         fmt.clearProperty(AnchorCommentProperty)
         fmt.clearProperty(AnchorUUIDProperty)
         fmt.setToolTip("")
-
         _apply_char_format(self.editor, fmt)
 
     def find_and_update_anchor_format(self, anchor_id: int, tag_id: int, tag_name: str, comment: str):
-        """
-        Finds an anchor by its ID anywhere in the document and updates its
-        format and metadata.
-        """
         cursor = self.editor.textCursor()
-        cursor.setPosition(0)  # Start at the beginning
+        cursor.setPosition(0)
         doc = self.editor.document()
-
         current_pos = 0
         while current_pos < doc.characterCount() - 1:
             cursor.setPosition(current_pos)
             cursor.movePosition(QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.KeepAnchor, 1)
             fmt = cursor.charFormat()
-
             aid_qvar = fmt.property(AnchorIDProperty)
             aid = None
             if aid_qvar is not None:
                 try:
-                    if hasattr(aid_qvar, 'toInt'):  # PySide6/PyQt6
+                    if hasattr(aid_qvar, 'toInt'):
                         val, ok = aid_qvar.toInt()
                         if ok: aid = val
-                    else:  # Plain int
+                    else:
                         aid = int(aid_qvar)
                 except Exception:
-                    pass  # Not a valid anchor ID
-
+                    pass
             if aid and aid == anchor_id:
-                # Found the start of an anchor. Expand selection until property changes.
                 start_pos = cursor.position() - 1
                 while not cursor.atEnd():
                     cursor.movePosition(QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.KeepAnchor)
                     fmt = cursor.charFormat()
-
                     next_aid_qvar = fmt.property(AnchorIDProperty)
                     next_aid = None
                     if next_aid_qvar is not None:
@@ -376,52 +315,39 @@ class RichTextEditorTab(QWidget):
                                 next_aid = int(next_aid_qvar)
                         except Exception:
                             pass
-
                     if next_aid != anchor_id:
-                        # We went one char too far
                         cursor.movePosition(QTextCursor.MoveOperation.PreviousCharacter,
                                             QTextCursor.MoveMode.KeepAnchor)
                         break
-
-                # Now, 'cursor' holds the full selection of the anchor
-                # Apply the new format.
-                new_fmt = cursor.charFormat()  # Get format of the whole selection
+                new_fmt = cursor.charFormat()
                 new_fmt.setProperty(AnchorTagIDProperty, tag_id)
                 new_fmt.setProperty(AnchorTagNameProperty, tag_name)
                 new_fmt.setProperty(AnchorCommentProperty, comment)
-
                 tooltip = f"Tag: {tag_name}"
                 if comment:
                     tooltip += f"\n\nComment: {comment}"
                 new_fmt.setToolTip(tooltip)
-
                 cursor.setCharFormat(new_fmt)
                 current_pos = cursor.position()
             else:
                 current_pos += 1
 
-    # --- NEW: Context Menu ---
     @Slot(QPoint)
     def show_context_menu(self, pos):
-        """Shows a custom context menu."""
         menu = self.editor.createStandardContextMenu()
-
-        # Check what's under the cursor
         cursor = self.editor.cursorForPosition(pos)
         char_format = cursor.charFormat()
         anchor_id_qvar = char_format.property(AnchorIDProperty)
 
-        # Helper to safely convert QVariant to int or None
         def to_int(qvar):
             if isinstance(qvar, int):
                 return qvar if qvar > 0 else None
             try:
-                # Check for PySide6/PyQt6 QVariant behavior
                 if hasattr(qvar, 'toInt'):
                     val, ok = qvar.toInt()
                     if ok and val > 0:
                         return val
-                elif qvar is not None:  # Fallback for simple int
+                elif qvar is not None:
                     val = int(qvar)
                     if val > 0:
                         return val
@@ -430,42 +356,30 @@ class RichTextEditorTab(QWidget):
             return None
 
         anchor_id = to_int(anchor_id_qvar)
-
         menu.addSeparator()
 
         if anchor_id:
-            # Clicked on an existing anchor.
-            # We need to select the whole anchor to operate on it.
             self.select_anchor_at_cursor(cursor)
-
             edit_action = QAction("Edit Synthesis Anchor...", self)
             edit_action.triggered.connect(lambda: self.anchorEditTriggered.emit(anchor_id))
             menu.addAction(edit_action)
-
             delete_action = QAction("Delete Synthesis Anchor", self)
             delete_action.triggered.connect(lambda: self.anchorDeleteTriggered.emit(anchor_id))
             menu.addAction(delete_action)
-
         else:
-            # Not on an anchor, check for selection
             anchor_action = QAction("Create Synthesis Anchor...", self)
             has_selection = self.editor.textCursor().hasSelection()
             anchor_action.setEnabled(has_selection)
             if has_selection:
                 selected_text = self.editor.textCursor().selectedText()
-                # Clean up text (replace line separators with spaces)
                 selected_text = selected_text.replace(u'\u2029', ' ').replace('\n', ' ').strip()
                 anchor_action.triggered.connect(lambda: self.anchorActionTriggered.emit(selected_text))
-
             menu.addAction(anchor_action)
-
         menu.exec(self.editor.viewport().mapToGlobal(pos))
 
     def select_anchor_at_cursor(self, cursor):
-        """Expands the given cursor to select the entire anchor it's in."""
         fmt = cursor.charFormat()
         anchor_id_qvar = fmt.property(AnchorIDProperty)
-
         anchor_id = None
         if anchor_id_qvar is not None:
             try:
@@ -476,11 +390,9 @@ class RichTextEditorTab(QWidget):
                     anchor_id = int(anchor_id_qvar)
             except Exception:
                 pass
-
         if not anchor_id:
             return
 
-        # Helper to check property
         def get_anchor_id(fmt):
             qvar = fmt.property(AnchorIDProperty)
             if qvar is None: return None
@@ -492,43 +404,29 @@ class RichTextEditorTab(QWidget):
             except Exception:
                 return None
 
-        # Move back to the start of the anchor
         while get_anchor_id(cursor.charFormat()) == anchor_id:
             if cursor.atBlockStart():
                 break
             cursor.movePosition(QTextCursor.MoveOperation.PreviousCharacter, QTextCursor.MoveMode.MoveAnchor)
-
-        # We moved one char too far (or are at the start)
         if get_anchor_id(cursor.charFormat()) != anchor_id:
             cursor.movePosition(QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.MoveAnchor)
-
-        # Move forward to the end of the anchor
         while get_anchor_id(cursor.charFormat()) == anchor_id:
             if cursor.atBlockEnd():
                 break
             cursor.movePosition(QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.KeepAnchor)
-
-        # We might have moved one char too far
         if get_anchor_id(cursor.charFormat()) != anchor_id:
             cursor.movePosition(QTextCursor.MoveOperation.PreviousCharacter, QTextCursor.MoveMode.KeepAnchor)
-
         self.editor.setTextCursor(cursor)
 
     # ---- Handlers ----
 
     @Slot()
     def _on_text_changed(self):
-        """
-        When text is changed, check if the editor became empty.
-        If it did, reset the current char format to our default.
-        This prevents the "backspace all text" bug.
-        """
         if self.editor.toPlainText() == "":
             self.editor.setCurrentCharFormat(self.default_format)
 
     @Slot()
     def _on_selection_changed(self):
-        """Updates toolbar button states to reflect cursor's format."""
         fmt = self.editor.currentCharFormat()
         self.boldBtn.setChecked(fmt.fontWeight() >= QFont.Weight.Bold)
         self.italicBtn.setChecked(fmt.fontItalic())
@@ -601,8 +499,8 @@ class RichTextEditorTab(QWidget):
             fmt = QTextCharFormat()
             if data is None:
                 current_bg = self.editor.currentCharFormat().background()
-                if current_bg == QColor("#E0EFFF"):  # Don't clear anchor
-                    self.bgColorCombo.setCurrentIndex(0)  # Reset combo
+                if current_bg == QColor("#E0EFFF"):
+                    self.bgColorCombo.setCurrentIndex(0)
                     return
                 fmt.clearBackground()
             else:
@@ -679,9 +577,13 @@ class RichTextEditorTab(QWidget):
 
     def _on_clear(self):
         c = self.editor.textCursor()
+        # --- THIS IS THE FIX ---
+        # Create a new format *by copying* the default.
+        fmt = QTextCharFormat(self.default_format)
+        # --- END FIX ---
+
         if not c.hasSelection():
-            self.editor.setCurrentCharFormat(self.default_format)
+            self.editor.setCurrentCharFormat(fmt)
         else:
-            fmt = self.default_format.clone()
             c.mergeCharFormat(fmt)
             self.editor.setTextCursor(c)

@@ -1,4 +1,4 @@
-# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-f9372c7f456315b9a3fa82060c18255c8574e1ea/tabs/reading_notes_tab.py
+# prospectcreek/3rdeditionreadingtracker/tabs/reading_notes_tab.py
 import sys
 import uuid
 from PySide6.QtWidgets import (
@@ -72,7 +72,6 @@ except ImportError:
     print("Error: Could not import ArgumentsTab")
     ArgumentsTab = None
 
-# --- NEW: Import refactored tabs ---
 try:
     from tabs.elevator_abstract_tab import ElevatorAbstractTab
 except ImportError:
@@ -90,8 +89,6 @@ try:
 except ImportError:
     print("Error: Could not import PersonalDialogueTab")
     PersonalDialogueTab = None
-# --- END NEW ---
-
 
 # Import dialogs
 try:
@@ -260,11 +257,8 @@ class ReadingNotesTab(QWidget):
         self.right_splitter.setStretchFactor(0, 1)
         self.right_splitter.setStretchFactor(1, 1)
 
-        # --- Add all the new tabs ---
         self._add_bottom_tabs()
-        # --- END ---
 
-        # Add panels to main splitter
         splitter.addWidget(left_panel)
         splitter.addWidget(right_panel)
         splitter.setSizes([400, 600])
@@ -313,7 +307,6 @@ class ReadingNotesTab(QWidget):
 
         parent_layout.addLayout(form_layout)
 
-        # Buttons
         details_btn_layout = QHBoxLayout()
         self.btn_reading_rules = QPushButton("Reading Rules")
         self.btn_save_details = QPushButton("Save Details")
@@ -327,16 +320,13 @@ class ReadingNotesTab(QWidget):
 
         self.bottom_tabs_with_editors.clear()
 
-        # --- Driving Question ---
         if DrivingQuestionTab:
             self.driving_question_tab = DrivingQuestionTab(self.db, self.reading_id)
             self.bottom_right_tabs.addTab(self.driving_question_tab, "Driving Question")
         else:
             self.bottom_right_tabs.addTab(QLabel("Driving Question (Failed to load)"), "Driving Question")
 
-        # Helper function to create a standard editor tab
         def create_editor_tab(title, instructions, field_name):
-            # This function is now only used for fallbacks
             widget = QWidget()
             layout = QVBoxLayout(widget)
             layout.setContentsMargins(4, 4, 4, 4)
@@ -349,7 +339,6 @@ class ReadingNotesTab(QWidget):
             layout.addWidget(editor)
             self.bottom_right_tabs.addTab(widget, title)
 
-        # --- Leading Propositions ---
         if LeadingPropositionsTab:
             self.leading_propositions_tab = LeadingPropositionsTab(
                 self.db, self.project_id, self.reading_id
@@ -359,15 +348,12 @@ class ReadingNotesTab(QWidget):
             create_editor_tab("Leading Propositions", "Instructions for Leading Propositions go here.",
                               "propositions_html")
 
-        # --- UnityTab ---
         if UnityTab:
             self.unity_tab = UnityTab(self.db, self.project_id, self.reading_id)
             self.bottom_right_tabs.addTab(self.unity_tab, "Unity")
         else:
             create_editor_tab("Unity", "Instructions for Unity go here.", "unity_html")
 
-        # --- Elevator Abstract ---
-        # --- MODIFIED: Use new tab class ---
         if ElevatorAbstractTab:
             self.elevator_abstract_tab = ElevatorAbstractTab()
             self.bottom_right_tabs.addTab(self.elevator_abstract_tab, "Elevator Abstract")
@@ -375,9 +361,7 @@ class ReadingNotesTab(QWidget):
         else:
             create_editor_tab("Elevator Abstract", "Instructions for Elevator Abstract go here.",
                               "personal_dialogue_html")
-        # --- END MODIFIED ---
 
-        # --- Parts: Order and Relation ---
         if PartsOrderRelationTab:
             self.parts_order_relation_tab = PartsOrderRelationTab(
                 self.db, self.project_id, self.reading_id
@@ -387,39 +371,31 @@ class ReadingNotesTab(QWidget):
             create_editor_tab("Parts: Order and Relation", "Instructions for Parts: Order and Relation go here.",
                               "personal_dialogue_html")
 
-            # --- Key Terms ---
         if KeyTermsTab:
             self.key_terms_tab = KeyTermsTab(self.db, self.project_id, self.reading_id)
             self.bottom_right_tabs.addTab(self.key_terms_tab, "Key Terms")
         else:
             create_editor_tab("Key Terms", "Instructions for Key Terms go here.", "key_terms_html")
 
-        # --- Arguments ---
         if ArgumentsTab:
             self.arguments_tab = ArgumentsTab(self.db, self.project_id, self.reading_id)
             self.bottom_right_tabs.addTab(self.arguments_tab, "Arguments")
         else:
             create_editor_tab("Arguments", "Instructions for Arguments go here.", "arguments_html")
 
-        # --- Gaps ---
-        # --- MODIFIED: Use new tab class ---
         if GapsTab:
             self.gaps_tab = GapsTab()
             self.bottom_right_tabs.addTab(self.gaps_tab, "Gaps")
             self.bottom_tabs_with_editors.append(("gaps_html", self.gaps_tab.editor))
         else:
             create_editor_tab("Gaps", "Instructions for Gaps go here.", "gaps_html")
-        # --- END MODIFIED ---
 
-        # --- Theories ---
         if TheoriesTab:
             self.theories_tab = TheoriesTab(self.db, self.project_id, self.reading_id)
             self.bottom_right_tabs.addTab(self.theories_tab, "Theories")
         else:
             create_editor_tab("Theories", "Instructions for Theories go here.", "theories_html")
 
-        # --- Personal Dialogue ---
-        # --- MODIFIED: Use new tab class ---
         if PersonalDialogueTab:
             self.personal_dialogue_tab = PersonalDialogueTab()
             self.bottom_right_tabs.addTab(self.personal_dialogue_tab, "Personal Dialogue")
@@ -427,16 +403,13 @@ class ReadingNotesTab(QWidget):
         else:
             create_editor_tab("Personal Dialogue", "Instructions for Personal Dialogue go here.",
                               "personal_dialogue_html")
-        # --- END MODIFIED ---
 
-        # --- Attachments ---
         if AttachmentsTab:
             self.attachments_tab = AttachmentsTab(self.db, self.reading_id)
             self.bottom_right_tabs.addTab(self.attachments_tab, "Attachments")
         else:
             self.bottom_right_tabs.addTab(QLabel("Attachments (Failed to load)"), "Attachments")
 
-        # --- Timers ---
         if TimersTab:
             self.timers_tab = TimersTab()
             self.bottom_right_tabs.addTab(self.timers_tab, "Timers")
@@ -509,7 +482,6 @@ class ReadingNotesTab(QWidget):
         if not self.reading_details_row:
             return
 
-        # --- Load data for all tabs that have their own load methods ---
         if DrivingQuestionTab and hasattr(self, 'driving_question_tab'):
             self.driving_question_tab.load_questions()
         if LeadingPropositionsTab and hasattr(self, 'leading_propositions_tab'):
@@ -527,9 +499,7 @@ class ReadingNotesTab(QWidget):
         if AttachmentsTab and hasattr(self, 'attachments_tab'):
             self.attachments_tab.load_attachments()
 
-        # --- Load data for the simple editor tabs ---
         for field_name, editor in self.bottom_tabs_with_editors:
-            # Skip fields handled by dedicated tabs (just in case they're in the list)
             if field_name == 'propositions_html' and LeadingPropositionsTab and hasattr(self,
                                                                                         'leading_propositions_tab'):
                 continue
@@ -542,12 +512,10 @@ class ReadingNotesTab(QWidget):
             if field_name == 'arguments_html' and ArgumentsTab and hasattr(self, 'arguments_tab'):
                 continue
 
-            # This is the old placeholder, skip it if the real tab exists
             if field_name == 'personal_dialogue_html' and PartsOrderRelationTab and hasattr(self,
                                                                                             'parts_order_relation_tab') and editor.editor_title == "Parts: Order and Relation":
                 continue
 
-                # Load content
             html = self._get_detail(field_name, default="")
             editor.set_html(html)
 
@@ -556,16 +524,12 @@ class ReadingNotesTab(QWidget):
         if not self._is_loaded:
             return
 
-        # --- Save data for all tabs that have their own save methods ---
         if UnityTab and hasattr(self, 'unity_tab'):
             self.unity_tab.save_data()
         if PartsOrderRelationTab and hasattr(self, 'parts_order_relation_tab'):
             self.parts_order_relation_tab.save_data()
-        # (Other tabs like Key Terms, Arguments, etc., save via their own dialogs)
 
-        # --- Save data for the simple editor tabs ---
         for field_name, editor in self.bottom_tabs_with_editors:
-            # Skip fields handled by dedicated tabs (just in case)
             if field_name == 'propositions_html' and LeadingPropositionsTab and hasattr(self,
                                                                                         'leading_propositions_tab'):
                 continue
@@ -578,12 +542,10 @@ class ReadingNotesTab(QWidget):
             if field_name == 'arguments_html' and ArgumentsTab and hasattr(self, 'arguments_tab'):
                 continue
 
-            # This is the old placeholder, skip it if the real tab exists
             if field_name == 'personal_dialogue_html' and PartsOrderRelationTab and hasattr(self,
                                                                                             'parts_order_relation_tab') and editor.editor_title == "Parts: Order and Relation":
                 continue
 
-            # Create and call the save callback
             def create_callback(fname):
                 return lambda html: self.db.update_reading_field(
                     self.reading_id, fname, html
@@ -840,19 +802,16 @@ class ReadingNotesTab(QWidget):
         except Exception as e:
             print(f"Warning: Could not enforce right split: {e}")
 
-    # --- MODIFIED: Accept item_link_id ---
-    @Slot(int, int)
-    def set_outline_selection(self, outline_id: int, item_link_id: int):
+    @Slot(int, int, int, str)
+    def set_outline_selection(self, outline_id: int, item_link_id: int, item_type: str = ''):
         """
         Finds and selects an item in the outline tree.
         If item_link_id is provided, it tries to find and select
         the item in the corresponding bottom tab.
         """
-        # --- Handle Outline Selection ---
-        if outline_id == 0:  # 0 means "reading-level"
+        if outline_id == 0:
             self.outline_tree.clearSelection()
             self.on_outline_selection_changed(None, None)
-            # Do not return, still need to check for item_link_id
         else:
             it = QTreeWidgetItemIterator(self.outline_tree)
             while it.value():
@@ -861,17 +820,11 @@ class ReadingNotesTab(QWidget):
                     self.outline_tree.setCurrentItem(item)
                     self.outline_tree.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
                     self.notes_editor.focus_editor()
-                    # We found the outline item, now check for item_link_id
                     break
                 it += 1
 
-        # --- Handle Item Selection (e.g., jump to Key Term) ---
         if item_link_id > 0:
             print(f"Attempting to find item_link_id: {item_link_id}")
-            # This is a basic implementation. A more robust one would
-            # also get the item 'type' (term, dq, etc.) to know which tab
-            # to switch to. For now, we just iterate all known tabs.
-
             tabs_to_check = [
                 (getattr(self, 'driving_question_tab', None),
                  self.bottom_right_tabs.indexOf(getattr(self, 'driving_question_tab', None))),
@@ -896,10 +849,7 @@ class ReadingNotesTab(QWidget):
                             self.bottom_right_tabs.setCurrentIndex(tab_index)
                             tree.setCurrentItem(item)
                             tree.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
-                            return  # Found it
-                        it += 1
-
-    # --- END MODIFIED ---
+                            return
 
     @Slot()
     def refresh_anchor_formatting(self):
@@ -959,16 +909,12 @@ class ReadingNotesTab(QWidget):
                                                 QTextCursor.MoveMode.KeepAnchor)
                             break
 
-                    existing_fmt = cursor.charFormat()
-                    existing_fmt.clearBackground()
-                    existing_fmt.clearProperty(AnchorIDProperty)
-                    existing_fmt.clearProperty(AnchorTagIDProperty)
-                    existing_fmt.clearProperty(AnchorTagNameProperty)
-                    existing_fmt.clearProperty(AnchorCommentProperty)
-                    existing_fmt.clearProperty(AnchorUUIDProperty)
-                    existing_fmt.setToolTip("")
+                    # --- THIS IS THE FIX (Bug 2B) ---
+                    # Create a new format *by copying* the editor's default.
+                    new_fmt = QTextCharFormat(self.notes_editor.default_format)
+                    # --- END FIX ---
 
-                    cursor.setCharFormat(existing_fmt)
+                    cursor.mergeCharFormat(new_fmt)
                     current_pos = cursor.position()
                 else:
                     current_pos += 1
@@ -1010,7 +956,7 @@ class ReadingNotesTab(QWidget):
                     selected_text=selected_text,
                     comment=comment,
                     unique_doc_id=unique_doc_id,
-                    item_link_id=None  # This is a text anchor, not a virtual one
+                    item_link_id=None
                 )
 
                 if not anchor_id:
@@ -1057,7 +1003,13 @@ class ReadingNotesTab(QWidget):
                     raise Exception(f"Could not get or create tag '{new_tag_name}'")
                 new_tag_id = tag_data['id']
 
-                self.db.update_anchor(anchor_id, new_tag_id, new_comment)
+                # --- THIS IS THE FIX (Bug 2A) ---
+                update_data = {
+                    "comment": new_comment,
+                    "tags": [new_tag_id]  # update_anchor expects a list of tag IDs
+                }
+                self.db.update_anchor(anchor_id, update_data)
+                # --- END FIX ---
 
                 self.notes_editor.find_and_update_anchor_format(
                     anchor_id=anchor_id,
