@@ -223,7 +223,24 @@ class RichTextEditorTab(QWidget):
         # --- FIX: Use QTextBrowser to get anchorClicked signal ---
         self.editor = QTextBrowser(self)
         self.editor.setReadOnly(False)  # Make it editable
-        self.editor.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
+
+        # ##################################################################
+        # #
+        # #                 --- MODIFICATION START ---
+        # #
+        # ##################################################################
+        # We need BOTH flags: TextEditorInteraction for editing,
+        # and LinksAccessibleByMouse for the hand cursor and click signal.
+        self.editor.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextEditorInteraction |
+            Qt.TextInteractionFlag.LinksAccessibleByMouse
+        )
+        # ##################################################################
+        # #
+        # #                 --- MODIFICATION END ---
+        # #
+        # ##################################################################
+
         self.editor.setOpenLinks(False)  # Intercept link clicks
         # --- END FIX ---
 
@@ -301,8 +318,22 @@ class RichTextEditorTab(QWidget):
 
         fmt = QTextCharFormat()
 
-        # 1. Visual style: light blue background
-        fmt.setBackground(QColor("#E0EFFF"))
+        # ##################################################################
+        # #
+        # #                 --- MODIFICATION START ---
+        # #
+        # ##################################################################
+
+        # 1. Visual style: Standard hyperlink style
+        fmt.setForeground(QColor("#0000EE"))  # Standard link blue
+        fmt.setFontUnderline(True)
+        # REMOVED: fmt.setBackground(QColor("#E0EFFF"))
+
+        # ##################################################################
+        # #
+        # #                 --- MODIFICATION END ---
+        # #
+        # ##################################################################
 
         # 2. Persist anchor ID in HTML as an href
         fmt.setAnchor(True)
@@ -332,28 +363,44 @@ class RichTextEditorTab(QWidget):
         """
         cursor = self.editor.textCursor()
         if not cursor.hasSelection():
+            # If no selection, we can't know what to de-format.
+            # The right-click menu should have selected the anchor.
+            # This logic is called by _on_delete_anchor, which *does* select it first.
             return
 
+        # ##################################################################
+        # #
+        # #                 --- MODIFICATION START (CRASH FIX) ---
+        # #
+        # ##################################################################
+
         # Get the selection's CURRENT format
-        fmt = cursor.charFormat()
+        fmt = cursor.charFormat()  # This is a copy
 
-        # Clear ALL anchor properties
-        fmt.clearBackground()
-        fmt.setAnchor(False)
-        fmt.setAnchorHref("")
-        fmt.setToolTip("")
-        fmt.clearProperty(AnchorIDProperty)
-        fmt.clearProperty(AnchorTagIDProperty)
-        fmt.clearProperty(AnchorTagNameProperty)
-        fmt.clearProperty(AnchorCommentProperty)
-        fmt.clearProperty(AnchorUUIDProperty)
+        # Store non-anchor styles that we want to preserve
+        font = fmt.font()
+        # Note: We get foreground from default_format, not fmt, because
+        # fmt.foreground() would be the link color (#0000EE).
 
-        # Reset text color and underline to default
-        # This removes the "link" look
-        fmt.setForeground(self.default_format.foreground())
-        fmt.setFontUnderline(self.default_format.fontUnderline())
+        # Create a new, clean format based on the default
+        clean_fmt = QTextCharFormat(self.default_format)  # Use copy constructor, not .clone()
 
-        _apply_char_format(self.editor, fmt)
+        # Re-apply the non-anchor styles
+        clean_fmt.setFont(font)
+        clean_fmt.setForeground(self.default_format.foreground())
+
+        # By starting with a clean format, we guarantee
+        # anchorHref, anchor, background, tooltip, and all properties are blank.
+
+        # Use setCharFormat to *replace* the format entirely, not merge
+        cursor.setCharFormat(clean_fmt)
+        self.editor.setTextCursor(cursor)
+
+        # ##################################################################
+        # #
+        # #                 --- MODIFICATION END ---
+        # #
+        # ##################################################################
 
     def find_and_update_anchor_format(self, anchor_id: int, tag_id: int, tag_name: str, comment: str):
         """
@@ -406,6 +453,11 @@ class RichTextEditorTab(QWidget):
                     tooltip += f"\n\nComment: {comment}"
                 new_fmt.setToolTip(tooltip)
                 # --- END NEW ---
+
+                # Also re-apply hyperlink styles in case they were cleared
+                new_fmt.setForeground(QColor("#0000EE"))
+                new_fmt.setFontUnderline(True)
+                new_fmt.clearBackground()  # Ensure no background
 
                 cursor.setCharFormat(new_fmt)
                 current_pos = cursor.position()
@@ -727,7 +779,19 @@ class RichTextEditorTab(QWidget):
         else:
             # This new logic clears all formatting (including anchors)
             # and reverts to the default font and size.
-            fmt = self.default_format.clone()
-            c.mergeCharFormat(fmt)
+
+            # ##################################################################
+            # #
+            # #                 --- MODIFICATION START (CRASH FIX) ---
+            # #
+            # ##################################################################
+            fmt = QTextCharFormat(self.default_format)  # Use copy constructor, not .clone()
+            # ##################################################################
+            # #
+            # #                 --- MODIFICATION END ---
+            # #
+            # ##################################################################
+
+            c.setCharFormat(fmt)
             self.editor.setTextCursor(c)
         # --- END FIX ---

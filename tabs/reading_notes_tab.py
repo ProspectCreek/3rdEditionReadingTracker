@@ -10,7 +10,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, QPoint, Slot, QTimer, QUrl
 from PySide6.QtGui import (
-    QAction, QTextCharFormat, QColor, QTextCursor, QTextListFormat, QFont
+    QAction, QTextCharFormat, QColor, QTextCursor, QTextListFormat, QFont,
+    QDesktopServices  # <--- IMPORT THIS
 )
 
 from tabs.rich_text_editor_tab import (
@@ -233,8 +234,19 @@ class ReadingNotesTab(QWidget):
         self.notes_editor.anchorActionTriggered.connect(self._on_create_anchor)
         self.notes_editor.anchorEditTriggered.connect(self._on_edit_anchor)
         self.notes_editor.anchorDeleteTriggered.connect(self._on_delete_anchor)
-        # --- NEW: Connect click signal ---
+
+        # ##################################################################
+        # #
+        # #                 --- MODIFICATION START ---
+        # #
+        # ##################################################################
+        # --- Connect click signal ---
         self.notes_editor.anchorClicked.connect(self._on_anchor_clicked)
+        # ##################################################################
+        # #
+        # #                 --- MODIFICATION END ---
+        # #
+        # ##################################################################
 
         self.notes_stack.setCurrentWidget(self.notes_placeholder)
 
@@ -899,25 +911,37 @@ class ReadingNotesTab(QWidget):
                             break
 
                     # Now 'cursor' holds the selection for the entire orphaned anchor
+
+                    # ##################################################################
+                    # #
+                    # #                 --- MODIFICATION START (CRASH FIX) ---
+                    # #
+                    # ##################################################################
+
                     # Get its current format
-                    current_fmt = cursor.charFormat()
+                    current_fmt = cursor.charFormat()  # This is a copy
 
-                    # Clear *only* the anchor properties, preserving font, bold, etc.
-                    current_fmt.clearBackground()
-                    current_fmt.setAnchor(False)
-                    current_fmt.setAnchorHref("")
-                    current_fmt.setToolTip("")
-                    current_fmt.clearProperty(AnchorIDProperty)
-                    current_fmt.clearProperty(AnchorTagIDProperty)
-                    current_fmt.clearProperty(AnchorTagNameProperty)
-                    current_fmt.clearProperty(AnchorCommentProperty)
-                    current_fmt.clearProperty(AnchorUUIDProperty)
-                    # Reset text color and underline
-                    current_fmt.setForeground(self.notes_editor.default_format.foreground())
-                    current_fmt.setFontUnderline(self.notes_editor.default_format.fontUnderline())
+                    # Store the font properties
+                    font = current_fmt.font()
 
-                    # Merge the "clean" format back onto the selection
-                    cursor.mergeCharFormat(current_fmt)
+                    # Create a new, clean format based on the default
+                    clean_fmt = QTextCharFormat(self.notes_editor.default_format)  # Use copy constructor
+
+                    # Re-apply only the font and the default foreground
+                    clean_fmt.setFont(font)
+                    clean_fmt.setForeground(self.notes_editor.default_format.foreground())
+
+                    # By starting with a clean format, we guarantee
+                    # anchorHref, anchor, background, tooltip, and all properties are blank.
+
+                    # Use setCharFormat to *replace* the format, not merge
+                    cursor.setCharFormat(clean_fmt)
+
+                    # ##################################################################
+                    # #
+                    # #                 --- MODIFICATION END ---
+                    # #
+                    # ##################################################################
 
                     # Update our position to after the cleared block
                     current_pos = cursor.position()
@@ -1051,7 +1075,11 @@ class ReadingNotesTab(QWidget):
             except Exception as e:
                 QMessageBox.critical(self, "Error Deleting Anchor", f"{e}")
 
-    # --- NEW SLOT ---
+    # ##################################################################
+    # #
+    # #                 --- MODIFICATION START ---
+    # #
+    # ##################################################################
     @Slot(QUrl)
     def _on_anchor_clicked(self, url):
         """Handles when a user clicks on a synthesis anchor link."""
@@ -1063,11 +1091,23 @@ class ReadingNotesTab(QWidget):
                 details = self.db.get_anchor_details(anchor_id)
                 if details and details.get('tag_id'):
                     tag_id = details['tag_id']
+                    print(f"DEBUG: Anchor {anchor_id} clicked, emitting openSynthesisTab with tag_id {tag_id}")
                     self.openSynthesisTab.emit(tag_id)
                 else:
                     print(f"DEBUG: Could not find tag_id for anchor {anchor_id}")
             except Exception as e:
                 print(f"DEBUG: Error in _on_anchor_clicked: {e}")
+        # --- ADD THIS ELSE BLOCK ---
+        elif url_str.startswith("http://") or url_str.startswith("https://") or url_str.startswith("mailto:"):
+            # Open regular web links in the system browser
+            QDesktopServices.openUrl(url)
+        # --- END ELSE BLOCK ---
+
+    # ##################################################################
+    # #
+    # #                 --- MODIFICATION END ---
+    # #
+    # ##################################################################
 
     def _create_reading_menu(self, menu_bar: QMenuBar):
         settings_menu = menu_bar.addMenu("Reading Settings")
