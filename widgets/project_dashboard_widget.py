@@ -232,7 +232,7 @@ class ProjectDashboardWidget(QWidget):
 
         # --- Add Graph View Tab (RENAMED) ---
         self.graph_view_tab = GraphViewTab(self.db, self.project_id)
-        # --- MODIFIED: Connect to new 2-arg signal ---
+        # --- MODIFIED: Connect to new 4-arg signal ---
         self.graph_view_tab.readingDoubleClicked.connect(self.open_reading_tab)
         # --- END MODIFIED ---
         self.graph_view_tab.tagDoubleClicked.connect(self.open_tag_from_graph)
@@ -638,7 +638,11 @@ class ProjectDashboardWidget(QWidget):
     # --- END NEW ---
 
     # --- NEW: Slots for Synthesis Tab ---
-    # --- MODIFIED: Accept all 4 arguments from the jumpto link ---
+    # ##################################################################
+    # #
+    # #                 --- MODIFICATION START ---
+    # #
+    # ##################################################################
     @Slot(int, int, int, str)
     def open_reading_tab(self, reading_id, outline_id, item_link_id=0, item_type=''):
         """
@@ -662,10 +666,14 @@ class ProjectDashboardWidget(QWidget):
 
         # Tell the tab to select the outline item
         if hasattr(tab_widget, 'set_outline_selection'):
-            # --- MODIFIED: Pass all arguments to the selection function ---
-            # Use QTimer to ensure this runs *after* the tab switch is complete
-            QTimer.singleShot(0, lambda: tab_widget.set_outline_selection(outline_id, item_link_id, item_type))
-            # --- END MODIFIED ---
+            # [FIX] Use a 50ms timer to ensure the tab switch is
+            # fully processed before we try to select items and set focus.
+            QTimer.singleShot(50, lambda: tab_widget.set_outline_selection(outline_id, item_link_id, item_type))
+    # ##################################################################
+    # #
+    # #                 --- MODIFICATION END ---
+    # #
+    # ##################################################################
 
     @Slot()
     def _on_tags_updated(self):
@@ -695,12 +703,11 @@ class ProjectDashboardWidget(QWidget):
 
     # --- NEW: Slots for Graph View Tab ---
     # --- MODIFIED: Pass all arguments ---
-    @Slot(int, int)
-    def open_reading_from_graph(self, reading_id, outline_id=0):
+    @Slot(int, int, int, str)
+    def open_reading_from_graph(self, reading_id, outline_id=0, item_link_id=0, item_type=''):
         """Slot to open a reading tab from the graph view."""
         # This re-uses the logic from the Synthesis tab's "jump to"
-        # We pass 0 for outline_id to just open the reading.
-        self.open_reading_tab(reading_id, outline_id, 0, '')
+        self.open_reading_tab(reading_id, outline_id, item_link_id, item_type)
 
     # --- END MODIFIED ---
 

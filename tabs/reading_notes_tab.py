@@ -213,19 +213,9 @@ class ReadingNotesTab(QWidget):
         top_right_layout.setContentsMargins(0, 4, 0, 0)
         top_right_layout.setSpacing(4)
 
-        # ##################################################################
-        # #
-        # #                 --- MODIFICATION START ---
-        # #
-        # ##################################################################
         self.notes_label = QLabel("Outline Item Notes")
         self.notes_label.setStyleSheet("font-weight: bold; font-size: 14px;")
         top_right_layout.addWidget(self.notes_label)
-        # ##################################################################
-        # #
-        # #                 --- MODIFICATION END ---
-        # #
-        # ##################################################################
 
         # Stacked widget to show/hide editor
         self.notes_stack = QStackedWidget()
@@ -657,11 +647,6 @@ class ReadingNotesTab(QWidget):
 
     # --- END HELPER ---
 
-    # ##################################################################
-    # #
-    # #                 --- MODIFICATION START ---
-    # #
-    # ##################################################################
     def on_outline_selection_changed(self, current, previous):
         """Handles switching the notes editor when the tree selection changes."""
         if previous:
@@ -703,12 +688,6 @@ class ReadingNotesTab(QWidget):
 
             self.current_outline_id = None
             self.notes_stack.setCurrentWidget(self.notes_placeholder)
-
-    # ##################################################################
-    # #
-    # #                 --- MODIFICATION END ---
-    # #
-    # ##################################################################
 
     def show_outline_context_menu(self, position):
         """Shows the right-click menu for the outline tree."""
@@ -862,6 +841,11 @@ class ReadingNotesTab(QWidget):
         except Exception as e:
             print(f"Warning: Could not enforce right split: {e}")
 
+    # ##################################################################
+    # #
+    # #                 --- MODIFICATION START ---
+    # #
+    # ##################################################################
     @Slot(int, int, str)
     def set_outline_selection(self, outline_id: int, item_link_id: int, item_type: str = ''):
         """
@@ -879,7 +863,7 @@ class ReadingNotesTab(QWidget):
                 if item.data(0, Qt.ItemDataRole.UserRole) == outline_id:
                     self.outline_tree.setCurrentItem(item)
                     self.outline_tree.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
-                    self.notes_editor.focus_editor()
+                    # [FIX] REMOVED focus_editor call
                     break
                 it += 1
 
@@ -907,13 +891,23 @@ class ReadingNotesTab(QWidget):
                             self.bottom_right_tabs.setCurrentIndex(tab_index)
                             tree.setCurrentItem(item)
                             tree.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
+
+                            # [FIX] Use a 0-ms timer to set focus *after*
+                            # all selection events have processed.
+                            QTimer.singleShot(0, lambda: self.outline_tree.setFocus())
                             return
+
+        # [FIX] If we only selected an outline item (no item_link_id),
+        # set focus using the same timer trick.
+        if outline_id != 0:
+            QTimer.singleShot(0, lambda: self.outline_tree.setFocus())
 
     # ##################################################################
     # #
-    # #                 --- REFRESH ANCHOR FIX ---
+    # #                 --- MODIFICATION END ---
     # #
     # ##################################################################
+
     @Slot()
     def refresh_anchor_formatting(self):
         """
@@ -960,26 +954,8 @@ class ReadingNotesTab(QWidget):
 
                     # Now 'cursor' holds the selection for the entire orphaned anchor
 
-                    # ##################################################################
-                    # #
-                    # #                 --- MODIFICATION START (FORMATTING FIX) ---
-                    # #
-                    # ##################################################################
-
-                    # We have already selected the text with `cursor`.
-                    # Tell the editor to use this cursor.
                     self.notes_editor.editor.setTextCursor(cursor)
-
-                    # Now call the editor's own function to remove the format.
-                    # This will preserve bold, italic, color, etc., while
-                    # removing the link, underline, and properties.
                     self.notes_editor.remove_anchor_format()
-
-                    # ##################################################################
-                    # #
-                    # #                 --- MODIFICATION END ---
-                    # #
-                    # ##################################################################
 
                     # Update our position to after the cleared block
                     current_pos = cursor.position()
@@ -992,12 +968,6 @@ class ReadingNotesTab(QWidget):
 
         # Save the notes now that the formatting is clean
         self.save_current_outline_notes()
-
-    # ##################################################################
-    # #
-    # #                 --- END OF FIX ---
-    # #
-    # ##################################################################
 
     @Slot(str)
     def _on_create_anchor(self, selected_text):
@@ -1095,11 +1065,6 @@ class ReadingNotesTab(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error Editing Anchor", f"{e}")
 
-    # ##################################################################
-    # #
-    # #            --- MODIFICATION START (Bug 1 Fix) ---
-    # #
-    # ##################################################################
     @Slot(int)
     def _on_delete_anchor(self, anchor_id):
         """Handles the 'Delete Synthesis Anchor' signal."""
@@ -1121,17 +1086,6 @@ class ReadingNotesTab(QWidget):
             except Exception as e:
                 QMessageBox.critical(self, "Error Deleting Anchor", f"{e}")
 
-    # ##################################################################
-    # #
-    # #                 --- MODIFICATION END ---
-    # #
-    # ##################################################################
-
-    # ##################################################################
-    # #
-    # #                 --- MODIFICATION START ---
-    # #
-    # ##################################################################
     @Slot(QUrl)
     def _on_anchor_clicked(self, url):
         """Handles when a user clicks on a synthesis anchor link."""
@@ -1162,15 +1116,9 @@ class ReadingNotesTab(QWidget):
                 # Catch any other unexpected errors
                 print(f"DEBUG: Error in _on_anchor_clicked: {e}")
 
-        # [FIXFIX] Check for standard web links using their schemes
-        elif url.scheme() in ("http", "https", "mailto"):
+        # [FIX] Check for standard web links using their schemes
+        elif url.scheme() in ("http", "https"):
             QDesktopServices.openUrl(url)
-
-    # ##################################################################
-    # #
-    # #                 --- MODIFICATION END ---
-    # #
-    # ##################################################################
 
     def _create_reading_menu(self, menu_bar: QMenuBar):
         settings_menu = menu_bar.addMenu("Reading Settings")
