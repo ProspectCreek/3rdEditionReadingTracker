@@ -116,13 +116,41 @@ class SynthesisMixin:
     update_tag = rename_tag
 
     def delete_tag_and_anchors(self, tag_id):
-        """Deletes a tag and all its anchor links from all projects."""
+        """
+        Deletes a tag, all its links, and all text anchors (non-virtual)
+        that are now orphaned as a result.
+        """
         try:
-            # Anchor links and project links will be deleted by CASCADE
+            # 1. Find all anchors linked *only* to this tag
+            self.cursor.execute("""
+                SELECT a.id, a.item_link_id
+                FROM synthesis_anchors a
+                JOIN anchor_tag_links atl ON a.id = atl.anchor_id
+                WHERE atl.tag_id = ?
+            """, (tag_id,))
+            anchors_to_check = self._map_rows(self.cursor.fetchall())
+
+            # 2. Delete the tag. This will cascade-delete all links
+            # in anchor_tag_links and project_tag_links.
             self.cursor.execute("DELETE FROM synthesis_tags WHERE id = ?", (tag_id,))
+
+            # 3. Re-check all affected anchors
+            for anchor in anchors_to_check:
+                anchor_id = anchor['id']
+                item_link_id = anchor['item_link_id']
+
+                # Check if this anchor has any *other* tags
+                self.cursor.execute("SELECT COUNT(*) FROM anchor_tag_links WHERE anchor_id = ?", (anchor_id,))
+                remaining_tag_count = self.cursor.fetchone()[0]
+
+                if remaining_tag_count == 0 and item_link_id is None:
+                    # This is a TEXT anchor (not virtual) and is now orphaned.
+                    # Delete the anchor row itself.
+                    self.cursor.execute("DELETE FROM synthesis_anchors WHERE id = ?", (anchor_id,))
+
             self.conn.commit()
         except Exception as e:
-            print(f"Error in delete_tag: {e}")
+            print(f"Error in delete_tag_and_anchors: {e}")
             self.conn.rollback()
 
     def merge_tags(self, source_tag_id, target_tag_id):
@@ -186,6 +214,33 @@ class SynthesisMixin:
         """, (anchor_id,))
         return self._rowdict(self.cursor.fetchone())
 
+    # ##################################################################
+    # #
+    # #                 --- NEW FUNCTION START ---
+    # #
+    # ##################################################################
+    def get_anchor_navigation_details(self, anchor_id):
+        """
+        Gets all necessary IDs from an anchor for navigation.
+        """
+        self.cursor.execute("""
+            SELECT 
+                id,
+                reading_id,
+                outline_id,
+                item_link_id,
+                item_type
+            FROM synthesis_anchors
+            WHERE id = ?
+        """, (anchor_id,))
+        return self._rowdict(self.cursor.fetchone())
+
+    # ##################################################################
+    # #
+    # #                 --- NEW FUNCTION END ---
+    # #
+    # ##################################################################
+
     def get_anchors_for_tag_simple(self, tag_id):
         """Gets simple anchor data for the ManageAnchorsDialog."""
         self.cursor.execute("""
@@ -219,6 +274,7 @@ class SynthesisMixin:
             FROM synthesis_anchors a
             JOIN anchor_tag_links l ON a.id = l.anchor_id
             LEFT JOIN readings r ON a.reading_id = r.id
+            LEFT JOIN items i ON a.project_id = i.id
             LEFT JOIN reading_outline o ON a.outline_id = o.id
             LEFT JOIN reading_driving_questions dq ON a.item_link_id = dq.id
             LEFT JOIN reading_arguments arg ON a.item_link_id = arg.id AND a.item_type = 'argument'

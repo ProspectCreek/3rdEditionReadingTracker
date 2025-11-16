@@ -45,6 +45,9 @@ class OutlineMixin:
             VALUES (?, ?, ?, ?, ?)
         """, (reading_id, parent_id, title, "", new_order))
         self.conn.commit()
+        # --- MODIFICATION: Return the new ID ---
+        return self.cursor.lastrowid
+        # --- END MODIFICATION ---
 
     def update_outline_section_title(self, section_id, new_title):
         self.cursor.execute("UPDATE reading_outline SET section_title = ? WHERE id = ?", (new_title, section_id))

@@ -213,9 +213,19 @@ class ReadingNotesTab(QWidget):
         top_right_layout.setContentsMargins(0, 4, 0, 0)
         top_right_layout.setSpacing(4)
 
-        notes_label = QLabel("Outline Item Notes")
-        notes_label.setStyleSheet("font-weight: bold; font-size: 14px;")
-        top_right_layout.addWidget(notes_label)
+        # ##################################################################
+        # #
+        # #                 --- MODIFICATION START ---
+        # #
+        # ##################################################################
+        self.notes_label = QLabel("Outline Item Notes")
+        self.notes_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        top_right_layout.addWidget(self.notes_label)
+        # ##################################################################
+        # #
+        # #                 --- MODIFICATION END ---
+        # #
+        # ##################################################################
 
         # Stacked widget to show/hide editor
         self.notes_stack = QStackedWidget()
@@ -235,18 +245,8 @@ class ReadingNotesTab(QWidget):
         self.notes_editor.anchorEditTriggered.connect(self._on_edit_anchor)
         self.notes_editor.anchorDeleteTriggered.connect(self._on_delete_anchor)
 
-        # ##################################################################
-        # #
-        # #                 --- MODIFICATION START ---
-        # #
-        # ##################################################################
         # --- Connect click signal ---
         self.notes_editor.anchorClicked.connect(self._on_anchor_clicked)
-        # ##################################################################
-        # #
-        # #                 --- MODIFICATION END ---
-        # #
-        # ##################################################################
 
         self.notes_stack.setCurrentWidget(self.notes_placeholder)
 
@@ -639,6 +639,29 @@ class ReadingNotesTab(QWidget):
 
         item.setExpanded(True)
 
+    # --- NEW HELPER FUNCTION ---
+    def _find_and_select_outline_item(self, section_id):
+        """Finds and selects an item in the outline tree by its ID."""
+        if section_id is None:
+            return
+
+        it = QTreeWidgetItemIterator(self.outline_tree)
+        while it.value():
+            item = it.value()
+            if item.data(0, Qt.ItemDataRole.UserRole) == section_id:
+                self.outline_tree.setCurrentItem(item)
+                # Ensure it's visible
+                self.outline_tree.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
+                break
+            it += 1
+
+    # --- END HELPER ---
+
+    # ##################################################################
+    # #
+    # #                 --- MODIFICATION START ---
+    # #
+    # ##################################################################
     def on_outline_selection_changed(self, current, previous):
         """Handles switching the notes editor when the tree selection changes."""
         if previous:
@@ -650,6 +673,11 @@ class ReadingNotesTab(QWidget):
                 )
 
         if current:
+            # --- THIS IS THE NEW LOGIC ---
+            item_text = current.text(0)
+            self.notes_label.setText(f"Outline Item Notes: {item_text}")
+            # --- END NEW LOGIC ---
+
             self.current_outline_id = current.data(0, Qt.ItemDataRole.UserRole)
             if self.current_outline_id:
                 self._block_outline_save = True
@@ -666,9 +694,21 @@ class ReadingNotesTab(QWidget):
             else:
                 self.current_outline_id = None
                 self.notes_stack.setCurrentWidget(self.notes_placeholder)
+                # --- ADD RESET HERE TOO ---
+                self.notes_label.setText("Outline Item Notes")
         else:
+            # --- THIS IS THE NEW LOGIC ---
+            self.notes_label.setText("Outline Item Notes")
+            # --- END NEW LOGIC ---
+
             self.current_outline_id = None
             self.notes_stack.setCurrentWidget(self.notes_placeholder)
+
+    # ##################################################################
+    # #
+    # #                 --- MODIFICATION END ---
+    # #
+    # ##################################################################
 
     def show_outline_context_menu(self, position):
         """Shows the right-click menu for the outline tree."""
@@ -706,8 +746,12 @@ class ReadingNotesTab(QWidget):
         text, ok = QInputDialog.getText(self, "Add Section", "Section Title:")
         if ok and text:
             try:
-                self.db.add_outline_section(self.reading_id, text, parent_id=None)
+                # --- MODIFICATION: Capture new ID ---
+                new_id = self.db.add_outline_section(self.reading_id, text, parent_id=None)
                 self.load_outline()
+                # --- MODIFICATION: Select new item ---
+                self._find_and_select_outline_item(new_id)
+                # --- END MODIFICATION ---
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not add section: {e}")
 
@@ -722,8 +766,12 @@ class ReadingNotesTab(QWidget):
         text, ok = QInputDialog.getText(self, "Add Subsection", "Subsection Title:")
         if ok and text:
             try:
-                self.db.add_outline_section(self.reading_id, text, parent_id=parent_id)
+                # --- MODIFICATION: Capture new ID ---
+                new_id = self.db.add_outline_section(self.reading_id, text, parent_id=parent_id)
                 self.load_outline()
+                # --- MODIFICATION: Select new item ---
+                self._find_and_select_outline_item(new_id)
+                # --- END MODIFICATION ---
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not add subsection: {e}")
 
@@ -914,28 +962,18 @@ class ReadingNotesTab(QWidget):
 
                     # ##################################################################
                     # #
-                    # #                 --- MODIFICATION START (CRASH FIX) ---
+                    # #                 --- MODIFICATION START (FORMATTING FIX) ---
                     # #
                     # ##################################################################
 
-                    # Get its current format
-                    current_fmt = cursor.charFormat()  # This is a copy
+                    # We have already selected the text with `cursor`.
+                    # Tell the editor to use this cursor.
+                    self.notes_editor.editor.setTextCursor(cursor)
 
-                    # Store the font properties
-                    font = current_fmt.font()
-
-                    # Create a new, clean format based on the default
-                    clean_fmt = QTextCharFormat(self.notes_editor.default_format)  # Use copy constructor
-
-                    # Re-apply only the font and the default foreground
-                    clean_fmt.setFont(font)
-                    clean_fmt.setForeground(self.notes_editor.default_format.foreground())
-
-                    # By starting with a clean format, we guarantee
-                    # anchorHref, anchor, background, tooltip, and all properties are blank.
-
-                    # Use setCharFormat to *replace* the format, not merge
-                    cursor.setCharFormat(clean_fmt)
+                    # Now call the editor's own function to remove the format.
+                    # This will preserve bold, italic, color, etc., while
+                    # removing the link, underline, and properties.
+                    self.notes_editor.remove_anchor_format()
 
                     # ##################################################################
                     # #
@@ -1057,6 +1095,11 @@ class ReadingNotesTab(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error Editing Anchor", f"{e}")
 
+    # ##################################################################
+    # #
+    # #            --- MODIFICATION START (Bug 1 Fix) ---
+    # #
+    # ##################################################################
     @Slot(int)
     def _on_delete_anchor(self, anchor_id):
         """Handles the 'Delete Synthesis Anchor' signal."""
@@ -1070,10 +1113,19 @@ class ReadingNotesTab(QWidget):
         if reply == QMessageBox.StandardButton.Yes:
             try:
                 self.db.delete_anchor(anchor_id)
-                self.notes_editor.remove_anchor_format()
+
+                # [FIX] Call the new function that finds, selects, and removes format
+                self.notes_editor.find_and_remove_anchor_format(anchor_id)
+
                 self.save_current_outline_notes()
             except Exception as e:
                 QMessageBox.critical(self, "Error Deleting Anchor", f"{e}")
+
+    # ##################################################################
+    # #
+    # #                 --- MODIFICATION END ---
+    # #
+    # ##################################################################
 
     # ##################################################################
     # #
@@ -1083,10 +1135,17 @@ class ReadingNotesTab(QWidget):
     @Slot(QUrl)
     def _on_anchor_clicked(self, url):
         """Handles when a user clicks on a synthesis anchor link."""
-        url_str = url.toString()
-        if url_str.startswith("anchor://"):
+
+        # [FIX] Use the URL scheme to check for our custom protocol
+        if url.scheme() == "anchor":
             try:
-                anchor_id = int(url_str.split("://")[1])
+                # [FIX] Get the ID from the path, which is safer than splitting
+                anchor_id_str = url.path()
+
+                # [FIX] This int() conversion is now protected by the try/except
+                # It will fail on "0.0.0.22" and go to the ValueError block
+                anchor_id = int(anchor_id_str)
+
                 # We need the tag_id to switch tabs.
                 details = self.db.get_anchor_details(anchor_id)
                 if details and details.get('tag_id'):
@@ -1095,13 +1154,17 @@ class ReadingNotesTab(QWidget):
                     self.openSynthesisTab.emit(tag_id)
                 else:
                     print(f"DEBUG: Could not find tag_id for anchor {anchor_id}")
+
+            except ValueError:
+                # This catches the "invalid literal for int()" error
+                print(f"DEBUG: Clicked anchor link with invalid ID: {url.toString()}")
             except Exception as e:
+                # Catch any other unexpected errors
                 print(f"DEBUG: Error in _on_anchor_clicked: {e}")
-        # --- ADD THIS ELSE BLOCK ---
-        elif url_str.startswith("http://") or url_str.startswith("https://") or url_str.startswith("mailto:"):
-            # Open regular web links in the system browser
+
+        # [FIXFIX] Check for standard web links using their schemes
+        elif url.scheme() in ("http", "https", "mailto"):
             QDesktopServices.openUrl(url)
-        # --- END ELSE BLOCK ---
 
     # ##################################################################
     # #

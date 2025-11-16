@@ -506,7 +506,7 @@ class GraphViewTab(QWidget):
     """
     Main widget for the "Graph View" tab.
     """
-    readingDoubleClicked = Signal(int, int)  # (reading_id, outline_id)
+    readingDoubleClicked = Signal(int, int, int, str)  # (reading_id, outline_id, item_link_id, item_type)
     tagDoubleClicked = Signal(int)
 
     tagsUpdated = Signal()
@@ -552,19 +552,36 @@ class GraphViewTab(QWidget):
 
     @Slot(int)
     def emit_reading_double_clicked(self, reading_id):
-        self.readingDoubleClicked.emit(reading_id, 0)  # 0 for outline_id
+        self.readingDoubleClicked.emit(reading_id, 0, 0, '')  # (reading_id, outline_id, item_link_id, item_type)
 
+    # ##################################################################
+    # #
+    # #                 --- MODIFICATION START ---
+    # #
+    # ##################################################################
     @Slot(int)
     def emit_anchor_double_clicked(self, anchor_id):
         """Finds the reading/outline info and emits the full signal."""
         try:
-            anchor = self.db.get_anchor_details(anchor_id)
+            # [FIX] Call the new, correct DB function
+            anchor = self.db.get_anchor_navigation_details(anchor_id)
             if anchor:
-                self.readingDoubleClicked.emit(anchor['reading_id'], anchor.get('outline_id', 0))
+                # [FIX] Emit all four arguments
+                self.readingDoubleClicked.emit(
+                    anchor['reading_id'],
+                    anchor.get('outline_id', 0),
+                    anchor.get('item_link_id', 0),
+                    anchor.get('item_type', '')
+                )
             else:
                 print(f"GraphViewTab: Could not find anchor details for id {anchor_id}")
         except Exception as e:
             print(f"GraphViewTab: Error emitting anchor click: {e}")
+    # ##################################################################
+    # #
+    # #                 --- MODIFICATION END ---
+    # #
+    # ##################################################################
 
     @Slot(int)
     def emit_tag_double_clicked(self, tag_id):

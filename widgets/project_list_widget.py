@@ -197,8 +197,22 @@ class ProjectListWidget(QWidget):
             name = dialog.name
             is_assignment = dialog.is_assignment
 
-            self.db.create_item(name, item_type, parent_db_id, is_assignment)
-            self.load_data_to_tree()
+            # --- MODIFICATION: Capture new ID and open project ---
+            try:
+                new_id = self.db.create_item(name, item_type, parent_db_id, is_assignment)
+                self.load_data_to_tree()  # Reload tree first
+
+                if item_type == 'project':
+                    # This is the new behavior
+                    project_details = self.db.get_item_details(new_id)
+                    if project_details:
+                        self.projectSelected.emit(dict(project_details))
+                    else:
+                        QMessageBox.critical(self, "Error", f"Could not find newly created project with ID {new_id}")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Could not create item: {e}")
+                self.load_data_to_tree()  # Reload even on error
+            # --- END MODIFICATION ---
 
     def rename_item(self):
         """
