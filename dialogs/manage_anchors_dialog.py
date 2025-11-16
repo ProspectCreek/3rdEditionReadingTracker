@@ -15,11 +15,22 @@ class ManageAnchorsDialog(QDialog):
     # Signal emitted when an anchor has been deleted
     anchorDeleted = Signal()
 
-    def __init__(self, db, tag_id, tag_name, parent=None):
+    # ##################################################################
+    # #
+    # #                 --- MODIFICATION START ---
+    # #
+    # ##################################################################
+    def __init__(self, db, project_id, tag_id, tag_name, parent=None):
         super().__init__(parent)
         self.db = db
+        self.project_id = project_id  # <-- Store project_id
         self.tag_id = tag_id
         self.tag_name = tag_name
+        # ##################################################################
+        # #
+        # #                 --- MODIFICATION END ---
+        # #
+        # ##################################################################
 
         self.setWindowTitle(f"Manage Anchors for '{tag_name}'")
         self.setMinimumSize(600, 400)
@@ -53,10 +64,21 @@ class ManageAnchorsDialog(QDialog):
         """Reloads the list of anchors for this tag."""
         self.anchor_list.clear()
         try:
-            # Use the new "simple" getter
-            anchors = self.db.get_anchors_for_tag_simple(self.tag_id)
+            # ##################################################################
+            # #
+            # #                 --- MODIFICATION START ---
+            # #
+            # ##################################################################
+            # Use the new "simple" getter that is filtered by project_id
+            anchors = self.db.get_anchors_for_tag_simple(self.tag_id, self.project_id)
+            # ##################################################################
+            # #
+            # #                 --- MODIFICATION END ---
+            # #
+            # ##################################################################
+
             if not anchors:
-                item = QListWidgetItem("No anchors found for this tag.")
+                item = QListWidgetItem("No anchors found for this tag in this project.")
                 item.setFlags(Qt.ItemFlag.NoItemFlags)
                 self.anchor_list.addItem(item)
                 return

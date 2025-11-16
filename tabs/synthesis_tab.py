@@ -400,7 +400,20 @@ class SynthesisTab(QWidget):
         if not ManageAnchorsDialog:
             QMessageBox.critical(self, "Error", "ManageAnchorsDialog could not be loaded.")
             return
-        dialog = ManageAnchorsDialog(self.db, tag_id, tag_name, self)
+
+        # ##################################################################
+        # #
+        # #                 --- MODIFICATION START ---
+        # #
+        # ##################################################################
+        # Pass the project_id to the dialog
+        dialog = ManageAnchorsDialog(self.db, self.project_id, tag_id, tag_name, self)
+        # ##################################################################
+        # #
+        # #                 --- MODIFICATION END ---
+        # #
+        # ##################################################################
+
         dialog.anchorDeleted.connect(self._on_anchor_deleted_from_dialog)
         dialog.exec()
 

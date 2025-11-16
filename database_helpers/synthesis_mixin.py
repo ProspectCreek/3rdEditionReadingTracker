@@ -214,11 +214,6 @@ class SynthesisMixin:
         """, (anchor_id,))
         return self._rowdict(self.cursor.fetchone())
 
-    # ##################################################################
-    # #
-    # #                 --- NEW FUNCTION START ---
-    # #
-    # ##################################################################
     def get_anchor_navigation_details(self, anchor_id):
         """
         Gets all necessary IDs from an anchor for navigation.
@@ -237,19 +232,27 @@ class SynthesisMixin:
 
     # ##################################################################
     # #
-    # #                 --- NEW FUNCTION END ---
+    # #                 --- MODIFICATION START ---
     # #
     # ##################################################################
-
-    def get_anchors_for_tag_simple(self, tag_id):
-        """Gets simple anchor data for the ManageAnchorsDialog."""
+    def get_anchors_for_tag_simple(self, tag_id, project_id):
+        """
+        Gets simple anchor data for the ManageAnchorsDialog,
+        filtered by project.
+        """
         self.cursor.execute("""
             SELECT a.id, a.selected_text, a.comment
             FROM synthesis_anchors a
             JOIN anchor_tag_links atl ON a.id = atl.anchor_id
-            WHERE atl.tag_id = ?
-        """, (tag_id,))
+            WHERE atl.tag_id = ? AND a.project_id = ?
+        """, (tag_id, project_id))
         return self._map_rows(self.cursor.fetchall())
+
+    # ##################################################################
+    # #
+    # #                 --- MODIFICATION END ---
+    # #
+    # ##################################################################
 
     def get_anchors_for_tag_with_context(self, tag_id, project_id):
         """
