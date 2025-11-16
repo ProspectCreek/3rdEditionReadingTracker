@@ -362,3 +362,9 @@ class MindmapTab(QWidget):
             # Use a timer to delay the refresh, allowing OS to finish
             # file operations from the save.
             QTimer.singleShot(100, lambda: self.load_preview(mindmap_id))
+
+        # --- START: Fix for Bug 2 ---
+        # Clear the list selection. This fixes the dark highlight
+        # and allows the user to click the item to re-load the preview.
+        self.list_widget.clearSelection()
+        # --- END: Fix for Bug 2 ---

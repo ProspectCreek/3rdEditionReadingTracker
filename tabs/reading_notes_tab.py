@@ -909,12 +909,24 @@ class ReadingNotesTab(QWidget):
                                                 QTextCursor.MoveMode.KeepAnchor)
                             break
 
-                    # --- THIS IS THE FIX (Bug 2B) ---
-                    # Create a new format *by copying* the editor's default.
-                    new_fmt = QTextCharFormat(self.notes_editor.default_format)
-                    # --- END FIX ---
+                    # --- START: Replacement for Bug 1 ---
+                    # Get the format of the now-selected non-existent anchor
+                    current_fmt = cursor.charFormat()
 
-                    cursor.mergeCharFormat(new_fmt)
+                    # Clear only the anchor-specific properties
+                    current_fmt.clearBackground()
+                    current_fmt.clearProperty(AnchorIDProperty)
+                    current_fmt.clearProperty(AnchorTagIDProperty)
+                    current_fmt.clearProperty(AnchorTagNameProperty)
+                    current_fmt.clearProperty(AnchorCommentProperty)
+                    current_fmt.clearProperty(AnchorUUIDProperty)
+                    current_fmt.setToolTip("")
+
+                    # Merge the "clean" format back onto the selection
+                    # This removes the background but preserves font, size, etc.
+                    cursor.mergeCharFormat(current_fmt)
+                    # --- END: Replacement for Bug 1 ---
+
                     current_pos = cursor.position()
                 else:
                     current_pos += 1
