@@ -851,11 +851,17 @@ class ReadingNotesTab(QWidget):
                             tree.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
                             return
 
+    # ##################################################################
+    # #
+    # #                 --- THIS IS THE FIX ---
+    # #
+    # ##################################################################
     @Slot()
     def refresh_anchor_formatting(self):
         """
         Iterates through the document and removes highlighting from
-        any anchors that no longer exist in the database.
+        any anchors that no longer exist in the database, preserving
+        other formatting.
         """
         if not self._is_loaded or self.notes_stack.currentWidget() != self.notes_editor:
             return
@@ -871,6 +877,7 @@ class ReadingNotesTab(QWidget):
             cursor.movePosition(QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.KeepAnchor, 1)
             fmt = cursor.charFormat()
 
+            # Check if the current character is part of an anchor
             anchor_id_qvar = fmt.property(AnchorIDProperty)
             anchor_id = None
             if anchor_id_qvar is not None:
@@ -884,14 +891,17 @@ class ReadingNotesTab(QWidget):
                     pass
 
             if anchor_id:
+                # This character is part of an anchor. Check if it still exists.
                 anchor_exists = self.db.get_anchor_by_id(anchor_id)
 
                 if not anchor_exists:
+                    # This anchor is orphaned. Find its full extent.
                     start_pos = cursor.position() - 1
                     while not cursor.atEnd():
                         cursor.movePosition(QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.KeepAnchor)
                         fmt = cursor.charFormat()
 
+                        # Check the *next* character's anchor ID
                         next_anchor_id_qvar = fmt.property(AnchorIDProperty)
                         next_anchor_id = None
                         if next_anchor_id_qvar is not None:
@@ -904,16 +914,17 @@ class ReadingNotesTab(QWidget):
                             except Exception:
                                 pass
 
+                        # If the next char is not part of the *same* anchor, stop
                         if next_anchor_id != anchor_id:
                             cursor.movePosition(QTextCursor.MoveOperation.PreviousCharacter,
                                                 QTextCursor.MoveMode.KeepAnchor)
                             break
 
-                    # --- START: Replacement for Bug 1 ---
-                    # Get the format of the now-selected non-existent anchor
+                    # Now 'cursor' holds the selection for the entire orphaned anchor
+                    # Get its current format
                     current_fmt = cursor.charFormat()
 
-                    # Clear only the anchor-specific properties
+                    # Clear *only* the anchor properties, preserving font, bold, etc.
                     current_fmt.clearBackground()
                     current_fmt.clearProperty(AnchorIDProperty)
                     current_fmt.clearProperty(AnchorTagIDProperty)
@@ -923,17 +934,25 @@ class ReadingNotesTab(QWidget):
                     current_fmt.setToolTip("")
 
                     # Merge the "clean" format back onto the selection
-                    # This removes the background but preserves font, size, etc.
                     cursor.mergeCharFormat(current_fmt)
-                    # --- END: Replacement for Bug 1 ---
 
+                    # Update our position to after the cleared block
                     current_pos = cursor.position()
                 else:
+                    # Anchor exists, just move to the next character
                     current_pos += 1
             else:
+                # Not an anchor, just move to the next character
                 current_pos += 1
 
+        # Save the notes now that the formatting is clean
         self.save_current_outline_notes()
+
+    # ##################################################################
+    # #
+    # #                 --- END OF FIX ---
+    # #
+    # ##################################################################
 
     @Slot(str)
     def _on_create_anchor(self, selected_text):
@@ -1015,13 +1034,11 @@ class ReadingNotesTab(QWidget):
                     raise Exception(f"Could not get or create tag '{new_tag_name}'")
                 new_tag_id = tag_data['id']
 
-                # --- THIS IS THE FIX (Bug 2A) ---
                 update_data = {
                     "comment": new_comment,
                     "tags": [new_tag_id]  # update_anchor expects a list of tag IDs
                 }
                 self.db.update_anchor(anchor_id, update_data)
-                # --- END FIX ---
 
                 self.notes_editor.find_and_update_anchor_format(
                     anchor_id=anchor_id,
@@ -1046,6 +1063,7 @@ class ReadingNotesTab(QWidget):
         if reply == QMessageBox.StandardButton.Yes:
             try:
                 self.db.delete_anchor(anchor_id)
+                # This function now correctly *only* removes the highlight
                 self.notes_editor.remove_anchor_format()
                 self.save_current_outline_notes()
             except Exception as e:

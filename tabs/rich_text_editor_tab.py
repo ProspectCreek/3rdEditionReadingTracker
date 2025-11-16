@@ -36,6 +36,7 @@ def _apply_char_format(editor: QTextEdit, fmt: QTextCharFormat):
     if not c.hasSelection():
         editor.mergeCurrentCharFormat(fmt)
     else:
+        # Use mergeCharFormat to apply changes non-destructively
         c.mergeCharFormat(fmt)
         editor.setTextCursor(c)
 
@@ -265,11 +266,27 @@ class RichTextEditorTab(QWidget):
         fmt.setToolTip(tooltip)
         _apply_char_format(self.editor, fmt)
 
+    # ##################################################################
+    # #
+    # #                 --- THIS IS THE FIX ---
+    # #
+    # ##################################################################
     def remove_anchor_format(self):
+        """
+        Clears ONLY the anchor formatting (background, properties, tooltip)
+        from the current selection, preserving all other formatting
+        (font, size, bold, etc.).
+        """
         cursor = self.editor.textCursor()
         if not cursor.hasSelection():
+            # If no selection, we can't know what to de-format.
+            # The right-click menu should have selected the anchor.
             return
+
+        # Get the selection's CURRENT format
         fmt = cursor.charFormat()
+
+        # Clear ONLY the anchor properties and background
         fmt.clearBackground()
         fmt.clearProperty(AnchorIDProperty)
         fmt.clearProperty(AnchorTagIDProperty)
@@ -277,7 +294,16 @@ class RichTextEditorTab(QWidget):
         fmt.clearProperty(AnchorCommentProperty)
         fmt.clearProperty(AnchorUUIDProperty)
         fmt.setToolTip("")
+
+        # Re-apply the modified format, preserving font, size, bold, etc.
+        # This uses mergeCharFormat (via _apply_char_format helper)
         _apply_char_format(self.editor, fmt)
+    # ##################################################################
+    # #
+    # #                 --- END OF FIX ---
+    # #
+    # ##################################################################
+
 
     def find_and_update_anchor_format(self, anchor_id: int, tag_id: int, tag_name: str, comment: str):
         cursor = self.editor.textCursor()
