@@ -1,4 +1,4 @@
-# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-0eada8809e03f78f9e304f58f06c5f5a03a32c4f/database_helpers/graph_mixin.py
+# prospectcreek/3rdeditionreadingtracker/database_helpers/graph_mixin.py
 class GraphMixin:
     # --- Graph Data Functions ---
     def get_graph_data(self, project_id):
@@ -64,7 +64,9 @@ class GraphMixin:
             WHERE ptl.project_id = ? OR a.project_id = ?
             GROUP BY t.id, t.name
         """
-        self.cursor.execute(tags_sql, (project_id, project_id, project_id))
+        # --- THIS IS THE FIX: Removed the extra project_id ---
+        self.cursor.execute(tags_sql, (project_id, project_id))
+        # --- END FIX ---
         tags = self._map_rows(self.cursor.fetchall())
 
         # 3. Get text-based anchor edges (Reading <-> Tag)

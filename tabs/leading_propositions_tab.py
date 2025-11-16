@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, Slot, QPoint
 from PySide6.QtGui import QAction, QColor, QFont
 
-# --- FIX: Import the new, correct dialog ---
 try:
     from dialogs.add_leading_proposition_dialog import AddLeadingPropositionDialog
 except ImportError:
@@ -82,9 +81,7 @@ class LeadingPropositionsTab(QWidget):
         self.item_list.clear()
         self.detail_viewer.clear()
         try:
-            # --- FIX: Call the new, correct DB method ---
             items = self.db.get_reading_propositions_simple(self.reading_id)
-            # --- END OF FIX ---
 
             if not items:
                 item = QListWidgetItem("No propositions added yet.")
@@ -93,12 +90,18 @@ class LeadingPropositionsTab(QWidget):
                 return
 
             for item_data in items:
-                # --- FIX: Use 'proposition_text' ---
-                display_text = item_data['proposition_text'].split('\n')[0]
+                # --- THIS IS THE FIX ---
+                # Use nickname if available, otherwise fallback to proposition text
+                nickname = item_data.get('nickname')
+                prop_text = item_data.get('proposition_text', 'N/A').split('\n')[0]
+
+                display_text = nickname if nickname else prop_text
+                # --- END FIX ---
+
                 if len(display_text) > 70:
                     display_text = display_text[:70] + "..."
+
                 item = QListWidgetItem(display_text)
-                # --- END FIX ---
                 item.setData(Qt.ItemDataRole.UserRole, item_data['id'])
                 self.item_list.addItem(item)
         except Exception as e:
@@ -116,15 +119,19 @@ class LeadingPropositionsTab(QWidget):
             return
 
         try:
-            # --- FIX: Call the new, correct DB method ---
             data = self.db.get_reading_proposition_details(item_id)
-            # --- END FIX ---
             if not data:
                 self.detail_viewer.setHtml("<i>Could not load proposition details.</i>")
                 return
 
             # Format details for display
-            html = f"<h3>Proposition:</h3><p>{data.get('proposition_text', 'N/A').replace(chr(10), '<br>')}</p>"
+            html = ""
+            # --- FIX: Display nickname if it exists ---
+            if data.get('nickname'):
+                html += f"<h3>Nickname:</h3><p>{data.get('nickname')}</p>"
+            # --- END FIX ---
+
+            html += f"<h3>Proposition:</h3><p>{data.get('proposition_text', 'N/A').replace(chr(10), '<br>')}</p>"
 
             location = "Reading-Level Notes"
             if data.get('outline_title'):
@@ -194,19 +201,15 @@ class LeadingPropositionsTab(QWidget):
                 QMessageBox.warning(self, "Invalid", "Proposition text cannot be empty.")
                 return
             try:
-                # --- NEW: Process synthesis tags ---
                 tags_text = data.get("synthesis_tags", "")
                 if tags_text:
                     tag_names = [tag.strip() for tag in tags_text.split(',') if tag.strip()]
                     for tag_name in tag_names:
                         try:
-                            # This creates the tag and links it to the project
                             self.db.get_or_create_tag(tag_name, self.project_id)
                         except Exception as e:
                             print(f"Error processing tag '{tag_name}': {e}")
-                # --- END NEW ---
 
-                # --- FIX: Call new DB method ---
                 self.db.add_reading_proposition(self.reading_id, data)
                 self.load_propositions()
             except Exception as e:
@@ -223,7 +226,6 @@ class LeadingPropositionsTab(QWidget):
             QMessageBox.critical(self, "Error", "Edit Leading Proposition Dialog could not be loaded.")
             return
 
-        # --- FIX: Call new DB method ---
         current_data = self.db.get_reading_proposition_details(item_id)
         if not current_data:
             QMessageBox.critical(self, "Error", "Could not find proposition details to edit.")
@@ -239,19 +241,15 @@ class LeadingPropositionsTab(QWidget):
                 QMessageBox.warning(self, "Invalid", "Proposition text cannot be empty.")
                 return
             try:
-                # --- NEW: Process synthesis tags ---
                 tags_text = data.get("synthesis_tags", "")
                 if tags_text:
                     tag_names = [tag.strip() for tag in tags_text.split(',') if tag.strip()]
                     for tag_name in tag_names:
                         try:
-                            # This creates the tag and links it to the project
                             self.db.get_or_create_tag(tag_name, self.project_id)
                         except Exception as e:
                             print(f"Error processing tag '{tag_name}': {e}")
-                # --- END NEW ---
 
-                # --- FIX: Call new DB method ---
                 self.db.update_reading_proposition(item_id, data)
                 self.load_propositions()
                 for i in range(self.item_list.count()):
@@ -279,7 +277,6 @@ class LeadingPropositionsTab(QWidget):
 
         if reply == QMessageBox.StandardButton.Yes:
             try:
-                # --- FIX: Call new DB method ---
                 self.db.delete_reading_proposition(item_id)
                 self.load_propositions()
             except Exception as e:
@@ -304,7 +301,6 @@ class LeadingPropositionsTab(QWidget):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             ordered_ids = dialog.ordered_db_ids
             try:
-                # --- FIX: Call new DB method ---
                 self.db.update_reading_proposition_order(ordered_ids)
                 self.load_propositions()
             except Exception as e:

@@ -88,9 +88,7 @@ class TodoListTab(QWidget):
         self.item_list.clear()
         self.detail_viewer.clear()
         try:
-            # --- BUG FIX: Was get_todo_items, changed to get_project_todo_items ---
             items = self.db.get_project_todo_items(self.project_id)
-            # --- END BUG FIX ---
 
             if not items:
                 item = QListWidgetItem("No to-do items added yet.")
@@ -101,6 +99,7 @@ class TodoListTab(QWidget):
 
             for item_data in items:
                 item = QListWidgetItem(item_data['display_name'])
+                # --- FIX: Use 1-argument setData ---
                 item.setData(Qt.ItemDataRole.UserRole, item_data['id'])
                 item.setCheckState(Qt.CheckState.Checked if item_data['is_checked'] else Qt.CheckState.Unchecked)
                 self.item_list.addItem(item)
@@ -115,6 +114,7 @@ class TodoListTab(QWidget):
         if self._block_item_changed:
             return
 
+        # --- FIX: Use 1-argument data() ---
         item_id = item.data(Qt.ItemDataRole.UserRole)
         if item_id is None:
             return
@@ -136,6 +136,7 @@ class TodoListTab(QWidget):
             self.detail_viewer.clear()
             return
 
+        # --- FIX: Use 1-argument data() ---
         item_id = current_item.data(Qt.ItemDataRole.UserRole)
         if item_id is None:
             self.detail_viewer.clear()
@@ -164,9 +165,9 @@ class TodoListTab(QWidget):
             </style>
             """
             html += f"<h3>Task:</h3>"
-            html += f"<div class='card'>{data.get('task', '<i>No task description.</i>')}</div>"
+            html += f"<div class='card'>{data.get('task_html', '<i>No task description.</i>')}</div>"
             html += f"<h3>Notes:</h3>"
-            html += f"<div class='card'>{data.get('notes', '<i>No notes.</i>')}</div>"
+            html += f"<div class='card'>{data.get('notes_html', '<i>No notes.</i>')}</div>"
 
             self.detail_viewer.setHtml(html)
 
@@ -184,6 +185,7 @@ class TodoListTab(QWidget):
         add_action.triggered.connect(self._add_item)
 
         item = self.item_list.itemAt(position)
+        # --- FIX: Use 1-argument data() ---
         if item and item.data(Qt.ItemDataRole.UserRole) is not None:
             menu.addSeparator()
             # (B) Edit Item
@@ -196,6 +198,7 @@ class TodoListTab(QWidget):
         # (D) Reorder Items
         real_item_count = 0
         for i in range(self.item_list.count()):
+            # --- FIX: Use 1-argument data() ---
             if self.item_list.item(i).data(Qt.ItemDataRole.UserRole) is not None:
                 real_item_count += 1
 
@@ -221,14 +224,12 @@ class TodoListTab(QWidget):
                 return
 
             try:
-                # --- FIX: Pass HTML content to db ---
                 db_data = {
                     'display_name': data.get('display_name'),
-                    'task': data.get('task_html'),
-                    'notes': data.get('notes_html')
+                    'task_html': data.get('task_html'),
+                    'notes_html': data.get('notes_html')
                 }
                 self.db.add_todo_item(self.project_id, db_data)
-                # --- END FIX ---
                 self.load_items()  # Refresh the list
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not save new item: {e}")
@@ -237,9 +238,11 @@ class TodoListTab(QWidget):
     def _edit_item(self):
         """Opens the AddTodoDialog to edit the selected item."""
         item = self.item_list.currentItem()
+        # --- FIX: Use 1-argument data() ---
         if not item or item.data(Qt.ItemDataRole.UserRole) is None:
             return
 
+        # --- FIX: Use 1-argument data() ---
         item_id = item.data(Qt.ItemDataRole.UserRole)
 
         if not AddTodoDialog:
@@ -251,10 +254,9 @@ class TodoListTab(QWidget):
             QMessageBox.critical(self, "Error", "Could not find item details to edit.")
             return
 
-        # --- FIX: Pass HTML content to dialog ---
-        current_data['task_html'] = current_data.get('task', '')
-        current_data['notes_html'] = current_data.get('notes', '')
-        # --- END FIX ---
+        # Pass the HTML content to the dialog
+        current_data['task_html'] = current_data.get('task_html', '')
+        current_data['notes_html'] = current_data.get('notes_html', '')
 
         dialog = AddTodoDialog(current_data=current_data, parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -264,17 +266,16 @@ class TodoListTab(QWidget):
                 return
 
             try:
-                # --- FIX: Pass HTML content to db ---
                 db_data = {
                     'display_name': data.get('display_name'),
-                    'task': data.get('task_html'),
-                    'notes': data.get('notes_html')
+                    'task_html': data.get('task_html'),
+                    'notes_html': data.get('notes_html')
                 }
                 self.db.update_todo_item(item_id, db_data)
-                # --- END FIX ---
                 self.load_items()  # Refresh the list
                 # Reselect the item to refresh the detail view
                 for i in range(self.item_list.count()):
+                    # --- FIX: Use 1-argument data() ---
                     if self.item_list.item(i).data(Qt.ItemDataRole.UserRole) == item_id:
                         self.item_list.setCurrentRow(i)
                         break
@@ -286,9 +287,11 @@ class TodoListTab(QWidget):
     def _delete_item(self):
         """Deletes the selected item."""
         item = self.item_list.currentItem()
+        # --- FIX: Use 1-argument data() ---
         if not item or item.data(Qt.ItemDataRole.UserRole) is None:
             return
 
+        # --- FIX: Use 1-argument data() ---
         item_id = item.data(Qt.ItemDataRole.UserRole)
         item_name = item.text()
 
@@ -316,6 +319,7 @@ class TodoListTab(QWidget):
         items_to_reorder = []
         for i in range(self.item_list.count()):
             item = self.item_list.item(i)
+            # --- FIX: Use 1-argument data() ---
             item_id = item.data(Qt.ItemDataRole.UserRole)
             if item_id is not None:
                 items_to_reorder.append((item.text(), item_id))
@@ -327,7 +331,7 @@ class TodoListTab(QWidget):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             ordered_ids = dialog.ordered_db_ids
             try:
-                self.db.update_todo_item_order(ordered_ids)
+                self.db.update_todo_order(ordered_ids)
                 self.load_items()
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not reorder items: {e}")

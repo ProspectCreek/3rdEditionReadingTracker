@@ -42,6 +42,12 @@ class AddLeadingPropositionDialog(QDialog):
         self.proposition_text_edit.setText(self.current_data.get("proposition_text", ""))
         form_layout.addRow("Proposition:", self.proposition_text_edit)
 
+        # --- Nickname ---
+        self.nickname_edit = QLineEdit()
+        self.nickname_edit.setPlaceholderText("Optional short name for lists...")
+        self.nickname_edit.setText(self.current_data.get("nickname", ""))
+        form_layout.addRow("Nickname:", self.nickname_edit)
+
         # --- Location (Outline) ---
         where_layout = QHBoxLayout()
         where_layout.setContentsMargins(0, 0, 0, 0)
@@ -116,6 +122,7 @@ class AddLeadingPropositionDialog(QDialog):
         """Returns all data from the dialog fields in a dictionary."""
         return {
             "proposition_text": self.proposition_text_edit.toPlainText().strip(),
+            "nickname": self.nickname_edit.text().strip(),
             "outline_id": self.where_combo.currentData(),
             "pages": self.page_edit.text().strip(),
             "why_important": self.why_edit.toPlainText().strip(),
