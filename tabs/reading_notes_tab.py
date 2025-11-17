@@ -132,6 +132,7 @@ class ReadingNotesTab(QWidget):
         self._is_loaded = False  # <<< guard to avoid saving blanks
 
         self.bottom_tabs_with_editors = []
+        self._pending_anchor_focus = None
 
         # Main Layout: A horizontal splitter
         main_layout = QHBoxLayout(self)
@@ -504,7 +505,7 @@ class ReadingNotesTab(QWidget):
 
         for field_name, editor in self.bottom_tabs_with_editors:
             if field_name == 'propositions_html' and LeadingPropositionsTab and hasattr(self,
-                                                                                        'leading_propositions_tab'):
+                                                                                       'leading_propositions_tab'):
                 continue
             if field_name == 'unity_html' and UnityTab and hasattr(self, 'unity_tab'):
                 continue
@@ -516,7 +517,7 @@ class ReadingNotesTab(QWidget):
                 continue
 
             if field_name == 'personal_dialogue_html' and PartsOrderRelationTab and hasattr(self,
-                                                                                            'parts_order_relation_tab') and editor.editor_title == "Parts: Order and Relation":
+                                                                                           'parts_order_relation_tab') and editor.editor_title == "Parts: Order and Relation":
                 continue
 
             html = self._get_detail(field_name, default="")
@@ -534,7 +535,7 @@ class ReadingNotesTab(QWidget):
 
         for field_name, editor in self.bottom_tabs_with_editors:
             if field_name == 'propositions_html' and LeadingPropositionsTab and hasattr(self,
-                                                                                        'leading_propositions_tab'):
+                                                                                       'leading_propositions_tab'):
                 continue
             if field_name == 'unity_html' and UnityTab and hasattr(self, 'unity_tab'):
                 continue
@@ -546,7 +547,7 @@ class ReadingNotesTab(QWidget):
                 continue
 
             if field_name == 'personal_dialogue_html' and PartsOrderRelationTab and hasattr(self,
-                                                                                            'parts_order_relation_tab') and editor.editor_title == "Parts: Order and Relation":
+                                                                                           'parts_order_relation_tab') and editor.editor_title == "Parts: Order and Relation":
                 continue
 
             def create_callback(fname):
@@ -676,6 +677,7 @@ class ReadingNotesTab(QWidget):
                     self.notes_editor.set_html(notes_html or "")
                     self.notes_stack.setCurrentWidget(self.notes_editor)
                     QTimer.singleShot(50, self.refresh_anchor_formatting)
+                    self._queue_pending_anchor_focus()
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"Could not load notes: {e}")
                     self.notes_stack.setCurrentWidget(self.notes_placeholder)
@@ -686,6 +688,7 @@ class ReadingNotesTab(QWidget):
                 self.notes_stack.setCurrentWidget(self.notes_placeholder)
                 # --- ADD RESET HERE TOO ---
                 self.notes_label.setText("Outline Item Notes")
+                self._pending_anchor_focus = None
         else:
             # --- THIS IS THE NEW LOGIC ---
             self.notes_label.setText("Outline Item Notes")
@@ -693,6 +696,7 @@ class ReadingNotesTab(QWidget):
 
             self.current_outline_id = None
             self.notes_stack.setCurrentWidget(self.notes_placeholder)
+            self._pending_anchor_focus = None
 
     def show_outline_context_menu(self, position):
         """Shows the right-click menu for the outline tree."""
@@ -847,20 +851,23 @@ class ReadingNotesTab(QWidget):
 
     # ##################################################################
     # #
-    # #                 --- MODIFICATION START (DIAGNOSTICS) ---
+    # #                      --- MODIFICATION START (DIAGNOSTICS) ---
     # #
     # ##################################################################
     @Slot(int, int, int, str)
-    def set_outline_selection(self, outline_id: int, item_link_id: int, item_type: str = ''):
+    def set_outline_selection(self, anchor_id: int, outline_id: int, item_link_id: int, item_type: str = ''):
         """
         Finds and selects an item in the outline tree.
         If item_link_id is provided, it tries to find and select
         the item in the corresponding bottom tab.
         """
-        print(f"    ReadingTab.set_outline_selection: START. Current focus: {QApplication.instance().focusWidget()}")
+        print(f"    ReadingTab.set_outline_selection: START (anchor={anchor_id}). Current focus: {QApplication.instance().focusWidget()}")
+
+        self._pending_anchor_focus = anchor_id if (anchor_id and outline_id) else None
 
         # --- Part 1: Select Outline Item ---
         if outline_id == 0:
+            self._pending_anchor_focus = None
             self.outline_tree.clearSelection()
             # This call is fine, it will clear the notes editor
             self.on_outline_selection_changed(None, None)
@@ -877,6 +884,7 @@ class ReadingNotesTab(QWidget):
 
         # --- Part 2: Select Bottom Tab Item ---
         if item_link_id > 0:
+            self._pending_anchor_focus = None
             tabs_to_check = [
                 # (Tab object, Tab index)
                 (getattr(self, 'driving_question_tab', None),
@@ -937,9 +945,26 @@ class ReadingNotesTab(QWidget):
             ))
             # --- END FIX ---
 
+    def _queue_pending_anchor_focus(self):
+        """Ensures the requested text anchor is highlighted once notes load."""
+        if not self._pending_anchor_focus or not hasattr(self, 'notes_editor'):
+            return
+
+        anchor_id = self._pending_anchor_focus
+        self._pending_anchor_focus = None
+
+        def _focus_anchor():
+            if hasattr(self.notes_editor, 'focus_anchor_by_id'):
+                success = self.notes_editor.focus_anchor_by_id(anchor_id)
+                print(
+                    f"    ReadingTab.set_outline_selection: focus_anchor_by_id({anchor_id}) -> {success}."
+                )
+
+        QTimer.singleShot(0, _focus_anchor)
+
     # ##################################################################
     # #
-    # #                 --- MODIFICATION END ---
+    # #                      --- MODIFICATION END ---
     # #
     # ##################################################################
 

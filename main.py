@@ -126,7 +126,7 @@ class MainWindow(QMainWindow):
 
             # Tell dashboard to open the tab
             # Use QTimer to run *after* the dashboard is fully loaded and visible
-            QTimer.singleShot(150, lambda: self.project_dashboard.open_reading_tab(reading_id, outline_id))
+            QTimer.singleShot(150, lambda: self.project_dashboard.open_reading_tab(0, reading_id, outline_id))
         except Exception as e:
             print(f"Error in open_project_from_global: {e}")
 

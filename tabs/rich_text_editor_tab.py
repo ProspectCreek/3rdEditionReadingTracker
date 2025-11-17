@@ -477,6 +477,33 @@ class RichTextEditorTab(QWidget):
             else:
                 current_pos += 1
 
+    def focus_anchor_by_id(self, anchor_id: int) -> bool:
+        """Selects and scrolls to the anchor with the given ID if it exists."""
+        if not anchor_id or anchor_id <= 0:
+            return False
+
+        cursor = self.editor.textCursor()
+        cursor.setPosition(0)
+        doc = self.editor.document()
+
+        current_pos = 0
+        while current_pos < doc.characterCount() - 1:
+            cursor.setPosition(current_pos)
+            cursor.movePosition(QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.KeepAnchor, 1)
+            fmt = cursor.charFormat()
+            aid = self._get_anchor_id_from_format(fmt)
+
+            if aid and aid == anchor_id:
+                anchor_cursor = QTextCursor(cursor)
+                self.select_anchor_at_cursor(anchor_cursor)
+                self.editor.setTextCursor(anchor_cursor)
+                self.editor.ensureCursorVisible()
+                return True
+
+            current_pos += 1
+
+        return False
+
     def _get_anchor_id_from_format(self, char_format: QTextCharFormat):
         """Helper to find anchor_id, prioritizing persistent href."""
 

@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QGraphicsItem, QGraphicsLineItem, QGraphicsTextItem,
     QGraphicsEllipseItem, QGraphicsRectItem, QMenu, QGraphicsSceneMouseEvent,
     QMessageBox, QApplication, QGraphicsDropShadowEffect, QLineEdit,
-    QGraphicsProxyWidget
+    QGraphicsProxyWidget, QDialog
 )
 from PySide6.QtCore import (
     Qt, QPointF, QRectF, QTimer, Signal, Slot, QLineF,
@@ -506,7 +506,7 @@ class GraphViewTab(QWidget):
     """
     Main widget for the "Graph View" tab.
     """
-    readingDoubleClicked = Signal(int, int, int, str)  # (reading_id, outline_id, item_link_id, item_type)
+    readingDoubleClicked = Signal(int, int, int, int, str)  # (anchor_id, reading_id, outline_id, item_link_id, item_type)
     tagDoubleClicked = Signal(int)
 
     tagsUpdated = Signal()
@@ -552,11 +552,11 @@ class GraphViewTab(QWidget):
 
     @Slot(int)
     def emit_reading_double_clicked(self, reading_id):
-        self.readingDoubleClicked.emit(reading_id, 0, 0, '')  # (reading_id, outline_id, item_link_id, item_type)
+        self.readingDoubleClicked.emit(0, reading_id, 0, 0, '')
 
     # ##################################################################
     # #
-    # #                 --- MODIFICATION START ---
+    # #                      --- MODIFICATION START ---
     # #
     # ##################################################################
     @Slot(int)
@@ -568,6 +568,7 @@ class GraphViewTab(QWidget):
             if anchor:
                 # [FIX] Emit all four arguments
                 self.readingDoubleClicked.emit(
+                    anchor_id,
                     anchor['reading_id'],
                     anchor.get('outline_id', 0),
                     anchor.get('item_link_id', 0),
@@ -579,7 +580,7 @@ class GraphViewTab(QWidget):
             print(f"GraphViewTab: Error emitting anchor click: {e}")
     # ##################################################################
     # #
-    # #                 --- MODIFICATION END ---
+    # #                      --- MODIFICATION END ---
     # #
     # ##################################################################
 

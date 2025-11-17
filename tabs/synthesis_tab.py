@@ -52,7 +52,7 @@ class SynthesisTab(QWidget):
     A widget for synthesizing information.
     Shows a master list of tags and a detail view of anchors.
     """
-    openReading = Signal(int, int, int, str)
+    openReading = Signal(int, int, int, int, str)
     tagsUpdated = Signal()
 
     def __init__(self, db, project_id, parent=None):
@@ -231,7 +231,10 @@ class SynthesisTab(QWidget):
 
                 item_link_id = anchor.get('item_link_id')
                 item_type = anchor.get('item_type') or ''
-                jumpto_link = f"jumpto:{anchor['reading_id']}:{anchor['outline_id'] or 0}:{item_link_id or 0}:{item_type}"
+                jumpto_link = (
+                    f"jumpto:{anchor['id']}:{anchor['reading_id']}:{anchor['outline_id'] or 0}:"
+                    f"{item_link_id or 0}:{item_type}"
+                )
 
                 if context_parts:
                     html += f"<p><i><a href='{jumpto_link}'>({', '.join(context_parts)})</a></i></p>"
@@ -294,13 +297,19 @@ class SynthesisTab(QWidget):
         if url_str.startswith("jumpto:"):
             try:
                 parts = url_str.split(":")
-                reading_id = int(parts[1])
-                outline_id = int(parts[2])
-                item_link_id = int(parts[3])
-                item_type = parts[4]
+                if len(parts) < 6:
+                    raise ValueError("Malformed jumpto link")
+                anchor_id = int(parts[1])
+                reading_id = int(parts[2])
+                outline_id = int(parts[3])
+                item_link_id = int(parts[4])
+                item_type = parts[5]
                 print(
-                    f"Emitting openReading signal for reading_id={reading_id}, outline_id={outline_id}, item_id={item_link_id}, type={item_type}")
-                self.openReading.emit(reading_id, outline_id, item_link_id, item_type)
+                    "Emitting openReading signal for "
+                    f"anchor_id={anchor_id}, reading_id={reading_id}, outline_id={outline_id}, "
+                    f"item_id={item_link_id}, type={item_type}"
+                )
+                self.openReading.emit(anchor_id, reading_id, outline_id, item_link_id, item_type)
             except Exception as e:
                 print(f"Error handling jumpto link: {e}")
 
@@ -403,14 +412,14 @@ class SynthesisTab(QWidget):
 
         # ##################################################################
         # #
-        # #                 --- MODIFICATION START ---
+        # #                      --- MODIFICATION START ---
         # #
         # ##################################################################
         # Pass the project_id to the dialog
         dialog = ManageAnchorsDialog(self.db, self.project_id, tag_id, tag_name, self)
         # ##################################################################
         # #
-        # #                 --- MODIFICATION END ---
+        # #                      --- MODIFICATION END ---
         # #
         # ##################################################################
 

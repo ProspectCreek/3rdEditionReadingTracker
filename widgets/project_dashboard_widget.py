@@ -488,7 +488,7 @@ class ProjectDashboardWidget(QWidget):
         for tab in self.bottom_tabs:
             def cb(field):
                 return lambda html: self.db.update_project_text_field(self.project_id, field,
-                                                                      html) if html is not None else None
+                                                                       html) if html is not None else None
 
             tab.get_editor_content(cb(tab.text_field))
 
@@ -533,7 +533,7 @@ class ProjectDashboardWidget(QWidget):
         """Switches to the corresponding tab when a reading is double-clicked."""
         reading_id = item.data(0, Qt.ItemDataRole.UserRole)
         # --- NEW: Use the shared function ---
-        self.open_reading_from_graph(reading_id)
+        self.open_reading_from_graph(0, reading_id)
         # --- END NEW ---
 
     @Slot(QPoint)
@@ -650,11 +650,11 @@ class ProjectDashboardWidget(QWidget):
     # --- NEW: Slots for Synthesis Tab ---
     # ##################################################################
     # #
-    # #                 --- MODIFICATION START (DIAGNOSTICS) ---
+    # #                      --- MODIFICATION START (DIAGNOSTICS) ---
     # #
     # ##################################################################
-    @Slot(int, int, int, str)
-    def open_reading_tab(self, reading_id, outline_id, item_link_id=0, item_type=''):
+    @Slot(int, int, int, int, str)
+    def open_reading_tab(self, anchor_id, reading_id, outline_id, item_link_id=0, item_type=''):
         """
         Finds or creates a reading tab, switches to it,
         and tells it to select a specific outline item and/or item.
@@ -688,14 +688,17 @@ class ProjectDashboardWidget(QWidget):
             # [FIX] Use a 50ms timer to ensure the tab switch is
             # fully processed before we try to select items and set focus.
             print(f"  Dashboard: Queuing set_outline_selection with 50ms timer...")
-            QTimer.singleShot(50, lambda: (
-                print(f"  Dashboard: 50ms timer FIRED. Calling set_outline_selection."),
-                tab_widget.set_outline_selection(outline_id, item_link_id, item_type)
-            ))
+
+            def _apply_selection(tab=tab_widget, aid=anchor_id, oid=outline_id,
+                                 link_id=item_link_id, link_type=item_type):
+                print(f"  Dashboard: 50ms timer FIRED. Calling set_outline_selection.")
+                tab.set_outline_selection(aid, oid, link_id, link_type)
+
+            QTimer.singleShot(50, _apply_selection)
 
     # ##################################################################
     # #
-    # #                 --- MODIFICATION END ---
+    # #                      --- MODIFICATION END ---
     # #
     # ##################################################################
 
@@ -727,11 +730,11 @@ class ProjectDashboardWidget(QWidget):
 
     # --- NEW: Slots for Graph View Tab ---
     # --- MODIFIED: Pass all arguments ---
-    @Slot(int, int, int, str)
-    def open_reading_from_graph(self, reading_id, outline_id=0, item_link_id=0, item_type=''):
+    @Slot(int, int, int, int, str)
+    def open_reading_from_graph(self, anchor_id, reading_id, outline_id=0, item_link_id=0, item_type=''):
         """Slot to open a reading tab from the graph view."""
         # This re-uses the logic from the Synthesis tab's "jump to"
-        self.open_reading_tab(reading_id, outline_id, item_link_id, item_type)
+        self.open_reading_tab(anchor_id, reading_id, outline_id, item_link_id, item_type)
 
     # --- END MODIFIED ---
 
