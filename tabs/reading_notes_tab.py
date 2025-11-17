@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QFormLayout, QLineEdit, QComboBox,
     QPushButton, QMenu, QStackedWidget, QInputDialog, QMessageBox, QDialog,
     QTabWidget, QMenuBar, QTextEdit, QApplication, QAbstractItemView,
-    QTreeWidgetItemIterator
+    QTreeWidgetItemIterator, QListWidget, QListWidgetItem
 )
 from PySide6.QtCore import Qt, Signal, QPoint, Slot, QTimer, QUrl
 from PySide6.QtGui import (
@@ -505,7 +505,7 @@ class ReadingNotesTab(QWidget):
 
         for field_name, editor in self.bottom_tabs_with_editors:
             if field_name == 'propositions_html' and LeadingPropositionsTab and hasattr(self,
-                                                                                       'leading_propositions_tab'):
+                                                                                        'leading_propositions_tab'):
                 continue
             if field_name == 'unity_html' and UnityTab and hasattr(self, 'unity_tab'):
                 continue
@@ -517,7 +517,7 @@ class ReadingNotesTab(QWidget):
                 continue
 
             if field_name == 'personal_dialogue_html' and PartsOrderRelationTab and hasattr(self,
-                                                                                           'parts_order_relation_tab') and editor.editor_title == "Parts: Order and Relation":
+                                                                                            'parts_order_relation_tab') and editor.editor_title == "Parts: Order and Relation":
                 continue
 
             html = self._get_detail(field_name, default="")
@@ -535,7 +535,7 @@ class ReadingNotesTab(QWidget):
 
         for field_name, editor in self.bottom_tabs_with_editors:
             if field_name == 'propositions_html' and LeadingPropositionsTab and hasattr(self,
-                                                                                       'leading_propositions_tab'):
+                                                                                        'leading_propositions_tab'):
                 continue
             if field_name == 'unity_html' and UnityTab and hasattr(self, 'unity_tab'):
                 continue
@@ -547,7 +547,7 @@ class ReadingNotesTab(QWidget):
                 continue
 
             if field_name == 'personal_dialogue_html' and PartsOrderRelationTab and hasattr(self,
-                                                                                           'parts_order_relation_tab') and editor.editor_title == "Parts: Order and Relation":
+                                                                                            'parts_order_relation_tab') and editor.editor_title == "Parts: Order and Relation":
                 continue
 
             def create_callback(fname):
@@ -851,7 +851,7 @@ class ReadingNotesTab(QWidget):
 
     # ##################################################################
     # #
-    # #                      --- MODIFICATION START (FOCUS FIX) ---
+    # #                      --- MODIFICATION START (Focus Fix v3) ---
     # #
     # ##################################################################
     @Slot(int, int, int, str)
@@ -861,16 +861,26 @@ class ReadingNotesTab(QWidget):
         If item_link_id is provided, it tries to find and select
         the item in the corresponding bottom tab.
         """
-        print(f"    ReadingTab.set_outline_selection: START (anchor={anchor_id}). Current focus: {QApplication.instance().focusWidget()}")
+        print(
+            f"    ReadingTab.set_outline_selection: START (anchor={anchor_id}). Current focus: {QApplication.instance().focusWidget()}")
 
         self._pending_anchor_focus = anchor_id if (anchor_id and outline_id) else None
 
         # --- Part 1: Select Outline Item ---
         if outline_id == 0:
             self._pending_anchor_focus = None
+
+            # ---!!--- THIS IS THE FIX V4 ---!!---
+            # DO NOT block signals. Let clearSelection() emit its
+            # currentItemChanged signal normally.
+            # self.outline_tree.blockSignals(True)
             self.outline_tree.clearSelection()
-            # This call is fine, it will clear the notes editor
-            self.on_outline_selection_changed(None, None)
+            # self.outline_tree.blockSignals(False)
+
+            # DO NOT call this manually. Let the signal do the work.
+            # self.on_outline_selection_changed(None, None)
+            # ---!!--- END OF FIX V4 ---!!---
+
         else:
             it = QTreeWidgetItemIterator(self.outline_tree)
             while it.value():
@@ -886,13 +896,13 @@ class ReadingNotesTab(QWidget):
         if item_link_id > 0:
             self._pending_anchor_focus = None
             tabs_to_check = [
-                # (Tab object, Tab index, tree_widget_name)
+                # (Tab object, Tab index, widget_name)
                 (getattr(self, 'driving_question_tab', None),
                  self.bottom_right_tabs.indexOf(getattr(self, 'driving_question_tab', None)),
                  'tree_widget'),
                 (getattr(self, 'leading_propositions_tab', None),
                  self.bottom_right_tabs.indexOf(getattr(self, 'leading_propositions_tab', None)),
-                 'item_list'),
+                 'item_list'),  # <-- This is a QListWidget
                 (getattr(self, 'key_terms_tab', None),
                  self.bottom_right_tabs.indexOf(getattr(self, 'key_terms_tab', None)),
                  'tree_widget'),
@@ -904,34 +914,49 @@ class ReadingNotesTab(QWidget):
                  'tree_widget'),
             ]
 
-            for tab, tab_index, tree_name in tabs_to_check:
-                if tab and tab_index != -1 and hasattr(tab, tree_name):
-                    tree = getattr(tab, tree_name) # Get the tree/list widget
-                    it = QTreeWidgetItemIterator(tree)
-                    while it.value():
-                        item = it.value()
-                        if item.data(0, Qt.ItemDataRole.UserRole) == item_link_id:
-                            # 1. Switch the bottom tab
-                            self.bottom_right_tabs.setCurrentIndex(tab_index)
+            for tab, tab_index, widget_name in tabs_to_check:
+                if tab and tab_index != -1 and hasattr(tab, widget_name):
+                    tree_or_list_widget = getattr(tab, widget_name)  # Get the tree/list widget
 
-                            # 2. Select the item in that tab's tree
-                            tree.setCurrentItem(item)
-                            tree.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
+                    # ---!!--- THIS IS THE FIX ---!!---
+                    found_item = None
+                    if isinstance(tree_or_list_widget, QTreeWidget):
+                        it = QTreeWidgetItemIterator(tree_or_list_widget)
+                        while it.value():
+                            item = it.value()
+                            if item.data(0, Qt.ItemDataRole.UserRole) == item_link_id:
+                                found_item = item
+                                break
+                            it += 1
+                    elif isinstance(tree_or_list_widget, QListWidget):
+                        for i in range(tree_or_list_widget.count()):
+                            item = tree_or_list_widget.item(i)
+                            if item.data(Qt.ItemDataRole.UserRole) == item_link_id:
+                                found_item = item
+                                break
+                    # ---!!--- END OF FIX ---!!---
+
+                    if found_item:
+                        # 1. Switch the bottom tab
+                        self.bottom_right_tabs.setCurrentIndex(tab_index)
+
+                        # 2. Select the item in that tab's tree
+                        tree_or_list_widget.setCurrentItem(found_item)
+                        tree_or_list_widget.scrollToItem(found_item, QAbstractItemView.ScrollHint.PositionAtCenter)
+                        print(
+                            f"    ReadingTab.set_outline_selection: Set item in BOTTOM tab. Focus is now: {QApplication.instance().focusWidget()}")
+
+                        # --- FIX: Re-introduce 0ms timer to set focus ---
+                        print(f"    ReadingTab.set_outline_selection: Queuing 0ms timer to focus BOTTOM TAB's widget.")
+                        QTimer.singleShot(0, lambda widget=tree_or_list_widget: (  # <--- CAPTURE 'tree_or_list_widget'
                             print(
-                                f"    ReadingTab.set_outline_selection: Set item in BOTTOM tab. Focus is now: {QApplication.instance().focusWidget()}")
-
-                            # --- FIX: Re-introduce 0ms timer to set focus ---
-                            print(f"    ReadingTab.set_outline_selection: Queuing 0ms timer to focus BOTTOM TAB's tree/list.")
-                            QTimer.singleShot(0, lambda tree=tree: (  # <--- CAPTURE 'tree' WIDGET
-                                print(
-                                    f"    ReadingTab.set_outline_selection: 0ms timer FIRED. Setting focus to BOTTOM TAB's tree/list."),
-                                tree.setFocus(), # <--- THIS IS THE FIX
-                                print(
-                                    f"    ReadingTab.set_outline_selection: FINAL focus is: {QApplication.instance().focusWidget()}")
-                            ))
-                            # --- END FIX ---
-                            return  # We are done.
-                        it += 1
+                                f"    ReadingTab.set_outline_selection: 0ms timer FIRED. Setting focus to BOTTOM TAB's widget."),
+                            widget.setFocus(),  # <--- THIS IS THE FIX
+                            print(
+                                f"    ReadingTab.set_outline_selection: FINAL focus is: {QApplication.instance().focusWidget()}")
+                        ))
+                        # --- END FIX ---
+                        return  # We are done.
 
         # --- Part 3: Fallback Focus ---
         if outline_id != 0:
@@ -1179,7 +1204,7 @@ class ReadingNotesTab(QWidget):
 
         # [FIX] Check for standard web links using their schemes
         elif url.scheme() in ("http", "https"):
-            QDesktopServices.openUrl(url)
+                QDesktopServices.openUrl(url)
 
     def _create_reading_menu(self, menu_bar: QMenuBar):
         settings_menu = menu_bar.addMenu("Reading Settings")
