@@ -17,8 +17,10 @@ from tabs.mindmap_tab import MindmapTab
 from tabs.assignment_tab import AssignmentTab
 from tabs.reading_notes_tab import ReadingNotesTab
 from tabs.synthesis_tab import SynthesisTab
-from tabs.graph_view_tab import GraphViewTab
+from tabs.graph_view_tab import GraphViewTab  # <-- This now imports the NEW Obsidian-style tab
 from tabs.todo_list_tab import TodoListTab
+
+# from tabs.obsidian_test_tab import ObsidianTestTab  # <-- REMOVED
 
 try:
     from dialogs.add_reading_dialog import AddReadingDialog
@@ -42,9 +44,10 @@ class ProjectDashboardWidget(QWidget):
         self.reading_tabs = {}  # Stores {reading_id: ReadingNotesTab}
         self.synthesis_tab = None
         self.graph_view_tab = None
-        self.todo_list_tab = None  # Added
-        self.assignment_tab = None  # Added
-        self.mindmaps_tab = None  # Added
+        self.obsidian_test_tab = None  # <-- ADDED
+        self.todo_list_tab = None
+        self.assignment_tab = None
+        self.mindmaps_tab = None
 
         # --- FIX: Add flag to prevent save-on-jump ---
         self._programmatic_tab_change = False
@@ -209,6 +212,10 @@ class ProjectDashboardWidget(QWidget):
         self.reading_tabs.clear()
         self.synthesis_tab = None
         self.graph_view_tab = None
+        # self.obsidian_test_tab = None  # <-- REMOVED
+        self.todo_list_tab = None
+        self.assignment_tab = None
+        self.mindmaps_tab = None
 
         settings_menu = self.menu_bar.addMenu("Settings")
         edit_instr_action = QAction("Edit Dashboard Instructions", self)
@@ -228,20 +235,24 @@ class ProjectDashboardWidget(QWidget):
 
         # --- Add Synthesis Tab ---
         self.synthesis_tab = SynthesisTab(self.db, self.project_id)
-        # --- MODIFIED: Connect to new 4-arg signal ---
         self.synthesis_tab.openReading.connect(self.open_reading_tab)
-        # --- END MODIFIED ---
         self.synthesis_tab.tagsUpdated.connect(self._on_tags_updated)
         self.top_tab_widget.addTab(self.synthesis_tab, "Synthesis")
 
         # --- Add Graph View Tab (RENAMED) ---
         self.graph_view_tab = GraphViewTab(self.db, self.project_id)
-        # --- MODIFIED: Connect to new 4-arg signal ---
         self.graph_view_tab.readingDoubleClicked.connect(self.open_reading_tab)
-        # --- END MODIFIED ---
         self.graph_view_tab.tagDoubleClicked.connect(self.open_tag_from_graph)
-        self.top_tab_widget.addTab(self.graph_view_tab, "Connections")  # <-- RENAMED
-        # --- END RENAMED ---
+        self.graph_view_tab.tagsUpdated.connect(self._on_tags_updated)
+        self.top_tab_widget.addTab(self.graph_view_tab, "Connections")
+
+        # ---!!--- REMOVED OBSIDIAN TEST TAB ---!!---
+        # self.obsidian_test_tab = ObsidianTestTab(self.db, self.project_id)
+        # self.obsidian_test_tab.readingDoubleClicked.connect(self.open_reading_tab)
+        # self.obsidian_test_tab.tagDoubleClicked.connect(self.open_tag_from_graph)
+        # self.obsidian_test_tab.tagsUpdated.connect(self._on_tags_updated)
+        # self.top_tab_widget.addTab(self.obsidian_test_tab, "Obsidian Test")
+        # ---!!--- END REMOVED ---!!---
 
         # --- NEW: Add To-Do List Tab ---
         self.todo_list_tab = TodoListTab(self.db, self.project_id)
@@ -295,17 +306,11 @@ class ProjectDashboardWidget(QWidget):
             if hasattr(self, 'assignment_tab') and isinstance(self.assignment_tab, AssignmentTab):
                 self.assignment_tab.load_data(self.project_details)
 
-            # --- NEW: Load Synthesis Tab Data ---
             if self.synthesis_tab:
-                # --- MODIFIED: Pass project_details ---
                 self.synthesis_tab.load_tab_data(self.project_details)
-                # --- END MODIFIED ---
-            # --- END NEW ---
 
-            # --- NEW: Load To-Do List Tab Data ---
             if self.todo_list_tab:
                 self.todo_list_tab.load_items()
-            # --- END NEW ---
 
             # Call load_data() on each reading tab
             for tab in self.reading_tabs.values():
@@ -432,39 +437,29 @@ class ProjectDashboardWidget(QWidget):
             finally:
                 self.top_tab_widget.blockSignals(False)
 
-    # --- NEW: Tab Switching Logic ---
     @Slot(int)
     def on_top_tab_changed(self, index):
         """Called when the main tab (Dashboard, Mindmap, Reading, etc) changes."""
-
-        # --- FIX: If this change was programmatic, do nothing. ---
         if self._programmatic_tab_change:
             return
-        # --- END FIX ---
 
         # First, save everything (now only happens on USER clicks)
         self.save_all_editors()
 
-        # Next, check if we switched *to* the Synthesis tab
+        # Next, check if we switched *to* a specific tab
         current_widget = self.top_tab_widget.widget(index)
         if current_widget == self.synthesis_tab:
-            # Reload synthesis data in case anchors were added
-            # --- MODIFIED: Pass project_details ---
             self.synthesis_tab.load_tab_data(self.project_details)
-            # --- END MODIFIED ---
         elif current_widget == self.mindmaps_tab:
-            # Reload mindmap list
             self.mindmaps_tab.load_mindmaps()
-        # --- NEW: Load graph when tab is clicked (PHASE 3) ---
         elif current_widget == self.graph_view_tab:
             self.graph_view_tab.load_graph()
-        # --- END NEW ---
-        # --- NEW: Load To-Do list when tab is clicked ---
+        # ---!!--- REMOVED OBSIDIAN TEST TAB ---!!---
+        # elif current_widget == self.obsidian_test_tab:
+        #     self.obsidian_test_tab.load_graph()
+        # ---!!--- END REMOVED ---!!---
         elif current_widget == self.todo_list_tab:
             self.todo_list_tab.load_items()
-        # --- END NEW ---
-
-    # --- END NEW ---
 
     @Slot()
     def save_all_editors(self):
@@ -488,7 +483,7 @@ class ProjectDashboardWidget(QWidget):
         for tab in self.bottom_tabs:
             def cb(field):
                 return lambda html: self.db.update_project_text_field(self.project_id, field,
-                                                                       html) if html is not None else None
+                                                                      html) if html is not None else None
 
             tab.get_editor_content(cb(tab.text_field))
 
@@ -501,10 +496,8 @@ class ProjectDashboardWidget(QWidget):
         if hasattr(self, 'assignment_tab') and isinstance(self.assignment_tab, AssignmentTab):
             self.assignment_tab.save_editors()
 
-        # --- NEW: Save Synthesis tab editors ---
         if self.synthesis_tab and hasattr(self.synthesis_tab, 'save_editors'):
             self.synthesis_tab.save_editors()
-        # --- END NEW ---
 
     @Slot()
     def open_edit_instructions(self):
@@ -526,15 +519,11 @@ class ProjectDashboardWidget(QWidget):
                     if hasattr(tab, 'update_instructions'):
                         tab.update_instructions()
 
-    # --- NEW: Readings Tree Interactions ---
-
     @Slot(QTreeWidgetItem, int)
     def on_reading_double_clicked(self, item, column):
         """Switches to the corresponding tab when a reading is double-clicked."""
         reading_id = item.data(0, Qt.ItemDataRole.UserRole)
-        # --- NEW: Use the shared function ---
         self.open_reading_from_graph(0, reading_id)
-        # --- END NEW ---
 
     @Slot(QPoint)
     def show_readings_context_menu(self, position):
@@ -630,10 +619,8 @@ class ProjectDashboardWidget(QWidget):
                 self.top_tab_widget.blockSignals(True)
                 self.editor_tab_widget.blockSignals(True)
                 try:
-                    # --- FIX: Must re-fetch details *after* save ---
                     current_project_details = self.db.get_item_details(self.project_id)
                     self.load_project(current_project_details)
-                    # --- END FIX ---
                     self.load_all_editor_content()
                 finally:
                     self.top_tab_widget.blockSignals(False)
@@ -645,14 +632,6 @@ class ProjectDashboardWidget(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not reorder readings: {e}")
 
-    # --- END NEW ---
-
-    # --- NEW: Slots for Synthesis Tab ---
-    # ##################################################################
-    # #
-    # #                      --- MODIFICATION START (DIAGNOSTICS) ---
-    # #
-    # ##################################################################
     @Slot(int, int, int, int, str)
     def open_reading_tab(self, anchor_id, reading_id, outline_id, item_link_id=0, item_type=''):
         """
@@ -685,8 +664,6 @@ class ProjectDashboardWidget(QWidget):
 
         # Tell the tab to select the outline item
         if hasattr(tab_widget, 'set_outline_selection'):
-            # [FIX] Use a 50ms timer to ensure the tab switch is
-            # fully processed before we try to select items and set focus.
             print(f"  Dashboard: Queuing set_outline_selection with 50ms timer...")
 
             def _apply_selection(tab=tab_widget, aid=anchor_id, oid=outline_id,
@@ -695,12 +672,6 @@ class ProjectDashboardWidget(QWidget):
                 tab.set_outline_selection(aid, oid, link_id, link_type)
 
             QTimer.singleShot(50, _apply_selection)
-
-    # ##################################################################
-    # #
-    # #                      --- MODIFICATION END ---
-    # #
-    # ##################################################################
 
     @Slot()
     def _on_tags_updated(self):
@@ -712,31 +683,25 @@ class ProjectDashboardWidget(QWidget):
         print("Project Dashboard: Detected tag update. Refreshing UI...")
         # Refresh the synthesis tab itself (for counts)
         if self.synthesis_tab:
-            # --- MODIFIED: Pass project_details ---
             self.synthesis_tab.load_tab_data(self.project_details)
-            # --- END MODIFIED ---
 
         # Refresh all open reading tabs
         for reading_tab in self.reading_tabs.values():
             if hasattr(reading_tab, 'refresh_anchor_formatting'):
                 reading_tab.refresh_anchor_formatting()
 
-        # --- NEW: Refresh graph view ---
         if self.graph_view_tab:
             self.graph_view_tab.load_graph()
-        # --- END NEW ---
 
-    # --- END NEW ---
+        # ---!!--- REMOVED OBSIDIAN TEST TAB ---!!---
+        # if self.obsidian_test_tab:
+        #     self.obsidian_test_tab.load_graph()
+        # ---!!--- END REMOVED ---!!---
 
-    # --- NEW: Slots for Graph View Tab ---
-    # --- MODIFIED: Pass all arguments ---
     @Slot(int, int, int, int, str)
     def open_reading_from_graph(self, anchor_id, reading_id, outline_id=0, item_link_id=0, item_type=''):
         """Slot to open a reading tab from the graph view."""
-        # This re-uses the logic from the Synthesis tab's "jump to"
         self.open_reading_tab(anchor_id, reading_id, outline_id, item_link_id, item_type)
-
-    # --- END MODIFIED ---
 
     @Slot(int)
     def open_tag_from_graph(self, tag_id):
@@ -752,15 +717,11 @@ class ProjectDashboardWidget(QWidget):
 
         # 2. Tell the synthesis tab to select the tag
         if hasattr(self.synthesis_tab, 'select_tag_by_id'):
-            # --- FIX for Symptom 3: Load data *before* selecting ---
             print(f"  Dashboard: Jumping to Synthesis. Loading tab data...")
             self.synthesis_tab.load_tab_data(self.project_details)
             print(f"  Dashboard: Telling Synthesis tab to select tag {tag_id}")
             self.synthesis_tab.select_tag_by_id(tag_id)
             print(f"  Dashboard: Synthesis jump complete.")
-            # --- END FIX ---
-
-    # --- END NEW ---
 
     @Slot()
     def return_to_home(self):

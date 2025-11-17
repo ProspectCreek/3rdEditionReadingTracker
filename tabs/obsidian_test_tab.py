@@ -1,6 +1,4 @@
-# prospectcreek/3rdeditionreadingtracker/tabs/graph_view_tab.py
-# This file is the NEW implementation, promoted from obsidian_test_tab.py
-
+# prospectcreek/3rdeditionreadingtracker/tabs/obsidian_test_tab.py
 import sys
 import math
 import sqlite3
@@ -19,23 +17,244 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QPainter, QBrush, QColor, QPen, QFont, QPainterPath, QFontMetrics
 
-# Import supporting classes from the new helper file
+# Import supporting classes from the existing graph_view_tab
 try:
-    from tabs.graph_helpers import ZoomableGraphicsView, GraphEdgeItem, ObsidianNodeItem, ObsidianGraphScene
+    from tabs.graph_view_tab import ZoomableGraphicsView, GraphEdgeItem
 except ImportError:
-    QMessageBox.critical(None, "Import Error", "Could not import graph components from tabs.graph_helpers.py")
+    QMessageBox.critical(None, "Import Error", "Could not import graph components from tabs.graph_view_tab.py")
     sys.exit(1)
 
 try:
     from dialogs.edit_tag_dialog import EditTagDialog
 except ImportError:
-    print("Error: Could not import EditTagDialog for GraphViewTab")
+    print("Error: Could not import EditTagDialog for ObsidianTestTab")
     EditTagDialog = None
 
 
-class GraphViewTab(QWidget):
+# --- NEW OBSIDIAN-STYLE NODE ---
+class ObsidianNodeItem(QGraphicsItem):
     """
-    Main widget for the "Connections" tab, using the Obsidian-style graph.
+    A new node item inspired by Obsidian.
+    It renders as a colored circle with a text label *below* it.
+    """
+
+    NODE_RADIUS = 12
+
+    def __init__(self, node_id, name, node_type, data, fill_color, border_color, graph_view, parent=None):
+        super().__init__(parent)
+        self.node_id = node_id
+        self.name = name
+        self.node_type = node_type
+        self.data = data  # Stores IDs and extra info
+        self.graph_view = graph_view
+        self.edges = []
+
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges, True)
+        self.setCacheMode(QGraphicsItem.CacheMode.DeviceCoordinateCache)
+        self.setZValue(1)
+        self.setAcceptHoverEvents(True)
+
+        # 1. The Text Label
+        self.text_item = QGraphicsTextItem(self)
+        self.text_item.setPlainText(self.name)
+        self.text_item.setFont(QFont("Arial", 9))
+        self.text_item.setDefaultTextColor(QColor("#333"))
+
+        # Center the text horizontally under the node
+        text_rect = self.text_item.boundingRect()
+        self.text_item.setPos(-text_rect.width() / 2, self.NODE_RADIUS + 2)
+
+        # 2. The Circle Colors (passed in)
+        self.fill_color = fill_color
+        self.border_color = border_color
+
+        # 3. Tooltip
+        self.update_node_scale_and_tooltip()
+
+        # 4. Shadow
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(10)
+        shadow.setColor(QColor(0, 0, 0, 80))
+        shadow.setOffset(1, 1)
+        self.setGraphicsEffect(shadow)
+
+    def boundingRect(self):
+        """The bounding rect must include the circle AND the text below it."""
+        circle_rect = QRectF(-self.NODE_RADIUS, -self.NODE_RADIUS, self.NODE_RADIUS * 2, self.NODE_RADIUS * 2)
+        text_rect = self.text_item.boundingRect().translated(self.text_item.pos())
+        return circle_rect.united(text_rect)
+
+    def shape(self):
+        """The shape for collision and selection is just the circle."""
+        path = QPainterPath()
+        path.addEllipse(QPointF(0, 0), self.NODE_RADIUS, self.NODE_RADIUS)
+        return path
+
+    def paint(self, painter, option, widget):
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Draw Circle
+        brush = QBrush(self.fill_color)
+        pen = QPen(self.border_color, 1.5)
+
+        if self.isSelected():
+            pen.setColor(QColor("#00AEEB"))  # Bright cyan for selection
+            pen.setWidth(3)
+
+        painter.setPen(pen)
+        painter.setBrush(brush)
+        painter.drawEllipse(QPointF(0, 0), self.NODE_RADIUS, self.NODE_RADIUS)
+
+        # Text is a child item, so it paints itself
+
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
+            for edge in self.edges:
+                edge.update_position()
+
+        if change == QGraphicsItem.GraphicsItemChange.ItemSelectedChange:
+            if self.scene():
+                if hasattr(self.scene(), 'update_highlights'):
+                    QTimer.singleShot(0, self.scene().update_highlights)
+
+        return super().itemChange(change, value)
+
+    def mouseDoubleClickEvent(self, event):
+        """Emit the correct signal based on node type."""
+        if self.node_type == 'reading':
+            self.graph_view.emit_reading_double_clicked(self.data.get('reading_id', 0))
+        elif self.node_type == 'tag':
+            self.graph_view.emit_tag_double_clicked(self.data.get('tag_id', 0))
+        elif self.data.get('anchor_id'):
+            self.graph_view.emit_anchor_double_clicked(self.data.get('anchor_id', 0))
+        event.accept()
+
+    def add_edge(self, edge):
+        if edge not in self.edges:
+            self.edges.append(edge)
+
+    def get_connection_point(self, to_point):
+        """Finds the intersection point on the node's circle edge."""
+        center_point = self.pos()
+        line = QLineF(center_point, to_point)
+        if line.length() == 0:
+            return center_point
+
+        # Calculate point on the circumference
+        angle = line.angle()
+        dx = self.NODE_RADIUS * math.cos(math.radians(angle))
+        dy = -self.NODE_RADIUS * math.sin(math.radians(angle))  # y-axis is inverted
+
+        return center_point + QPointF(dx, dy)
+
+    def get_connected_nodes(self):
+        nodes = set()
+        for edge in self.edges:
+            if edge.from_node == self:
+                nodes.add(edge.to_node)
+            else:
+                nodes.add(edge.from_node)
+        return nodes
+
+    def update_node_scale_and_tooltip(self):
+        """Sets the node's scale and tooltip."""
+        connection_count = len(self.edges)
+
+        # Scale based on connections
+        scale_factor = 1.0 + (math.sqrt(connection_count) / 4.0)
+        self.setScale(scale_factor)
+
+        # Set tooltip
+        tooltip_parts = [f"Name: {self.name}"]
+        if self.node_type == 'reading':
+            if self.data.get('full_title') and self.data['full_title'] != self.name:
+                tooltip_parts.append(f"Title: {self.data['full_title']}")
+            if self.data.get('author'):
+                tooltip_parts.append(f"Author: {self.data['author']}")
+        elif self.node_type == 'tag':
+            tooltip_parts = [f"Tag: {self.name}"]
+        elif self.data.get('summary_text'):
+            tooltip_parts = [f"Type: {self.data.get('item_type', 'item')}", f"Text: {self.data['summary_text']}"]
+
+        tooltip_parts.append(f"Connections: {connection_count}")
+        self.setToolTip("\n".join(tooltip_parts))
+
+    def set_highlight_state(self, highlight):
+        if highlight:
+            self.setOpacity(1.0)
+            self.setZValue(2)
+        else:
+            self.setOpacity(0.2)
+            self.setZValue(1)
+
+    def reset_highlight_state(self):
+        self.setOpacity(1.0)
+        self.setZValue(1)
+
+    def set_colors(self, fill_color, border_color):
+        """Public method to update colors from the control panel."""
+        self.fill_color = fill_color
+        self.border_color = border_color
+        self.update()  # Trigger a repaint
+
+
+# --- END NEW NODE ---
+
+
+class ObsidianGraphScene(QGraphicsScene):
+    """Custom scene to manage highlight updates for new node type."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.all_nodes = []
+        self.all_edges = []
+
+    def update_highlights(self):
+        selected_nodes = self.selectedItems()
+
+        if not selected_nodes:
+            for node in self.all_nodes:
+                node.reset_highlight_state()
+            for edge in self.all_edges:
+                edge.reset_highlight_state()
+            return
+
+        highlight_set = set(selected_nodes)
+        edges_to_highlight = set()
+
+        for node in selected_nodes:
+            if isinstance(node, ObsidianNodeItem):
+                for edge in node.edges:
+                    edges_to_highlight.add(edge)
+                    highlight_set.add(edge.from_node)
+                    highlight_set.add(edge.to_node)
+
+        for node in self.all_nodes:
+            node.set_highlight_state(node in highlight_set)
+
+        for edge in self.all_edges:
+            edge.set_highlight_state(edge in edges_to_highlight)
+
+    def clear_graph(self):
+        self.clear()
+        self.all_nodes.clear()
+        self.all_edges.clear()
+
+    def add_node(self, node):
+        self.all_nodes.append(node)
+        self.addItem(node)
+
+    def add_edge(self, edge):
+        self.all_edges.append(edge)
+        self.addItem(edge)
+
+
+class ObsidianTestTab(QWidget):
+    """
+    Test widget for the "Obsidian" style graph.
+    Includes a collapsible control panel.
     """
     readingDoubleClicked = Signal(int, int, int, int,
                                   str)  # (anchor_id, reading_id, outline_id, item_link_id, item_type)
@@ -104,7 +323,6 @@ class GraphViewTab(QWidget):
         """Creates the color-picker buttons."""
         self.color_buttons = {}
 
-        # These are the types for the *project* graph
         node_types = [
             'reading', 'tag', 'dq', 'term',
             'proposition', 'argument', 'theory', 'default'
@@ -113,6 +331,7 @@ class GraphViewTab(QWidget):
         for node_type in node_types:
             button = QPushButton("Change Color")
             button.setToolTip(f"Set color for {node_type} nodes")
+            # Store node_type in the button using a dynamic property
             button.setProperty("node_type", node_type)
             button.clicked.connect(self.open_color_picker)
 
@@ -186,7 +405,7 @@ class GraphViewTab(QWidget):
                     anchor.get('item_type', '')
                 )
         except Exception as e:
-            print(f"GraphViewTab: Error emitting anchor click: {e}")
+            print(f"ObsidianTestTab: Error emitting anchor click: {e}")
 
     @Slot(int)
     def emit_tag_double_clicked(self, tag_id):
@@ -213,7 +432,7 @@ class GraphViewTab(QWidget):
             QMessageBox.critical(self, "Error", f"Could not load graph data: {e}")
             return
 
-        scene_size = 300 * math.sqrt(len(data['readings']) + len(data['tags']) + len(data.get('virtual_anchors', [])))
+        scene_size = 300 * math.sqrt(len(data['readings']) + len(data['tags']) + len(data['virtual_anchors']))
 
         # 1. Create Reading Nodes
         for reading in data['readings']:
@@ -406,77 +625,16 @@ class GraphViewTab(QWidget):
             if not node.isSelected():
                 self.scene.clearSelection()
                 node.setSelected(True)
-
-            # Allow renaming for tags and readings
-            if node.node_type in ['reading', 'tag']:
-                menu.addAction("Rename", lambda: node.start_rename_editor())
-
-            # Allow deleting for all types
-            menu.addAction("Delete", lambda: self.delete_node(node))
+            # For now, no rename/delete in test tab
+            menu.addAction("View Info (Tooltip)", lambda: None).setEnabled(False)
 
         elif isinstance(item, GraphEdgeItem):
             menu.addAction("View Anchors (Tag <-> Reading)", lambda: self.view_anchors(item))
 
         else:
-            # Clicked on empty space
-            try:
-                # Find the dashboard to call 'add_reading'
-                parent_dashboard = self.parentWidget()
-                while parent_dashboard and not hasattr(parent_dashboard, 'add_reading'):
-                    parent_dashboard = parent_dashboard.parentWidget()
-
-                if hasattr(parent_dashboard, 'add_reading'):
-                    menu.addAction("Add New Reading...", parent_dashboard.add_reading)
-                else:
-                    print("Could not find add_reading method on parent.")
-            except Exception as e:
-                print(f"Error finding add_reading method: {e}")
-
             menu.addAction("Add New Tag...", self.create_new_tag_from_graph)
 
         menu.exec(self.view.mapToGlobal(pos))
-
-    @Slot(ObsidianNodeItem)
-    def delete_node(self, node):
-        """Deletes the selected node from the graph and DB."""
-        if node.node_type == 'reading':
-            reply = QMessageBox.question(self, "Delete Reading",
-                                         f"Are you sure you want to delete '{node.name}'?\nThis will delete the reading, its outline, and all attachments.",
-                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                                         QMessageBox.StandardButton.No)
-            if reply == QMessageBox.StandardButton.Yes:
-                try:
-                    self.db.delete_reading(node.data['reading_id'])
-                    self.load_graph()
-                except Exception as e:
-                    QMessageBox.critical(self, "Error", f"Could not delete reading: {e}")
-
-        elif node.node_type == 'tag':
-            reply = QMessageBox.question(self, "Delete Tag",
-                                         f"Are you sure you want to delete '{node.name}'?\nThis will delete the tag and all its anchors from all projects.",
-                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                                         QMessageBox.StandardButton.No)
-            if reply == QMessageBox.StandardButton.Yes:
-                try:
-                    self.db.delete_tag_and_anchors(node.data['tag_id'])
-                    self.load_graph()
-                    self.tagsUpdated.emit()
-                except Exception as e:
-                    QMessageBox.critical(self, "Error", f"Could not delete tag: {e}")
-
-        elif node.data.get('anchor_id'):
-            reply = QMessageBox.question(self, "Delete Virtual Anchor",
-                                         f"Are you sure you want to delete this virtual anchor?\n\n{node.data['summary_text']}\n\nThis will only remove the tag link, not the item itself.",
-                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                                         QMessageBox.StandardButton.No)
-            if reply == QMessageBox.StandardButton.Yes:
-                try:
-                    # Deleting the anchor *is* the operation.
-                    self.db.delete_anchor(node.data['anchor_id'])
-                    self.load_graph()
-                    self.tagsUpdated.emit()
-                except Exception as e:
-                    QMessageBox.critical(self, "Error", f"Could not delete virtual anchor: {e}")
 
     @Slot(GraphEdgeItem)
     def view_anchors(self, edge):
@@ -511,29 +669,3 @@ class GraphViewTab(QWidget):
                 QMessageBox.warning(self, "Tag Exists", f"A tag named '{new_name}' already exists.")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not create tag: {e}")
-
-    @Slot(int, str)
-    def rename_reading(self, reading_id, new_name):
-        """Updates a reading's nickname in the database."""
-        try:
-            self.db.update_reading_nickname(reading_id, new_name)
-            self.load_graph()
-            # Also emit signal to update dashboard tree
-            self.tagsUpdated.emit()
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Could not rename reading: {e}")
-            self.load_graph()
-
-    @Slot(int, str)
-    def rename_tag(self, tag_id, new_name):
-        """Updates a tag's name in the database."""
-        try:
-            self.db.rename_tag(tag_id, new_name)
-            self.load_graph()
-            self.tagsUpdated.emit()
-        except sqlite3.IntegrityError:
-            QMessageBox.warning(self, "Tag Exists", f"A tag named '{new_name}' already exists.")
-            self.load_graph()
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Could not rename tag: {e}")
-            self.load_graph()

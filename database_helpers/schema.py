@@ -120,6 +120,13 @@ class SchemaSetup:
 
         # --- Level 1: Depends on items ---
 
+        # ---!!--- ADD NEW TABLE CREATION ---!!---
+        if hasattr(self, 'create_graph_settings_table'):
+            self.create_graph_settings_table()
+        if hasattr(self, 'create_global_graph_settings_table'):
+            self.create_global_graph_settings_table()
+        # ---!!--- END ADD ---!!---
+
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS readings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

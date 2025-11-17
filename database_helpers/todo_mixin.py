@@ -1,7 +1,6 @@
 class TodoMixin:
     # ----------------------- NEW: To-Do List Functions -----------------------
 
-    # --- FIX: Renamed this method to match what todo_list_tab.py is calling ---
     def get_project_todo_items(self, project_id):
         """Gets a list of all to-do items for a project, ordered."""
         self.cursor.execute("""
@@ -12,8 +11,10 @@ class TodoMixin:
         """, (project_id,))
         return self._map_rows(self.cursor.fetchall())
 
-    # --- ADDED ALIAS: Keep the old name just in case ---
+    # --- ALIASES to prevent future errors ---
+    get_project_todos = get_project_todo_items
     get_todo_items = get_project_todo_items
+    # --- END ALIASES ---
 
     def get_todo_item_details(self, item_id):
         """Gets the full details for a single to-do item."""
