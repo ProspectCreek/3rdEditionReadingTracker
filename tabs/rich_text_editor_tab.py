@@ -498,6 +498,7 @@ class RichTextEditorTab(QWidget):
                 self.select_anchor_at_cursor(anchor_cursor)
                 self.editor.setTextCursor(anchor_cursor)
                 self.editor.ensureCursorVisible()
+                self.editor.setFocus()  # <--- ADD THIS LINE
                 return True
 
             current_pos += 1

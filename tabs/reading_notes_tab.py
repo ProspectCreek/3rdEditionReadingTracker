@@ -851,7 +851,7 @@ class ReadingNotesTab(QWidget):
 
     # ##################################################################
     # #
-    # #                      --- MODIFICATION START (DIAGNOSTICS) ---
+    # #                      --- MODIFICATION START (FOCUS FIX) ---
     # #
     # ##################################################################
     @Slot(int, int, int, str)
@@ -886,22 +886,27 @@ class ReadingNotesTab(QWidget):
         if item_link_id > 0:
             self._pending_anchor_focus = None
             tabs_to_check = [
-                # (Tab object, Tab index)
+                # (Tab object, Tab index, tree_widget_name)
                 (getattr(self, 'driving_question_tab', None),
-                 self.bottom_right_tabs.indexOf(getattr(self, 'driving_question_tab', None))),
+                 self.bottom_right_tabs.indexOf(getattr(self, 'driving_question_tab', None)),
+                 'tree_widget'),
                 (getattr(self, 'leading_propositions_tab', None),
-                 self.bottom_right_tabs.indexOf(getattr(self, 'leading_propositions_tab', None))),
+                 self.bottom_right_tabs.indexOf(getattr(self, 'leading_propositions_tab', None)),
+                 'item_list'),
                 (getattr(self, 'key_terms_tab', None),
-                 self.bottom_right_tabs.indexOf(getattr(self, 'key_terms_tab', None))),
+                 self.bottom_right_tabs.indexOf(getattr(self, 'key_terms_tab', None)),
+                 'tree_widget'),
                 (getattr(self, 'arguments_tab', None),
-                 self.bottom_right_tabs.indexOf(getattr(self, 'arguments_tab', None))),
+                 self.bottom_right_tabs.indexOf(getattr(self, 'arguments_tab', None)),
+                 'tree_widget'),
                 (getattr(self, 'theories_tab', None),
-                 self.bottom_right_tabs.indexOf(getattr(self, 'theories_tab', None))),
+                 self.bottom_right_tabs.indexOf(getattr(self, 'theories_tab', None)),
+                 'tree_widget'),
             ]
 
-            for tab, tab_index in tabs_to_check:
-                if tab and tab_index != -1 and hasattr(tab, 'tree_widget'):
-                    tree = tab.tree_widget
+            for tab, tab_index, tree_name in tabs_to_check:
+                if tab and tab_index != -1 and hasattr(tab, tree_name):
+                    tree = getattr(tab, tree_name) # Get the tree/list widget
                     it = QTreeWidgetItemIterator(tree)
                     while it.value():
                         item = it.value()
@@ -916,13 +921,11 @@ class ReadingNotesTab(QWidget):
                                 f"    ReadingTab.set_outline_selection: Set item in BOTTOM tab. Focus is now: {QApplication.instance().focusWidget()}")
 
                             # --- FIX: Re-introduce 0ms timer to set focus ---
-                            # This queues the focus change to happen *after*
-                            # all event processing for the tab switch is complete.
-                            print(f"    ReadingTab.set_outline_selection: Queuing 0ms timer to focus outline_tree...")
-                            QTimer.singleShot(0, lambda: (
+                            print(f"    ReadingTab.set_outline_selection: Queuing 0ms timer to focus BOTTOM TAB's tree/list.")
+                            QTimer.singleShot(0, lambda tree=tree: (  # <--- CAPTURE 'tree' WIDGET
                                 print(
-                                    f"    ReadingTab.set_outline_selection: 0ms timer FIRED. Setting focus to outline_tree."),
-                                self.outline_tree.setFocus(),
+                                    f"    ReadingTab.set_outline_selection: 0ms timer FIRED. Setting focus to BOTTOM TAB's tree/list."),
+                                tree.setFocus(), # <--- THIS IS THE FIX
                                 print(
                                     f"    ReadingTab.set_outline_selection: FINAL focus is: {QApplication.instance().focusWidget()}")
                             ))
@@ -931,8 +934,6 @@ class ReadingNotesTab(QWidget):
                         it += 1
 
         # --- Part 3: Fallback Focus ---
-        # If we only selected an outline item (no item_link_id),
-        # or if the item_link_id wasn't found.
         if outline_id != 0:
             # --- FIX: Re-introduce 0ms timer to set focus ---
             print(f"    ReadingTab.set_outline_selection: (Fallback) Queuing 0ms timer to focus outline_tree...")
