@@ -19,9 +19,11 @@ from database_helpers.synthesis_mixin import SynthesisMixin
 from database_helpers.graph_mixin import GraphMixin
 from database_helpers.terminology_mixin import TerminologyMixin
 from database_helpers.propositions_mixin import PropositionsMixin
-from database_helpers.todo_mixin import TodoMixin
+from database_helpers.todo_mixin import TodoMixin  # <-- This line is correct
 from database_helpers.key_terms_mixin import KeyTermsMixin
 from database_helpers.theories_mixin import TheoriesMixin
+# from database_helpers.key_terms_mixin import KeyTermsMixin # <-- REMOVED DUPLICATE
+# from database_helpers.theories_mixin import TheoriesMixin # <-- REMOVED DUPLICATE
 from database_helpers.arguments_mixin import ArgumentsMixin
 from database_helpers.utility_mixin import UtilityMixin
 from database_helpers.graph_settings_mixin import GraphSettingsMixin
@@ -42,6 +44,7 @@ class DatabaseManager(
     GraphMixin,
     TerminologyMixin,
     PropositionsMixin,
+    TodoMixin,  # <-- ADD THIS MISSING LINE
     KeyTermsMixin,
     TheoriesMixin,
     ArgumentsMixin,
