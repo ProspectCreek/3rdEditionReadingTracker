@@ -69,9 +69,10 @@ class RichTextEditorTab(QWidget):
 
     # --- END NEW ---
 
-    def __init__(self, title: str = "Editor", parent=None):
+    def __init__(self, title: str = "Editor", spell_checker_service=None, parent=None):
         super().__init__(parent)
         self.editor_title = title
+        self.spell_checker_service = spell_checker_service  # <-- STORE SERVICE
 
         main = QVBoxLayout(self)
         main.setContentsMargins(6, 4, 6, 6)
@@ -242,6 +243,15 @@ class RichTextEditorTab(QWidget):
         # --- Connect the editor's built-in signal ---
         self.editor.anchorClicked.connect(self.anchorClicked)
         # --- END NEW ---
+        # --- NEW: Add Spell Check Highlighter ---
+        if self.spell_checker_service:
+            try:
+                from .spell_check_highlighter import SpellCheckHighlighter
+                self.highlighter = SpellCheckHighlighter(self.editor.document(), self.spell_checker_service)
+            except ImportError as e:
+                print(f"Could not import SpellCheckHighlighter: {e}")
+        # --- END NEW ---
+
         main.addWidget(self.editor, 1)
 
         # Apply defaults to the current typing format immediately
@@ -297,6 +307,47 @@ class RichTextEditorTab(QWidget):
     def setPlaceholderText(self, text: str):
         """Sets the placeholder text for the underlying QTextEdit."""
         self.editor.setPlaceholderText(text)
+
+    # --- NEW: Spell Check Context Menu Methods ---
+
+
+    def correct_word(self, cursor, new_word):
+        """Replaces the selected word with the suggestion."""
+
+        # We need to re-select the word the cursor was on,
+        # as the cursor itself doesn't retain the selection
+        # after the menu closes.
+        cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+
+        cursor.beginEditBlock()
+        cursor.removeSelectedText()
+        cursor.insertText(new_word)
+        cursor.endEditBlock()
+
+        # Manually trigger a re-highlight of the current block
+        if hasattr(self, 'highlighter'):
+            self.highlighter.rehighlightBlock(cursor.block())
+
+
+
+    def add_to_dictionary(self, word):
+        """Adds a word to the custom dictionary and re-highlights."""
+        if self.spell_checker_service:
+            # Clean the word before adding
+            cleaned_word = word.lower().strip(".,!?;:()[]{}'\"")
+
+            if not cleaned_word:
+                return
+
+            print(f"Adding '{cleaned_word}' to dictionary...")
+            self.spell_checker_service.add_to_dictionary(cleaned_word)
+
+            # Re-highlight the entire document to remove underlines
+            # from the newly added word.
+
+            if hasattr(self, 'highlighter'):
+                self.highlighter.rehighlight()
+    # --- END NEW ---
 
     # --- NEW: Anchor Formatting API ---
     def apply_anchor_format(self, anchor_id: int, tag_id: int, tag_name: str, comment: str, unique_doc_id: str):
@@ -540,12 +591,52 @@ class RichTextEditorTab(QWidget):
 
         anchor_id = self._get_anchor_id_from_format(char_format)
 
+        # --- NEW: Spell Check Logic ---
+        spell_menu = None
+        if self.spell_checker_service and not anchor_id:  # Don't spellcheck anchors
+            spell_cursor = self.editor.cursorForPosition(pos)
+            spell_cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+            word = spell_cursor.selectedText()
+
+            # Clean punctuation from word
+            cleaned_word = word.strip(".,!?;:()[]{}'\"")
+
+
+            if cleaned_word and self.spell_checker_service.is_misspelled(cleaned_word):
+                suggestions = self.spell_checker_service.suggest(cleaned_word)
+                spell_menu = QMenu("Spelling Suggestions")
+
+                if suggestions:
+                    for sug in suggestions:
+                        # We pass a *copy* of the cursor to the lambda
+                        action = QAction(sug, self)
+                        action.triggered.connect(
+                            lambda checked=False, c=QTextCursor(spell_cursor), w=sug: self.correct_word(c, w)
+                                )
+                        spell_menu.addAction(action)
+                else:
+                    no_sug_action = QAction("No suggestions found", self)
+                    no_sug_action.setEnabled(False)
+                    spell_menu.addAction(no_sug_action)
+
+            spell_menu.addSeparator()
+            add_dict_action = QAction(f"Add '{cleaned_word}' to Dictionary", self)
+            add_dict_action.triggered.connect(
+                lambda checked=False, w=cleaned_word: self.add_to_dictionary(w)
+                    )
+            spell_menu.addAction(add_dict_action)
+
+        if spell_menu:
+            menu.insertMenu(menu.actions()[0], spell_menu)
+            menu.insertSeparator(menu.actions()[1])
+        # --- END NEW ---
+
         menu.addSeparator()
 
         if anchor_id:
             # Clicked on an existing anchor.
             # We need to select the whole anchor to operate on it.
-            self.select_anchor_at_cursor(cursor)
+            self.select_anchor_at_cursor(cursor) # This also sets the editor's cursor
 
             edit_action = QAction("Edit Synthesis Anchor...", self)
             edit_action.triggered.connect(lambda: self.anchorEditTriggered.emit(anchor_id))

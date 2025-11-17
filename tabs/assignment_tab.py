@@ -35,10 +35,11 @@ class AssignmentTab(QWidget):
     and the assignment text editors.
     """
 
-    def __init__(self, db_manager, project_id, parent=None):
+    def __init__(self, db_manager, project_id, spell_checker_service=None, parent=None):
         super().__init__(parent)
         self.db = db_manager
         self.project_id = project_id
+        self.spell_checker_service = spell_checker_service  # <-- STORE SERVICE
         self._block_rubric_item_changed = False  # Flag to prevent signal loops
 
         # --- Main layout is VERTICAL ---
@@ -89,7 +90,7 @@ class AssignmentTab(QWidget):
         instructions_layout.setSpacing(4)
         instructions_label = QLabel("Assignment Instructions")
         instructions_label.setStyleSheet("font-weight: bold;")
-        self.instructions_editor = RichTextEditorTab("Assignment Instructions")
+        self.instructions_editor = RichTextEditorTab("Assignment Instructions", spell_checker_service=self.spell_checker_service) # <-- PASS SERVICE
         instructions_layout.addWidget(instructions_label)
         instructions_layout.addWidget(self.instructions_editor)
         instructions_widget.setLayout(instructions_layout)
@@ -101,7 +102,9 @@ class AssignmentTab(QWidget):
         draft_layout.setSpacing(4)
         draft_label = QLabel("Assignment Draft")
         draft_label.setStyleSheet("font-weight: bold;")
-        self.draft_editor = RichTextEditorTab("Assignment Draft")
+        self.draft_editor = RichTextEditorTab("Assignment Draft",
+                                              spell_checker_service=self.spell_checker_service)  # <-- PASS SERVICE
+        draft_layout.addWidget(draft_label)
         draft_layout.addWidget(draft_label)
         draft_layout.addWidget(self.draft_editor)
         draft_widget.setLayout(draft_layout)

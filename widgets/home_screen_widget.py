@@ -30,9 +30,10 @@ class HomeScreenWidget(QWidget):
 
     # --- END MODIFIED ---
 
-    def __init__(self, db_manager, parent=None):
+    def __init__(self, db_manager, spell_checker_service=None, parent=None):
         super().__init__(parent)
         self.db = db_manager  # --- NEW: Store db_manager ---
+        self.spell_checker_service = spell_checker_service  # <-- STORE SERVICE
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)

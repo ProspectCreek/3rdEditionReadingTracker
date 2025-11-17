@@ -9,7 +9,7 @@ class ElevatorAbstractTab(QWidget):
     A simple tab that just contains a rich text editor for 'Elevator Abstract'.
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, spell_checker_service=None, parent=None):
         super().__init__(parent)
 
         main_layout = QVBoxLayout(self)
@@ -19,5 +19,5 @@ class ElevatorAbstractTab(QWidget):
         instructions = QLabel("Instructions for Elevator Abstract go here.")
         main_layout.addWidget(instructions)
 
-        self.editor = RichTextEditorTab("Elevator Abstract")
+        self.editor = RichTextEditorTab("Elevator Abstract", spell_checker_service=spell_checker_service) # <-- PASS SERVICE
         main_layout.addWidget(self.editor)

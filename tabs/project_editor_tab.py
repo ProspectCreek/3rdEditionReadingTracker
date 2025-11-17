@@ -12,10 +12,13 @@ class ProjectEditorTab(QWidget):
       - load_data()
       - get_editor_content(callback)
     """
-    def __init__(self, db, project_id: int, text_field: str, project_root_dir: str = "", parent=None):
+
+    def __init__(self, db, project_id: int, text_field: str, project_root_dir: str = "", spell_checker_service=None,
+                 parent=None):
         super().__init__(parent)
         self.db = db
         self.project_id = project_id
+        self.spell_checker_service = spell_checker_service  # <-- STORE SERVICE
         self.text_field = text_field
         self.prompt_label = None  # MODIFIED: To hold the prompt label
 
@@ -48,7 +51,7 @@ class ProjectEditorTab(QWidget):
             self.prompt_label.setStyleSheet("font-style: italic; color: #555;") # Added styling
             layout.addWidget(self.prompt_label)
 
-        self.editor = RichTextEditorTab(title)
+        self.editor = RichTextEditorTab(title, spell_checker_service=self.spell_checker_service) # <-- PASS SERVICE
         layout.addWidget(self.editor, 1)
 
     # ---- API used by dashboard ----

@@ -18,6 +18,7 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tabs')
 
 try:
     from database_manager import DatabaseManager
+    from utils.spell_checker import GlobalSpellChecker  # <-- IMPORT NEW
     from widgets.home_screen_widget import HomeScreenWidget
     from widgets.project_dashboard_widget import ProjectDashboardWidget
     # We only import this for the type hint in closeEvent
@@ -28,20 +29,21 @@ except ImportError as e:
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, db):
+    def __init__(self, db, spell_checker_service):
         super().__init__()
         self.db = db
+        self.spell_checker_service = spell_checker_service  # <-- STORE SERVICE
         self.setWindowTitle("Reading Tracker (PySide6 Edition)")
 
         self.stacked_widget = QStackedWidget()
         self.setCentralWidget(self.stacked_widget)
 
         # --- Page 0: Home Screen ---
-        self.home_screen = HomeScreenWidget(self.db)
+        self.home_screen = HomeScreenWidget(self.db, self.spell_checker_service) # <-- PASS SERVICE
         self.stacked_widget.addWidget(self.home_screen)
 
         # --- Page 1: Project Dashboard ---
-        self.project_dashboard = ProjectDashboardWidget(self.db)
+        self.project_dashboard = ProjectDashboardWidget(self.db, self.spell_checker_service) # <-- PASS SERVICE
         self.stacked_widget.addWidget(self.project_dashboard)
 
         self.stacked_widget.setCurrentIndex(0)
@@ -169,8 +171,9 @@ def main():
     profile = QWebEngineProfile.defaultProfile()
     profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.MemoryHttpCache)
 
+    spell_checker_service = GlobalSpellChecker()  # <-- CREATE INSTANCE
     db = DatabaseManager()
-    window = MainWindow(db)
+    window = MainWindow(db, spell_checker_service) # <-- PASS INSTANCE
     window.show()
     sys.exit(app.exec())
 

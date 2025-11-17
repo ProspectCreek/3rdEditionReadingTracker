@@ -35,9 +35,10 @@ class ProjectDashboardWidget(QWidget):
     """Main project dashboard page (native editors, compact, true 50/50)."""
     returnToHome = Signal()
 
-    def __init__(self, db_manager, parent=None):
+    def __init__(self, db_manager, spell_checker_service=None, parent=None):
         super().__init__(parent)
         self.db = db_manager
+        self.spell_checker_service = spell_checker_service  # <-- STORE SERVICE
         self.project_details = None
         self.project_id = -1
         self.bottom_tabs = []
@@ -226,7 +227,7 @@ class ProjectDashboardWidget(QWidget):
 
         # --- MODIFIED: Tab Order ---
         if self.project_details.get('is_assignment', 0) == 1:
-            self.assignment_tab = AssignmentTab(self.db, self.project_id)
+            self.assignment_tab = AssignmentTab(self.db, self.project_id, spell_checker_service=self.spell_checker_service) # <-- PASS SERVICE
             self.top_tab_widget.addTab(self.assignment_tab, "Assignment")
 
         self.mindmaps_tab = MindmapTab(self.db, self.project_id)
@@ -234,13 +235,13 @@ class ProjectDashboardWidget(QWidget):
         # --- END MODIFIED: Tab Order ---
 
         # --- Add Synthesis Tab ---
-        self.synthesis_tab = SynthesisTab(self.db, self.project_id)
+        self.synthesis_tab = SynthesisTab(self.db, self.project_id, spell_checker_service=self.spell_checker_service) # <-- PASS SERVICE
         self.synthesis_tab.openReading.connect(self.open_reading_tab)
         self.synthesis_tab.tagsUpdated.connect(self._on_tags_updated)
         self.top_tab_widget.addTab(self.synthesis_tab, "Synthesis")
 
         # --- Add Graph View Tab (RENAMED) ---
-        self.graph_view_tab = GraphViewTab(self.db, self.project_id)
+        self.graph_view_tab = GraphViewTab(self.db, self.project_id) # No editor here
         self.graph_view_tab.readingDoubleClicked.connect(self.open_reading_tab)
         self.graph_view_tab.tagDoubleClicked.connect(self.open_tag_from_graph)
         self.graph_view_tab.tagsUpdated.connect(self._on_tags_updated)
@@ -255,7 +256,7 @@ class ProjectDashboardWidget(QWidget):
         # ---!!--- END REMOVED ---!!---
 
         # --- NEW: Add To-Do List Tab ---
-        self.todo_list_tab = TodoListTab(self.db, self.project_id)
+        self.todo_list_tab = TodoListTab(self.db, self.project_id) # No editor here
         self.top_tab_widget.addTab(self.todo_list_tab, "To-Do List")
         # --- END NEW ---
 
@@ -273,7 +274,7 @@ class ProjectDashboardWidget(QWidget):
             ("Unresolved Questions", "unresolved_text")
         ]
         for tab_title, field_name in fields:
-            editor_tab = ProjectEditorTab(self.db, self.project_id, field_name)
+            editor_tab = ProjectEditorTab(self.db, self.project_id, field_name, spell_checker_service=self.spell_checker_service) # <-- PASS SERVICE
             self.editor_tab_widget.addTab(editor_tab, tab_title)
             self.bottom_tabs.append(editor_tab)
 
@@ -353,7 +354,7 @@ class ProjectDashboardWidget(QWidget):
                 self.top_tab_widget.setCurrentIndex(idx)
             return tab
 
-        tab = ReadingNotesTab(self.db, self.project_id, reading_id)
+        tab = ReadingNotesTab(self.db, self.project_id, reading_id, spell_checker_service=self.spell_checker_service) # <-- PASS SERVICE
 
         # --- NEW: Add book icon ---
         idx = self.top_tab_widget.addTab(tab, self.book_icon, f" {tab_title}")

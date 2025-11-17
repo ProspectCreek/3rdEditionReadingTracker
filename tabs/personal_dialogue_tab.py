@@ -9,7 +9,7 @@ class PersonalDialogueTab(QWidget):
     A simple tab that just contains a rich text editor for 'Personal Dialogue'.
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, spell_checker_service=None, parent=None):
         super().__init__(parent)
 
         main_layout = QVBoxLayout(self)
@@ -19,5 +19,5 @@ class PersonalDialogueTab(QWidget):
         instructions = QLabel("Instructions for Personal Dialogue go here.")
         main_layout.addWidget(instructions)
 
-        self.editor = RichTextEditorTab("Personal Dialogue")
+        self.editor = RichTextEditorTab("Personal Dialogue", spell_checker_service=spell_checker_service) # <-- PASS SERVICE
         main_layout.addWidget(self.editor)

@@ -120,10 +120,11 @@ class ReadingNotesTab(QWidget):
     readingTitleChanged = Signal(int, object)  # (reading_id, self)
     openSynthesisTab = Signal(int)  # --- NEW: Signal to open synth tab ---
 
-    def __init__(self, db, project_id: int, reading_id: int, parent=None):
+    def __init__(self, db, project_id: int, reading_id: int, spell_checker_service=None, parent=None):
         super().__init__(parent)
         self.db = db
         self.project_id = project_id
+        self.spell_checker_service = spell_checker_service  # <-- STORE SERVICE
         self.reading_id = reading_id
 
         self.reading_details_row = None  # sqlite3.Row
@@ -229,7 +230,7 @@ class ReadingNotesTab(QWidget):
         self.notes_stack.addWidget(self.notes_placeholder)
 
         # Page 1: Editor
-        self.notes_editor = RichTextEditorTab("Outline Notes")
+        self.notes_editor = RichTextEditorTab("Outline Notes", spell_checker_service=self.spell_checker_service) # <-- PASS SERVICE
         self.notes_stack.addWidget(self.notes_editor)
 
         self.notes_editor.anchorActionTriggered.connect(self._on_create_anchor)
@@ -340,7 +341,7 @@ class ReadingNotesTab(QWidget):
             if instructions:
                 layout.addWidget(QLabel(instructions))
 
-            editor = RichTextEditorTab(title)
+            editor = RichTextEditorTab(title, spell_checker_service=self.spell_checker_service) # <-- PASS SERVICE
             self.bottom_tabs_with_editors.append((field_name, editor))
             layout.addWidget(editor)
             self.bottom_right_tabs.addTab(widget, title)
@@ -361,7 +362,7 @@ class ReadingNotesTab(QWidget):
             create_editor_tab("Unity", "Instructions for Unity go here.", "unity_html")
 
         if ElevatorAbstractTab:
-            self.elevator_abstract_tab = ElevatorAbstractTab()
+            self.elevator_abstract_tab = ElevatorAbstractTab(spell_checker_service=self.spell_checker_service) # <-- PASS SERVICE
             self.bottom_right_tabs.addTab(self.elevator_abstract_tab, "Elevator Abstract")
             self.bottom_tabs_with_editors.append(("personal_dialogue_html", self.elevator_abstract_tab.editor))
         else:
@@ -390,7 +391,7 @@ class ReadingNotesTab(QWidget):
             create_editor_tab("Arguments", "Instructions for Arguments go here.", "arguments_html")
 
         if GapsTab:
-            self.gaps_tab = GapsTab()
+            self.gaps_tab = GapsTab(spell_checker_service=self.spell_checker_service) # <-- PASS SERVICE
             self.bottom_right_tabs.addTab(self.gaps_tab, "Gaps")
             self.bottom_tabs_with_editors.append(("gaps_html", self.gaps_tab.editor))
         else:
@@ -403,7 +404,7 @@ class ReadingNotesTab(QWidget):
             create_editor_tab("Theories", "Instructions for Theories go here.", "theories_html")
 
         if PersonalDialogueTab:
-            self.personal_dialogue_tab = PersonalDialogueTab()
+            self.personal_dialogue_tab = PersonalDialogueTab(spell_checker_service=self.spell_checker_service) # <-- PASS SERVICE
             self.bottom_right_tabs.addTab(self.personal_dialogue_tab, "Personal Dialogue")
             self.bottom_tabs_with_editors.append(("personal_dialogue_html", self.personal_dialogue_tab.editor))
         else:

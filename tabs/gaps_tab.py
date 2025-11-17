@@ -9,7 +9,7 @@ class GapsTab(QWidget):
     A simple tab that just contains a rich text editor for 'Gaps'.
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, spell_checker_service=None, parent=None):
         super().__init__(parent)
 
         main_layout = QVBoxLayout(self)
@@ -19,5 +19,5 @@ class GapsTab(QWidget):
         instructions = QLabel("Instructions for Gaps go here.")
         main_layout.addWidget(instructions)
 
-        self.editor = RichTextEditorTab("Gaps")
+        self.editor = RichTextEditorTab("Gaps", spell_checker_service=spell_checker_service) # <-- PASS SERVICE
         main_layout.addWidget(self.editor)

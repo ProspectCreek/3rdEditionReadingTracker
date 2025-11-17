@@ -55,10 +55,11 @@ class SynthesisTab(QWidget):
     openReading = Signal(int, int, int, int, str)
     tagsUpdated = Signal()
 
-    def __init__(self, db, project_id, parent=None):
+    def __init__(self, db, project_id, spell_checker_service=None, parent=None):
         super().__init__(parent)
         self.db = db
         self.project_id = project_id
+        self.spell_checker_service = spell_checker_service  # <-- STORE SERVICE
 
         main_layout = QHBoxLayout(self)
         self.main_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -123,7 +124,7 @@ class SynthesisTab(QWidget):
         notes_layout.setSpacing(4)
 
         if RichTextEditorTab:
-            self.notes_editor = RichTextEditorTab("Notes")
+            self.notes_editor = RichTextEditorTab("Notes", spell_checker_service=self.spell_checker_service) # <-- PASS SERVICE
             notes_layout.addWidget(self.notes_editor, 1)
             notes_btn_layout = QHBoxLayout()
             notes_btn_layout.addStretch(1)
