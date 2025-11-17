@@ -307,14 +307,12 @@ class RichTextEditorTab(QWidget):
         if not self.editor.textCursor().hasSelection():
             return
 
-        # --- FIX for Symptom 4: Save current format ---
-        # Save the format the user is *currently* typing with *before* we change it.
-        # This is not self.default_format, but the active format.
-        cursor = self.editor.textCursor()
-        pre_anchor_typing_format = cursor.charFormat()
-        if not cursor.hasSelection():
-            # If no selection, get the format for new text
-            pre_anchor_typing_format = self.editor.currentCharFormat()
+        # --- FIX for Font Reverting ---
+        # We don't want the format of the selection. We want the
+        # user's *default typing format*, which is stored in self.default_format
+        # (and is updated by the font/size dropdowns).
+        # We grab this *before* applying the new format.
+        pre_anchor_typing_format = self.default_format
         # --- END FIX ---
 
         fmt = QTextCharFormat()
@@ -343,14 +341,14 @@ class RichTextEditorTab(QWidget):
         # 5. Apply format
         _apply_char_format(self.editor, fmt)
 
-        # --- FIX for Symptom 4: Reset typing format ---
+        # --- FIX for Font Reverting ---
         # Move cursor to the end of the selection (unselecting it)
         cursor = self.editor.textCursor()
         cursor.setPosition(cursor.selectionEnd())
         self.editor.setTextCursor(cursor)
 
         # Reset the current format for *new* typing to be
-        # whatever the user was typing with before.
+        # the user's default format (TNR 16pt).
         self.editor.setCurrentCharFormat(pre_anchor_typing_format)
         # --- END FIX ---
 
@@ -620,12 +618,29 @@ class RichTextEditorTab(QWidget):
     @Slot()
     def _on_text_changed(self):
         """
-        When text is changed, check if the editor became empty.
-        If it did, reset the current char format to our default.
-        This prevents the "backspace all text" bug.
+        When text is changed, check if the editor became empty OR
+        if the cursor is in a new, empty block.
+        If so, reset the current char format to our user default.
+        This prevents the "backspace all text" bug AND the
+        "double enter" bug shown in image_637e67.png.
         """
+        cursor = self.editor.textCursor()
+
+        # Check 1: Is the whole document empty? (The "backspace all" bug)
         if self.editor.toPlainText() == "":
             self.editor.setCurrentCharFormat(self.default_format)
+            return
+
+        # Check 2: Is the cursor's current block empty? (The "double-enter" bug)
+        # An "empty" block still has a length of 1 (the newline char).
+        # Its text(), however, is empty.
+        current_block = cursor.block()
+        if current_block.length() == 1 and current_block.text() == "":
+            # We are on a new, empty line.
+            # Check if the current format is *not* our default.
+            if self.editor.currentCharFormat() != self.default_format:
+                # It's wrong (e.g., reverted to system default). Force it back.
+                self.editor.setCurrentCharFormat(self.default_format)
 
     @Slot()
     def _on_selection_changed(self):
