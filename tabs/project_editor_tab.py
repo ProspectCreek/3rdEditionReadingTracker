@@ -20,7 +20,7 @@ class ProjectEditorTab(QWidget):
         self.project_id = project_id
         self.spell_checker_service = spell_checker_service  # <-- STORE SERVICE
         self.text_field = text_field
-        self.prompt_label = None  # MODIFIED: To hold the prompt label
+        # self.prompt_label = None # <-- OLD BUGGY LINE
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -45,13 +45,18 @@ class ProjectEditorTab(QWidget):
         }
         prompt_text = prompt_text_map.get(self.text_field)
 
-        if prompt_text:
-            self.prompt_label = QLabel(prompt_text)
-            self.prompt_label.setWordWrap(True)
-            self.prompt_label.setStyleSheet("font-style: italic; color: #555;") # Added styling
-            layout.addWidget(self.prompt_label)
+        # --- START OF FIX ---
+        # Create the label unconditionally
+        self.prompt_label = QLabel(prompt_text)
+        self.prompt_label.setWordWrap(True)
+        self.prompt_label.setStyleSheet("font-style: italic; color: #555;")
+        layout.addWidget(self.prompt_label)
 
-        self.editor = RichTextEditorTab(title, spell_checker_service=self.spell_checker_service) # <-- PASS SERVICE
+        # Set initial visibility based on whether text exists
+        self.prompt_label.setVisible(bool(prompt_text))
+        # --- END OF FIX ---
+
+        self.editor = RichTextEditorTab(title, spell_checker_service=self.spell_checker_service)  # <-- PASS SERVICE
         layout.addWidget(self.editor, 1)
 
     # ---- API used by dashboard ----
@@ -68,6 +73,8 @@ class ProjectEditorTab(QWidget):
     def update_instructions(self):
         """Fetches the latest instructions from the DB and updates the prompt label."""
         self.instructions = self.db.get_or_create_instructions(self.project_id)
+
+        # This check is now safe, as self.prompt_label always exists
         if self.prompt_label:
             prompt_text_map = {
                 "key_questions_text": self.instructions.get("key_questions_instr", ""),
@@ -79,5 +86,3 @@ class ProjectEditorTab(QWidget):
             self.prompt_label.setText(new_text)
             # Hide the label if the instruction text is empty
             self.prompt_label.setVisible(bool(new_text))
-
-

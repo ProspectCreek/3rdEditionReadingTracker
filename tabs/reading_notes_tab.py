@@ -110,6 +110,16 @@ except ImportError:
     print("Error: Could not import CreateAnchorDialog")
     CreateAnchorDialog = None
 
+# --- NEW: Import EditInstructionsDialog ---
+try:
+    from dialogs.edit_instructions_dialog import EditInstructionsDialog
+except ImportError:
+    print("Error: Could not import EditInstructionsDialog")
+    EditInstructionsDialog = None
+
+
+# --- END NEW ---
+
 
 class ReadingNotesTab(QWidget):
     """
@@ -230,7 +240,8 @@ class ReadingNotesTab(QWidget):
         self.notes_stack.addWidget(self.notes_placeholder)
 
         # Page 1: Editor
-        self.notes_editor = RichTextEditorTab("Outline Notes", spell_checker_service=self.spell_checker_service) # <-- PASS SERVICE
+        self.notes_editor = RichTextEditorTab("Outline Notes",
+                                              spell_checker_service=self.spell_checker_service)  # <-- PASS SERVICE
         self.notes_stack.addWidget(self.notes_editor)
 
         self.notes_editor.anchorActionTriggered.connect(self._on_create_anchor)
@@ -334,14 +345,19 @@ class ReadingNotesTab(QWidget):
             self.bottom_right_tabs.addTab(QLabel("Driving Question (Failed to load)"), "Driving Question")
 
         def create_editor_tab(title, instructions, field_name):
+            # This is a fallback for if the main tab modules fail to import
             widget = QWidget()
             layout = QVBoxLayout(widget)
             layout.setContentsMargins(4, 4, 4, 4)
             layout.setSpacing(4)
-            if instructions:
-                layout.addWidget(QLabel(instructions))
 
-            editor = RichTextEditorTab(title, spell_checker_service=self.spell_checker_service) # <-- PASS SERVICE
+            # Create a label, but it won't be updatable
+            instr_label = QLabel(instructions)
+            instr_label.setWordWrap(True)
+            instr_label.setStyleSheet("font-style: italic; color: #555;")
+            layout.addWidget(instr_label)
+
+            editor = RichTextEditorTab(title, spell_checker_service=self.spell_checker_service)  # <-- PASS SERVICE
             self.bottom_tabs_with_editors.append((field_name, editor))
             layout.addWidget(editor)
             self.bottom_right_tabs.addTab(widget, title)
@@ -362,8 +378,10 @@ class ReadingNotesTab(QWidget):
             create_editor_tab("Unity", "Instructions for Unity go here.", "unity_html")
 
         if ElevatorAbstractTab:
-            self.elevator_abstract_tab = ElevatorAbstractTab(spell_checker_service=self.spell_checker_service) # <-- PASS SERVICE
+            self.elevator_abstract_tab = ElevatorAbstractTab(
+                spell_checker_service=self.spell_checker_service)  # <-- PASS SERVICE
             self.bottom_right_tabs.addTab(self.elevator_abstract_tab, "Elevator Abstract")
+            # This tab's editor saves to 'personal_dialogue_html' in the DB
             self.bottom_tabs_with_editors.append(("personal_dialogue_html", self.elevator_abstract_tab.editor))
         else:
             create_editor_tab("Elevator Abstract", "Instructions for Elevator Abstract go here.",
@@ -375,8 +393,9 @@ class ReadingNotesTab(QWidget):
             )
             self.bottom_right_tabs.addTab(self.parts_order_relation_tab, "Parts: Order and Relation")
         else:
+            # This fallback is incorrect as Parts tab doesn't use a rich text editor
             create_editor_tab("Parts: Order and Relation", "Instructions for Parts: Order and Relation go here.",
-                              "personal_dialogue_html")
+                              "personal_dialogue_html")  # Key is wrong, but it's a fallback
 
         if KeyTermsTab:
             self.key_terms_tab = KeyTermsTab(self.db, self.project_id, self.reading_id)
@@ -391,7 +410,7 @@ class ReadingNotesTab(QWidget):
             create_editor_tab("Arguments", "Instructions for Arguments go here.", "arguments_html")
 
         if GapsTab:
-            self.gaps_tab = GapsTab(spell_checker_service=self.spell_checker_service) # <-- PASS SERVICE
+            self.gaps_tab = GapsTab(spell_checker_service=self.spell_checker_service)  # <-- PASS SERVICE
             self.bottom_right_tabs.addTab(self.gaps_tab, "Gaps")
             self.bottom_tabs_with_editors.append(("gaps_html", self.gaps_tab.editor))
         else:
@@ -404,7 +423,8 @@ class ReadingNotesTab(QWidget):
             create_editor_tab("Theories", "Instructions for Theories go here.", "theories_html")
 
         if PersonalDialogueTab:
-            self.personal_dialogue_tab = PersonalDialogueTab(spell_checker_service=self.spell_checker_service) # <-- PASS SERVICE
+            self.personal_dialogue_tab = PersonalDialogueTab(
+                spell_checker_service=self.spell_checker_service)  # <-- PASS SERVICE
             self.bottom_right_tabs.addTab(self.personal_dialogue_tab, "Personal Dialogue")
             self.bottom_tabs_with_editors.append(("personal_dialogue_html", self.personal_dialogue_tab.editor))
         else:
@@ -426,7 +446,16 @@ class ReadingNotesTab(QWidget):
     def _create_reading_menu(self, menu_bar: QMenuBar):
         settings_menu = menu_bar.addMenu("Reading Settings")
         edit_instr_action = QAction("Edit Tab Instructions...", self)
-        edit_instr_action.setEnabled(False)  # Not implemented yet
+
+        # --- NEW: Enable and connect the action ---
+        if EditInstructionsDialog:
+            edit_instr_action.setEnabled(True)
+            edit_instr_action.triggered.connect(self.open_edit_reading_instructions)
+        else:
+            edit_instr_action.setEnabled(False)
+            edit_instr_action.setToolTip("EditInstructionsDialog not loaded")
+        # --- END NEW ---
+
         settings_menu.addAction(edit_instr_action)
 
     # --- Data Loading and Saving ---
@@ -476,6 +505,11 @@ class ReadingNotesTab(QWidget):
             self._is_loaded = True
 
             self.load_bottom_tabs_content()
+
+            # --- NEW: Load instructions for all tabs ---
+            instructions = self.db.get_or_create_instructions(self.project_id)
+            self.update_all_tab_instructions(instructions)
+            # --- END NEW ---
 
         except Exception as e:
             QMessageBox.critical(self, "Error Loading Reading", f"An error occurred: {e}")
@@ -850,6 +884,59 @@ class ReadingNotesTab(QWidget):
         except Exception as e:
             print(f"Warning: Could not enforce right split: {e}")
 
+    # --- NEW: Instruction Methods ---
+    @Slot()
+    def open_edit_reading_instructions(self):
+        """
+        Opens the main instructions dialog. This is called by the menu item.
+        """
+        if self.project_id == -1 or not EditInstructionsDialog:
+            QMessageBox.warning(self, "Error", "Instruction Dialog could not be loaded.")
+            return
+
+        # 1. Get all current instructions
+        instructions = self.db.get_or_create_instructions(self.project_id)
+
+        # 2. Open the (now tabbed) dialog
+        dialog = EditInstructionsDialog(instructions, self)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            new_instr = dialog.result
+            if new_instr:
+                # 3. Save ALL instructions back to the DB
+                self.db.update_instructions(self.project_id, new_instr)
+
+                # 4. Refresh all child tabs
+                self.update_all_tab_instructions(new_instr)
+
+    def update_all_tab_instructions(self, instructions_data):
+        """
+        Pushes new instruction text to all child tabs.
+        """
+
+        # Define the mapping of tab objects to their instruction key
+        tab_key_map = [
+            (getattr(self, 'driving_question_tab', None), "reading_dq_instr"),
+            (getattr(self, 'leading_propositions_tab', None), "reading_lp_instr"),
+            (getattr(self, 'unity_tab', None), "reading_unity_instr"),
+            (getattr(self, 'elevator_abstract_tab', None), "reading_elevator_instr"),
+            (getattr(self, 'parts_order_relation_tab', None), "reading_parts_instr"),
+            (getattr(self, 'key_terms_tab', None), "reading_key_terms_instr"),
+            (getattr(self, 'arguments_tab', None), "reading_arguments_instr"),
+            (getattr(self, 'gaps_tab', None), "reading_gaps_instr"),
+            (getattr(self, 'theories_tab', None), "reading_theories_instr"),
+            (getattr(self, 'personal_dialogue_tab', None), "reading_dialogue_instr"),
+        ]
+
+        # Call update_instructions on each tab that exists
+        for tab_widget, key in tab_key_map:
+            if tab_widget and hasattr(tab_widget, 'update_instructions'):
+                tab_widget.update_instructions(instructions_data, key)
+            elif tab_widget:
+                print(f"Warning: Tab {tab_widget.objectName()} is missing 'update_instructions' method.")
+
+    # --- END NEW ---
+
     # ##################################################################
     # #
     # #                      --- MODIFICATION START (Focus Fix v3) ---
@@ -1205,10 +1292,19 @@ class ReadingNotesTab(QWidget):
 
         # [FIX] Check for standard web links using their schemes
         elif url.scheme() in ("http", "https"):
-                QDesktopServices.openUrl(url)
+            QDesktopServices.openUrl(url)
 
     def _create_reading_menu(self, menu_bar: QMenuBar):
         settings_menu = menu_bar.addMenu("Reading Settings")
         edit_instr_action = QAction("Edit Tab Instructions...", self)
-        edit_instr_action.setEnabled(False)  # Not implemented yet
+
+        # --- NEW: Enable and connect the action ---
+        if EditInstructionsDialog:
+            edit_instr_action.setEnabled(True)
+            edit_instr_action.triggered.connect(self.open_edit_reading_instructions)
+        else:
+            edit_instr_action.setEnabled(False)
+            edit_instr_action.setToolTip("EditInstructionsDialog not loaded")
+        # --- END NEW ---
+
         settings_menu.addAction(edit_instr_action)

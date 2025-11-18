@@ -35,6 +35,14 @@ class TerminologyTab(QWidget):
 
         main_layout = QVBoxLayout(self)
 
+        # --- NEW: Add Instruction Label ---
+        self.prompt_label = QLabel("")
+        self.prompt_label.setWordWrap(True)
+        self.prompt_label.setStyleSheet("font-style: italic; color: #555;")
+        self.prompt_label.setVisible(False) # Hidden by default
+        main_layout.addWidget(self.prompt_label)
+        # --- END NEW ---
+
         # --- (1) "Add Term" Button ---
         self.add_term_btn = QPushButton("Add Term")
         self.add_term_btn.clicked.connect(self._add_term)
@@ -80,6 +88,12 @@ class TerminologyTab(QWidget):
         # --- NEW: (5) Connect double-click signal ---
         self.term_list.itemDoubleClicked.connect(self._on_item_double_clicked)
         # --- END NEW ---
+
+    def update_instructions(self, instructions_data, key):
+        """Sets the instruction text for this tab."""
+        text = instructions_data.get(key, "")
+        self.prompt_label.setText(text)
+        self.prompt_label.setVisible(bool(text))
 
     def load_terminology(self):
         """Reloads the list of terms from the database."""

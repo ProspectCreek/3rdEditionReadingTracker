@@ -33,6 +33,16 @@ class LeadingPropositionsTab(QWidget):
         self.reading_id = reading_id  # This tab is reading-specific
 
         main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(4)
+
+        # --- NEW: Add Instruction Label ---
+        self.prompt_label = QLabel("")
+        self.prompt_label.setWordWrap(True)
+        self.prompt_label.setStyleSheet("font-style: italic; color: #555; padding: 4px;") # Add padding
+        self.prompt_label.setVisible(False) # Hidden by default
+        main_layout.addWidget(self.prompt_label)
+        # --- END NEW ---
 
         self.add_item_btn = QPushButton("Add Leading Proposition")
         self.add_item_btn.clicked.connect(self._add_item)
@@ -75,6 +85,12 @@ class LeadingPropositionsTab(QWidget):
 
         # Load data when the tab is created
         self.load_propositions()
+
+    def update_instructions(self, instructions_data, key):
+        """Sets the instruction text for this tab."""
+        text = instructions_data.get(key, "")
+        self.prompt_label.setText(text)
+        self.prompt_label.setVisible(bool(text))
 
     def load_propositions(self):
         """Reloads the list of propositions from the database."""

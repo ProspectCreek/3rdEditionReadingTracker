@@ -2,7 +2,8 @@
 import sys
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTreeWidget,
-    QTreeWidgetItem, QMenu, QMessageBox, QDialog, QLabel, QFrame
+    QTreeWidgetItem, QMenu, QMessageBox, QDialog, QLabel, QFrame,
+    QHeaderView
 )
 from PySide6.QtCore import Qt, Signal, QPoint, Slot
 from PySide6.QtGui import QAction, QFont, QColor
@@ -44,6 +45,14 @@ class DrivingQuestionTab(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(4)
 
+        # --- NEW: Add Instruction Label ---
+        self.prompt_label = QLabel("")
+        self.prompt_label.setWordWrap(True)
+        self.prompt_label.setStyleSheet("font-style: italic; color: #555; padding: 4px;")  # Add padding
+        self.prompt_label.setVisible(False)  # Hidden by default
+        main_layout.addWidget(self.prompt_label)
+        # --- END NEW ---
+
         # Button bar
         button_bar = QFrame()
         button_layout = QHBoxLayout(button_bar)
@@ -82,6 +91,12 @@ class DrivingQuestionTab(QWidget):
 
         self.load_questions()
         self._update_button_states()
+
+    def update_instructions(self, instructions_data, key):
+        """Sets the instruction text for this tab."""
+        text = instructions_data.get(key, "")
+        self.prompt_label.setText(text)
+        self.prompt_label.setVisible(bool(text))
 
     def load_questions(self):
         """Reloads all questions from the database into the tree."""

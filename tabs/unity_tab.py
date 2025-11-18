@@ -35,6 +35,14 @@ class UnityTab(QWidget):
         main_layout.setContentsMargins(4, 4, 4, 4)
         main_layout.setSpacing(6)
 
+        # --- NEW: Add Instruction Label ---
+        self.prompt_label = QLabel("")
+        self.prompt_label.setWordWrap(True)
+        self.prompt_label.setStyleSheet("font-style: italic; color: #555;")
+        self.prompt_label.setVisible(False) # Hidden by default
+        main_layout.addWidget(self.prompt_label)
+        # --- END NEW ---
+
         # --- Top: Rich Text Editor ---
         self.unity_label = QLabel("Unity (1-2 sentences):")
         self.unity_editor = RichTextEditorTab("Unity")
@@ -65,6 +73,12 @@ class UnityTab(QWidget):
         main_layout.addLayout(form_layout)
 
         self._is_loaded = True  # Set flag after all UI elements are created
+
+    def update_instructions(self, instructions_data, key):
+        """Sets the instruction text for this tab."""
+        text = instructions_data.get(key, "")
+        self.prompt_label.setText(text)
+        self.prompt_label.setVisible(bool(text))
 
     def load_data(self):
         """Loads data from the database into the widgets."""

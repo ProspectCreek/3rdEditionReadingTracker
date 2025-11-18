@@ -526,6 +526,7 @@ class ProjectDashboardWidget(QWidget):
         if self.synthesis_tab and hasattr(self.synthesis_tab, 'save_editors'):
             self.synthesis_tab.save_editors()
 
+    # --- START OF MODIFICATION ---
     @Slot()
     def open_edit_instructions(self):
         if self.project_id == -1:
@@ -533,18 +534,34 @@ class ProjectDashboardWidget(QWidget):
         instructions = self.db.get_or_create_instructions(self.project_id)
         dialog = EditInstructionsDialog(instructions, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            new_instr = dialog.result
+            new_instr = dialog.result  # This will (soon) contain all keys
             if new_instr:
+                # This now passes the full dictionary, which items_mixin.py can handle
                 self.db.update_instructions(
                     self.project_id,
-                    new_instr["key_questions_instr"],
-                    new_instr["thesis_instr"],
-                    new_instr["insights_instr"],
-                    new_instr["unresolved_instr"]
+                    new_instr  # Pass the whole dictionary
                 )
+
+                # Refresh the 4 dashboard tabs (existing code)
                 for tab in self.bottom_tabs:
                     if hasattr(tab, 'update_instructions'):
                         tab.update_instructions()
+
+                # --- NEW: Refresh the synthesis tab ---
+                # (This function will be added to synthesis_tab.py in a future step)
+                # We use hasattr to ensure this doesn't crash before we add it
+                if hasattr(self.synthesis_tab, 'update_all_instructions'):
+                    # We pass the newly saved data from the dialog
+                    self.synthesis_tab.update_all_instructions(new_instr)
+                # --- END NEW ---
+
+                # --- NEW: Refresh all open reading tabs ---
+                for reading_tab in self.reading_tabs.values():
+                    if hasattr(reading_tab, 'update_all_tab_instructions'):
+                        reading_tab.update_all_tab_instructions(new_instr)
+                # --- END NEW ---
+
+    # --- END OF MODIFICATION ---
 
     # --- NEW: Export Functionality ---
     @Slot()

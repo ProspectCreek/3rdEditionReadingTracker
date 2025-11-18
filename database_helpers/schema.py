@@ -5,8 +5,24 @@ import sqlite3
 class SchemaSetup:
     """
     Handles the initial creation of all database tables for a fresh database.
-    Contains no migration logic.
+    Contains migration logic to add new columns safely.
     """
+
+    def _add_column_if_not_exists(self, table_name, column_name, column_type="TEXT", default_value="''"):
+        """
+        Safely adds a column to a table if it doesn't already exist.
+        Defaults to TEXT with a default value of an empty string.
+        """
+        try:
+            self.cursor.execute(f"PRAGMA table_info({table_name})")
+            columns = [row['name'] for row in self.cursor.fetchall()]
+            if column_name not in columns:
+                self.cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type} DEFAULT {default_value}")
+                print(f"Added column: {column_name} to {table_name}")
+        except Exception as e:
+            # This might fail if in a transaction, but it's okay for setup
+            print(f"Warning: Could not add column {column_name} to {table_name}. {e}")
+
 
     def setup_database(self):
         """
@@ -57,6 +73,32 @@ class SchemaSetup:
             UNIQUE(project_id)
         )
         """)
+
+        # --- START: Add new instruction columns (Migration) ---
+        # This list contains all the new instruction fields we need.
+        new_instruction_columns = [
+            # Synthesis Tabs
+            ("synthesis_terminology_instr", "TEXT"),
+            ("synthesis_propositions_instr", "TEXT"),
+            ("synthesis_notes_instr", "TEXT"),
+            # Reading Tabs
+            ("reading_dq_instr", "TEXT"),
+            ("reading_lp_instr", "TEXT"),
+            ("reading_unity_instr", "TEXT"),
+            ("reading_elevator_instr", "TEXT"),
+            ("reading_parts_instr", "TEXT"),
+            ("reading_key_terms_instr", "TEXT"),
+            ("reading_arguments_instr", "TEXT"),
+            ("reading_gaps_instr", "TEXT"),
+            ("reading_theories_instr", "TEXT"),
+            ("reading_dialogue_instr", "TEXT"),
+        ]
+
+        # Safely add each new column to the 'instructions' table
+        for col_name, col_type in new_instruction_columns:
+            self._add_column_if_not_exists("instructions", col_name, col_type, "''")
+        # --- END: Add new instruction columns ---
+
 
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS rubric_components (
@@ -120,12 +162,10 @@ class SchemaSetup:
 
         # --- Level 1: Depends on items ---
 
-        # ---!!--- ADD NEW TABLE CREATION ---!!---
         if hasattr(self, 'create_graph_settings_table'):
             self.create_graph_settings_table()
         if hasattr(self, 'create_global_graph_settings_table'):
             self.create_global_graph_settings_table()
-        # ---!!--- END ADD ---!!---
 
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS readings (
@@ -381,4 +421,4 @@ class SchemaSetup:
 
         # --- Finalize ---
         self.conn.commit()
-        print("--- Schema setup complete. All tables created. ---")
+        print("--- Schema setup complete. All tables created/updated. ---")

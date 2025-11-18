@@ -1,3 +1,6 @@
+import sqlite3
+
+
 class ItemsMixin:
     # ---------------------- items / projects ----------------------
 
@@ -138,13 +141,9 @@ class ItemsMixin:
 
         original_instr = self.get_or_create_instructions(item_id)
         if original_instr:
-            self.update_instructions(
-                new_project_id,
-                original_instr['key_questions_instr'],
-                original_instr['thesis_instr'],
-                original_instr['insights_instr'],
-                original_instr['unresolved_instr']
-            )
+            # --- MODIFIED: Pass all instructions as a dict ---
+            self.update_instructions(new_project_id, original_instr)
+            # --- END MODIFIED ---
 
         self.conn.commit()
 
@@ -177,37 +176,91 @@ class ItemsMixin:
         self.cursor.execute(f"UPDATE items SET {field_name} = ? WHERE id = ?", (html_text, project_id))
         self.conn.commit()
 
+    # --- START OF MODIFICATIONS ---
+
+    # List of all 17 instruction columns
+    INSTRUCTION_COLUMNS = [
+        "key_questions_instr", "thesis_instr", "insights_instr", "unresolved_instr",
+        "synthesis_terminology_instr", "synthesis_propositions_instr", "synthesis_notes_instr",
+        "reading_dq_instr", "reading_lp_instr", "reading_unity_instr", "reading_elevator_instr",
+        "reading_parts_instr", "reading_key_terms_instr", "reading_arguments_instr",
+        "reading_gaps_instr", "reading_theories_instr", "reading_dialogue_instr"
+    ]
+
     # ------------------------- instructions -------------------------
 
     def get_or_create_instructions(self, project_id):
+        """
+        Gets all instructions for a project.
+        If no row exists, creates one with all fields set to empty strings.
+        """
         self.cursor.execute("SELECT * FROM instructions WHERE project_id = ?", (project_id,))
         row = self.cursor.fetchone()
         if row:
-            return self._rowdict(row)
+            # Convert to dict to ensure all keys exist, even if they are NULL in DB
+            # (which they shouldn't be, but this is safer)
+            row_dict = self._rowdict(row)
+            all_data = {}
+            for col in self.INSTRUCTION_COLUMNS:
+                all_data[col] = row_dict.get(col, '')
+            return all_data
 
+        # Row not found, check again with count to be safe (prevents race conditions)
         self.cursor.execute("SELECT COUNT(*) FROM instructions WHERE project_id = ?", (project_id,))
         count = self.cursor.fetchone()[0]
         if count == 0:
             try:
-                self.cursor.execute("""
-                    INSERT INTO instructions (project_id, key_questions_instr, thesis_instr, insights_instr, unresolved_instr)
-                    VALUES (?, '', '', '', '')
+                # Create a new row with all 17 columns explicitly set to ''
+                all_cols = ", ".join(self.INSTRUCTION_COLUMNS)
+                # Create a string of 17 placeholders ('')
+                all_placeholders = ", ".join(["''" for _ in self.INSTRUCTION_COLUMNS])
+
+                self.cursor.execute(f"""
+                    INSERT INTO instructions (project_id, {all_cols})
+                    VALUES (?, {all_placeholders})
                 """, (project_id,))
                 self.conn.commit()
             except sqlite3.IntegrityError:
-                pass
+                pass  # Race condition, another process inserted it.
             except Exception as e:
                 print(f"Error creating default instructions: {e}")
-                return {}
+                return {col: '' for col in self.INSTRUCTION_COLUMNS}  # Return empty dict on failure
 
+        # Fetch the newly created (or just-found) row
         self.cursor.execute("SELECT * FROM instructions WHERE project_id = ?", (project_id,))
         row = self.cursor.fetchone()
-        return self._rowdict(row) if row else {}
 
-    def update_instructions(self, project_id, key_q, thesis, insights, unresolved):
-        self.cursor.execute("""
-            UPDATE instructions
-            SET key_questions_instr = ?, thesis_instr = ?, insights_instr = ?, unresolved_instr = ?
-            WHERE project_id = ?
-        """, (key_q, thesis, insights, unresolved, project_id))
-        self.conn.commit()
+        # Convert to dict and fill in any missing keys
+        row_dict = self._rowdict(row) if row else {}
+        all_data = {}
+        for col in self.INSTRUCTION_COLUMNS:
+            all_data[col] = row_dict.get(col, '')
+        return all_data
+
+    def update_instructions(self, project_id, instructions_data: dict):
+        """
+        Updates all 17 instruction fields from a data dictionary.
+        """
+
+        # Build the SET clause
+        set_clause = ", ".join([f"{col} = ?" for col in self.INSTRUCTION_COLUMNS])
+
+        # Build the parameters tuple in the correct order
+        # Use .get() to safely handle missing keys, defaulting to empty string
+        params = [instructions_data.get(col, '') for col in self.INSTRUCTION_COLUMNS]
+
+        # Add the project_id for the WHERE clause
+        params.append(project_id)
+
+        try:
+            self.cursor.execute(f"""
+                UPDATE instructions
+                SET {set_clause}
+                WHERE project_id = ?
+            """, tuple(params))
+            self.conn.commit()
+        except Exception as e:
+            print(f"Error updating instructions: {e}")
+            self.conn.rollback()
+
+    # --- END OF MODIFICATIONS ---

@@ -38,6 +38,14 @@ class KeyTermsTab(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(4)
 
+        # --- NEW: Add Instruction Label ---
+        self.prompt_label = QLabel("")
+        self.prompt_label.setWordWrap(True)
+        self.prompt_label.setStyleSheet("font-style: italic; color: #555;")
+        self.prompt_label.setVisible(False) # Hidden by default
+        main_layout.addWidget(self.prompt_label)
+        # --- END NEW ---
+
         # Button bar
         button_bar = QFrame()
         button_layout = QHBoxLayout(button_bar)
@@ -72,6 +80,12 @@ class KeyTermsTab(QWidget):
         self.tree_widget.customContextMenuRequested.connect(self.show_context_menu)
 
         self.load_key_terms()
+
+    def update_instructions(self, instructions_data, key):
+        """Sets the instruction text for this tab."""
+        text = instructions_data.get(key, "")
+        self.prompt_label.setText(text)
+        self.prompt_label.setVisible(bool(text))
 
     def load_key_terms(self):
         """Reloads all key terms from the database into the tree."""

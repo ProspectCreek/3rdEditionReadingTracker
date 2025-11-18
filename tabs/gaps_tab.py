@@ -17,7 +17,19 @@ class GapsTab(QWidget):
         main_layout.setSpacing(4)
 
         instructions = QLabel("Instructions for Gaps go here.")
+        # --- NEW: Store label and hide it ---
+        self.prompt_label = instructions # Re-use the existing label
+        self.prompt_label.setWordWrap(True)
+        self.prompt_label.setStyleSheet("font-style: italic; color: #555;")
+        self.prompt_label.setVisible(False) # Hidden by default
+        # --- END NEW ---
         main_layout.addWidget(instructions)
 
         self.editor = RichTextEditorTab("Gaps", spell_checker_service=spell_checker_service) # <-- PASS SERVICE
         main_layout.addWidget(self.editor)
+
+    def update_instructions(self, instructions_data, key):
+        """Sets the instruction text for this tab."""
+        text = instructions_data.get(key, "")
+        self.prompt_label.setText(text)
+        self.prompt_label.setVisible(bool(text))

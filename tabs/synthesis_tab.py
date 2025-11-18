@@ -60,6 +60,7 @@ class SynthesisTab(QWidget):
         self.db = db
         self.project_id = project_id
         self.spell_checker_service = spell_checker_service  # <-- STORE SERVICE
+        self.instruction_labels = {}  # --- NEW: To store notes label ---
 
         main_layout = QHBoxLayout(self)
         self.main_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -120,11 +121,21 @@ class SynthesisTab(QWidget):
 
         notes_container = QWidget()
         notes_layout = QVBoxLayout(notes_container)
-        notes_layout.setContentsMargins(0, 0, 0, 0)
+        notes_layout.setContentsMargins(4, 4, 4, 4)  # --- MODIFIED: Added padding ---
         notes_layout.setSpacing(4)
 
+        # --- NEW: Add Instruction Label for Notes Tab ---
+        self.notes_prompt_label = QLabel("")
+        self.notes_prompt_label.setWordWrap(True)
+        self.notes_prompt_label.setStyleSheet("font-style: italic; color: #555;")
+        self.notes_prompt_label.setVisible(False)  # Hidden by default
+        notes_layout.addWidget(self.notes_prompt_label)
+        self.instruction_labels["synthesis_notes_instr"] = self.notes_prompt_label
+        # --- END NEW ---
+
         if RichTextEditorTab:
-            self.notes_editor = RichTextEditorTab("Notes", spell_checker_service=self.spell_checker_service) # <-- PASS SERVICE
+            self.notes_editor = RichTextEditorTab("Notes",
+                                                  spell_checker_service=self.spell_checker_service)  # <-- PASS SERVICE
             notes_layout.addWidget(self.notes_editor, 1)
             notes_btn_layout = QHBoxLayout()
             notes_btn_layout.addStretch(1)
@@ -154,6 +165,35 @@ class SynthesisTab(QWidget):
             self.propositions_tab.load_items()
         if RichTextEditorTab and hasattr(self, 'notes_editor'):
             self.notes_editor.set_html(project_details.get('synthesis_notes_html', ''))
+
+        # --- NEW: Load instructions for all tabs ---
+        instructions = self.db.get_or_create_instructions(self.project_id)
+        self.update_all_instructions(instructions)
+        # --- END NEW ---
+
+    # --- NEW: Instruction Refresh Method ---
+    def update_all_instructions(self, instructions_data):
+        """
+        Pushes new instruction text to all child tabs
+        (Terminology, Propositions, Notes).
+        """
+
+        # 1. Update Terminology Tab
+        if hasattr(self, 'terminology_tab') and hasattr(self.terminology_tab, 'update_instructions'):
+            self.terminology_tab.update_instructions(instructions_data, "synthesis_terminology_instr")
+
+        # 2. Update Propositions Tab
+        if hasattr(self, 'propositions_tab') and hasattr(self.propositions_tab, 'update_instructions'):
+            self.propositions_tab.update_instructions(instructions_data, "synthesis_propositions_instr")
+
+        # 3. Update own "Notes" tab label
+        if "synthesis_notes_instr" in self.instruction_labels:
+            label = self.instruction_labels["synthesis_notes_instr"]
+            text = instructions_data.get("synthesis_notes_instr", "")
+            label.setText(text)
+            label.setVisible(bool(text))
+
+    # --- END NEW ---
 
     def save_editors(self):
         if self.project_id == -1:

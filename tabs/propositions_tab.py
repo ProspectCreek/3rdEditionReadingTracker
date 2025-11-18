@@ -37,6 +37,14 @@ class PropositionsTab(QWidget):
 
         main_layout = QVBoxLayout(self)
 
+        # --- NEW: Add Instruction Label ---
+        self.prompt_label = QLabel("")
+        self.prompt_label.setWordWrap(True)
+        self.prompt_label.setStyleSheet("font-style: italic; color: #555;")
+        self.prompt_label.setVisible(False) # Hidden by default
+        main_layout.addWidget(self.prompt_label)
+        # --- END NEW ---
+
         # --- (1) "Add Proposition" Button ---
         self.add_item_btn = QPushButton("Add Proposition")
         self.add_item_btn.clicked.connect(self._add_item)
@@ -80,6 +88,12 @@ class PropositionsTab(QWidget):
         splitter.setSizes([250, 600])
 
         self.item_list.itemDoubleClicked.connect(self._edit_item)
+
+    def update_instructions(self, instructions_data, key):
+        """Sets the instruction text for this tab."""
+        text = instructions_data.get(key, "")
+        self.prompt_label.setText(text)
+        self.prompt_label.setVisible(bool(text))
 
     def load_items(self):
         """Reloads the list of propositions from the database."""

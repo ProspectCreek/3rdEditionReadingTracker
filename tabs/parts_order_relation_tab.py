@@ -45,6 +45,14 @@ class PartsOrderRelationTab(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(4)
 
+        # --- NEW: Add Instruction Label ---
+        self.prompt_label = QLabel("")
+        self.prompt_label.setWordWrap(True)
+        self.prompt_label.setStyleSheet("font-style: italic; color: #555; padding: 4px;") # Add padding
+        self.prompt_label.setVisible(False) # Hidden by default
+        main_layout.addWidget(self.prompt_label)
+        # --- END NEW ---
+
         # --- Button bar ---
         button_bar = QFrame()
         button_layout = QHBoxLayout(button_bar)
@@ -78,6 +86,12 @@ class PartsOrderRelationTab(QWidget):
         self.tree_widget.customContextMenuRequested.connect(self.show_context_menu)
 
         self._is_loaded = True
+
+    def update_instructions(self, instructions_data, key):
+        """Sets the instruction text for this tab."""
+        text = instructions_data.get(key, "")
+        self.prompt_label.setText(text)
+        self.prompt_label.setVisible(bool(text))
 
     def load_data(self):
         """Called by ReadingNotesTab to load all data."""
