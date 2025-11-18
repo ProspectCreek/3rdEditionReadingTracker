@@ -1,13 +1,14 @@
 # prospectcreek/3rdeditionreadingtracker/widgets/project_dashboard_widget.py
 import sys
+import traceback
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QTabWidget, QSplitter, QLabel, QTreeWidget,
     QFrame, QDialog, QTreeWidgetItem, QMenuBar,
-    QMessageBox, QMenu, QApplication
+    QMessageBox, QMenu, QApplication, QFileDialog
 )
-from PySide6.QtCore import Qt, Signal, Slot, QTimer, QPoint
-from PySide6.QtGui import QAction, QIcon, QPixmap, QPainter
+from PySide6.QtCore import Qt, Signal, Slot, QTimer, QPoint, QUrl
+from PySide6.QtGui import QAction, QIcon, QPixmap, QPainter, QDesktopServices
 from PySide6.QtSvg import QSvgRenderer
 
 # Import all the tab types
@@ -29,6 +30,19 @@ try:
 except ImportError:
     print("Error: Could not import Dialogs")
     sys.exit(1)
+
+# --- NEW: Import Export Dialog and Engine ---
+try:
+    from dialogs.export_project_dialog import ExportProjectDialog
+except ImportError:
+    print("Error: Could not import ExportProjectDialog")
+    ExportProjectDialog = None
+
+try:
+    from utils.export_engine import ExportEngine
+except ImportError:
+    print("Error: Could not import ExportEngine")
+    ExportEngine = None
 
 
 class ProjectDashboardWidget(QWidget):
@@ -153,10 +167,11 @@ class ProjectDashboardWidget(QWidget):
         il.setContentsMargins(6, 6, 6, 6)
         il.setSpacing(6)
         il.addWidget(QLabel("Project Purpose"))
-        self.purpose_text_editor = RichTextEditorTab("Project Purpose")
+        self.purpose_text_editor = RichTextEditorTab("Project Purpose",
+                                                     spell_checker_service=self.spell_checker_service)
         il.addWidget(self.purpose_text_editor)
         il.addWidget(QLabel("My Goals"))
-        self.goals_text_editor = RichTextEditorTab("Project Goals")
+        self.goals_text_editor = RichTextEditorTab("Project Goals", spell_checker_service=self.spell_checker_service)
         il.addWidget(self.goals_text_editor)
 
         self.top_splitter.addWidget(readings_widget)
@@ -223,11 +238,19 @@ class ProjectDashboardWidget(QWidget):
         edit_instr_action.triggered.connect(self.open_edit_instructions)
         settings_menu.addAction(edit_instr_action)
 
+        # --- NEW: Add Export Menu ---
+        export_menu = self.menu_bar.addMenu("Export")
+        export_action = QAction("Export Project...", self)
+        export_action.triggered.connect(self._open_export_dialog)
+        export_menu.addAction(export_action)
+        # --- END NEW ---
+
         self.top_tab_widget.addTab(self.dashboard_tab, "Project Dashboard")
 
         # --- MODIFIED: Tab Order ---
         if self.project_details.get('is_assignment', 0) == 1:
-            self.assignment_tab = AssignmentTab(self.db, self.project_id, spell_checker_service=self.spell_checker_service) # <-- PASS SERVICE
+            self.assignment_tab = AssignmentTab(self.db, self.project_id,
+                                                spell_checker_service=self.spell_checker_service)  # <-- PASS SERVICE
             self.top_tab_widget.addTab(self.assignment_tab, "Assignment")
 
         self.mindmaps_tab = MindmapTab(self.db, self.project_id)
@@ -235,13 +258,14 @@ class ProjectDashboardWidget(QWidget):
         # --- END MODIFIED: Tab Order ---
 
         # --- Add Synthesis Tab ---
-        self.synthesis_tab = SynthesisTab(self.db, self.project_id, spell_checker_service=self.spell_checker_service) # <-- PASS SERVICE
+        self.synthesis_tab = SynthesisTab(self.db, self.project_id,
+                                          spell_checker_service=self.spell_checker_service)  # <-- PASS SERVICE
         self.synthesis_tab.openReading.connect(self.open_reading_tab)
         self.synthesis_tab.tagsUpdated.connect(self._on_tags_updated)
         self.top_tab_widget.addTab(self.synthesis_tab, "Synthesis")
 
         # --- Add Graph View Tab (RENAMED) ---
-        self.graph_view_tab = GraphViewTab(self.db, self.project_id) # No editor here
+        self.graph_view_tab = GraphViewTab(self.db, self.project_id)
         self.graph_view_tab.readingDoubleClicked.connect(self.open_reading_tab)
         self.graph_view_tab.tagDoubleClicked.connect(self.open_tag_from_graph)
         self.graph_view_tab.tagsUpdated.connect(self._on_tags_updated)
@@ -256,7 +280,7 @@ class ProjectDashboardWidget(QWidget):
         # ---!!--- END REMOVED ---!!---
 
         # --- NEW: Add To-Do List Tab ---
-        self.todo_list_tab = TodoListTab(self.db, self.project_id) # No editor here
+        self.todo_list_tab = TodoListTab(self.db, self.project_id)
         self.top_tab_widget.addTab(self.todo_list_tab, "To-Do List")
         # --- END NEW ---
 
@@ -274,7 +298,8 @@ class ProjectDashboardWidget(QWidget):
             ("Unresolved Questions", "unresolved_text")
         ]
         for tab_title, field_name in fields:
-            editor_tab = ProjectEditorTab(self.db, self.project_id, field_name, spell_checker_service=self.spell_checker_service) # <-- PASS SERVICE
+            editor_tab = ProjectEditorTab(self.db, self.project_id, field_name,
+                                          spell_checker_service=self.spell_checker_service)
             self.editor_tab_widget.addTab(editor_tab, tab_title)
             self.bottom_tabs.append(editor_tab)
 
@@ -354,7 +379,8 @@ class ProjectDashboardWidget(QWidget):
                 self.top_tab_widget.setCurrentIndex(idx)
             return tab
 
-        tab = ReadingNotesTab(self.db, self.project_id, reading_id, spell_checker_service=self.spell_checker_service) # <-- PASS SERVICE
+        tab = ReadingNotesTab(self.db, self.project_id, reading_id,
+                              spell_checker_service=self.spell_checker_service)  # <-- PASS SERVICE
 
         # --- NEW: Add book icon ---
         idx = self.top_tab_widget.addTab(tab, self.book_icon, f" {tab_title}")
@@ -519,6 +545,59 @@ class ProjectDashboardWidget(QWidget):
                 for tab in self.bottom_tabs:
                     if hasattr(tab, 'update_instructions'):
                         tab.update_instructions()
+
+    # --- NEW: Export Functionality ---
+    @Slot()
+    def _open_export_dialog(self):
+        if self.project_id == -1:
+            return
+
+        if not ExportProjectDialog or not ExportEngine:
+            QMessageBox.critical(self, "Error", "Export components could not be loaded.")
+            return
+
+        # Ensure all data is saved before exporting
+        self.save_all_editors()
+
+        dialog = ExportProjectDialog(self.db, self.project_id, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            config = dialog.get_export_config()
+            file_format = config['format']
+
+            # Get save path
+            ext_map = {"html": "HTML (*.html)", "docx": "Word Document (*.docx)", "txt": "Text File (*.txt)"}
+            project_name = self.project_details.get('name', 'Export')
+            # Sanitize project name for filename
+            safe_project_name = "".join(c for c in project_name if c.isalnum() or c in (' ', '_')).rstrip()
+            default_filename = f"{safe_project_name}.{file_format}"
+
+            file_path, _ = QFileDialog.getSaveFileName(
+                self, "Save Export", default_filename, ext_map[file_format]
+            )
+
+            if not file_path:
+                return
+
+            try:
+                engine = ExportEngine(self.db, self.project_id)
+                engine.export_to_file(file_path, config)
+
+                reply = QMessageBox.information(self,
+                                                "Export Successful",
+                                                f"Project exported successfully to:\n{file_path}\n\nDo you want to open the file now?",
+                                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                                QMessageBox.StandardButton.Yes
+                                                )
+
+                if reply == QMessageBox.StandardButton.Yes:
+                    QDesktopServices.openUrl(QUrl.fromLocalFile(file_path))
+
+            except ImportError as e:
+                QMessageBox.critical(self, "Export Error",
+                                     f"A required library is missing: {e}\nPlease install 'python-docx' and 'beautifulsoup4'.")
+            except Exception as e:
+                QMessageBox.critical(self, "Export Error",
+                                     f"An error occurred during export: {e}\n\n{traceback.format_exc()}")
 
     @Slot(QTreeWidgetItem, int)
     def on_reading_double_clicked(self, item, column):
