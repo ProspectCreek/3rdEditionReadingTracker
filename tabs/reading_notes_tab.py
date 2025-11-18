@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel, QFrame,
     QTreeWidget, QTreeWidgetItem, QFormLayout, QLineEdit, QComboBox,
     QPushButton, QMenu, QStackedWidget, QInputDialog, QMessageBox, QDialog,
-    QTabWidget, QMenuBar, QTextEdit, QApplication, QAbstractItemView,
+    QTabWidget, QTextEdit, QApplication, QAbstractItemView,  # <-- QMenuBar REMOVED
     QTreeWidgetItemIterator, QListWidget, QListWidgetItem
 )
 from PySide6.QtCore import Qt, Signal, QPoint, Slot, QTimer, QUrl
@@ -125,12 +125,7 @@ except ImportError:
     print("Error: Could not import ViewReadingRulesDialog")
     ViewReadingRulesDialog = None
 
-try:
-    from dialogs.edit_reading_rules_dialog import EditReadingRulesDialog
-except ImportError:
-    print("Error: Could not import EditReadingRulesDialog")
-    EditReadingRulesDialog = None
-# --- END NEW ---
+# --- MODIFICATION: REMOVED EditReadingRulesDialog import ---
 
 
 # --- NEW: Default Reading Rules Text ---
@@ -169,8 +164,6 @@ DEFAULT_READING_RULES_HTML = """
 <p>&nbsp;</p>
 <p><i>Note: Of these last four, the first three are criteria for disagreement. Failing in all of these, you must agree, at least in part, although you may suspend judgment on the whole, in the light of the last point.</i></p>
 """
-
-
 # --- END NEW ---
 
 
@@ -265,9 +258,11 @@ class ReadingNotesTab(QWidget):
         right_layout.setContentsMargins(6, 6, 6, 6)
         right_layout.setSpacing(0)
 
-        self.reading_menu_bar = QMenuBar()
-        right_layout.addWidget(self.reading_menu_bar)
-        self._create_reading_menu(self.reading_menu_bar)
+        # --- MODIFICATION: REMOVED QMenuBar ---
+        # self.reading_menu_bar = QMenuBar()
+        # right_layout.addWidget(self.reading_menu_bar)
+        # self._create_reading_menu(self.reading_menu_bar)
+        # --- END MODIFICATION ---
 
         # Vertical splitter for notes and bottom tabs
         self.right_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -513,32 +508,7 @@ class ReadingNotesTab(QWidget):
         else:
             self.bottom_right_tabs.addTab(QLabel("Timers (Failed to load)"), "Timers")
 
-    def _create_reading_menu(self, menu_bar: QMenuBar):
-        settings_menu = menu_bar.addMenu("Reading Settings")
-        edit_instr_action = QAction("Edit Tab Instructions...", self)
-
-        # --- NEW: Enable and connect the action ---
-        if EditInstructionsDialog:
-            edit_instr_action.setEnabled(True)
-            edit_instr_action.triggered.connect(self.open_edit_reading_instructions)
-        else:
-            edit_instr_action.setEnabled(False)
-            edit_instr_action.setToolTip("EditInstructionsDialog not loaded")
-        # --- END NEW ---
-
-        settings_menu.addAction(edit_instr_action)
-
-        # --- NEW: Add Edit Reading Rules Action ---
-        settings_menu.addSeparator()
-        edit_rules_action = QAction("Edit Reading Rules...", self)
-        if EditReadingRulesDialog:
-            edit_rules_action.setEnabled(True)
-            edit_rules_action.triggered.connect(self._edit_reading_rules)
-        else:
-            edit_rules_action.setEnabled(False)
-            edit_rules_action.setToolTip("EditReadingRulesDialog not loaded")
-        settings_menu.addAction(edit_rules_action)
-        # --- END NEW ---
+    # --- MODIFICATION: REMOVED _create_reading_menu METHOD ---
 
     # --- Data Loading and Saving ---
 
@@ -1036,28 +1006,7 @@ class ReadingNotesTab(QWidget):
         dialog = ViewReadingRulesDialog(html, self)
         dialog.exec()
 
-    @Slot()
-    def _edit_reading_rules(self):
-        """
-        Opens the rich text editor dialog to edit the reading rules.
-        """
-        if not EditReadingRulesDialog:
-            QMessageBox.critical(self, "Error", "EditReadingRulesDialog not loaded.")
-            return
-
-        html = self._get_reading_rules_html()
-
-        dialog = EditReadingRulesDialog(html, self.spell_checker_service, self)
-
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            new_html = dialog.get_html()
-
-            # Get the full instructions dict, update the one field, save it back
-            instructions = self.db.get_or_create_instructions(self.project_id)
-            instructions["reading_rules_html"] = new_html
-
-            self.db.update_instructions(self.project_id, instructions)
-            QMessageBox.information(self, "Success", "Reading rules updated.")
+    # --- MODIFICATION: REMOVED _edit_reading_rules METHOD ---
 
     # --- END NEW ---
 
@@ -1204,7 +1153,7 @@ class ReadingNotesTab(QWidget):
                     elif isinstance(tree_or_list_widget, QListWidget):
                         for i in range(tree_or_list_widget.count()):
                             item = tree_or_list_widget.item(i)
-                            if item.data(Qt.ItemDataRole.UserRole) == item_link_id:
+                            if item.data(0, Qt.ItemDataRole.UserRole) == item_link_id:
                                 found_item = item
                                 break
                     # ---!!--- END OF FIX ---!!---

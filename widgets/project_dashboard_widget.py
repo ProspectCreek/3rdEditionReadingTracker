@@ -27,6 +27,8 @@ try:
     from dialogs.add_reading_dialog import AddReadingDialog
     from dialogs.edit_instructions_dialog import EditInstructionsDialog
     from dialogs.reorder_dialog import ReorderDialog
+    # --- ADDITION 1: Import EditReadingRulesDialog ---
+    from dialogs.edit_reading_rules_dialog import EditReadingRulesDialog
 except ImportError:
     print("Error: Could not import Dialogs")
     sys.exit(1)
@@ -43,6 +45,47 @@ try:
 except ImportError:
     print("Error: Could not import ExportEngine")
     ExportEngine = None
+
+# --- ADDITION 2: Copy DEFAULT_READING_RULES_HTML constant ---
+# This is needed here to be passed to the dialogs
+DEFAULT_READING_RULES_HTML = """
+<p><b>I. The First Stage of Analytical Reading: Rules for Finding What a Book Is About</b></p>
+<ol>
+    <li>Classify the book according to kind and subject matter.</li>
+    <li>State what the whole book is about with the utmost brevity.</li>
+    <li>Enumerate its major parts in their order and relation and outline these parts as you have outlined the whole.</li>
+    <li>Define the problem or problems the author has tried to solve.</li>
+</ol>
+<p>&nbsp;</p>
+<p><b>II. The Second Stage of Analytical Reading: Rules for Interpreting a Book's Contents</b></p>
+<ol start="5">
+    <li>Come to terms with the author by interpreting his key words.</li>
+    <li>Grasp the author's leading propositions by dealing with his most important sentences.</li>
+    <li>Know the author's arguments, by finding them in, or constructing them out of, sequences of sentences.</li>
+    <li>Determine which of his problems the author has solved, and which he has not; and of the latter, decide which the author knew he had failed to solve.</li>
+</ol>
+<p>&nbsp;</p>
+<p><b>The Third Stage of Analytical Reading: Rules for Criticizing a Book as a Communication of Knowledge</b></p>
+<p><b>A. General Maxims of Intellectual Etiquette</b></p>
+<ol start="9">
+    <li>Do not begin criticism until you have completed your outline and your interpretation of the book. (Do not say you agree, disagree, or suspend judgment, until you can say "I understand.")</li>
+    <li>Do not disagree disputatiously or contentiously.</li>
+    <li>Demonstrate that you recognize the difference between knowledge and mere personal opinion by presenting good reasons for any critical judgment you make.</li>
+</ol>
+<p>&nbsp;</p>
+<p><b>B. Special Criteria for Points of Criticism</b></p>
+<ol start="12">
+    <li>Show wherein the author is uninformed.</li>
+    <li>Show wherein the author is misinformed.</li>
+    <li>Show wherein the author is illogical.</li>
+    <li>Show wherein the author's analysis or account is incomplete.</li>
+</ol>
+<p>&nbsp;</p>
+<p><i>Note: Of these last four, the first three are criteria for disagreement. Failing in all of these, you must agree, at least in part, although you may suspend judgment on the whole, in the light of the last point.</i></p>
+"""
+
+
+# --- END ADDITION 2 ---
 
 
 class ProjectDashboardWidget(QWidget):
@@ -237,6 +280,18 @@ class ProjectDashboardWidget(QWidget):
         edit_instr_action = QAction("Edit Dashboard Instructions", self)
         edit_instr_action.triggered.connect(self.open_edit_instructions)
         settings_menu.addAction(edit_instr_action)
+
+        # --- MODIFICATION: Add "Edit Reading Rules" to the main Settings menu ---
+        settings_menu.addSeparator()
+        edit_rules_action = QAction("Edit Reading Rules...", self)
+        if EditReadingRulesDialog:
+            edit_rules_action.setEnabled(True)
+            edit_rules_action.triggered.connect(self.open_edit_reading_rules)
+        else:
+            edit_rules_action.setEnabled(False)
+            edit_rules_action.setToolTip("EditReadingRulesDialog not loaded")
+        settings_menu.addAction(edit_rules_action)
+        # --- END MODIFICATION ---
 
         # --- NEW: Add Export Menu ---
         export_menu = self.menu_bar.addMenu("Export")
@@ -562,6 +617,46 @@ class ProjectDashboardWidget(QWidget):
                 # --- END NEW ---
 
     # --- END OF MODIFICATION ---
+
+    # --- ADDITION 3: Add methods to get/open reading rules dialog ---
+    def _get_reading_rules_html(self):
+        """Fetches rules from DB, falling back to default."""
+        # Use self.project_id which is set when project is loaded
+        instructions = self.db.get_or_create_instructions(self.project_id)
+        html = instructions.get("reading_rules_html", "")
+        if not html or html.isspace():
+            html = DEFAULT_READING_RULES_HTML
+        return html
+
+    @Slot()
+    def open_edit_reading_rules(self):
+        """
+        Opens the rich text editor dialog to edit the reading rules.
+        """
+        if not EditReadingRulesDialog:
+            QMessageBox.critical(self, "Error", "EditReadingRulesDialog not loaded.")
+            return
+
+        if self.project_id == -1:
+            QMessageBox.warning(self, "Error", "No project is loaded.")
+            return
+
+        html = self._get_reading_rules_html()
+
+        # Pass spell_checker_service
+        dialog = EditReadingRulesDialog(html, self.spell_checker_service, self)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            new_html = dialog.get_html()
+
+            # Get the full instructions dict, update the one field, save it back
+            instructions = self.db.get_or_create_instructions(self.project_id)
+            instructions["reading_rules_html"] = new_html
+
+            self.db.update_instructions(self.project_id, instructions)
+            QMessageBox.information(self, "Success", "Reading rules updated.")
+
+    # --- END ADDITION 3 ---
 
     # --- NEW: Export Functionality ---
     @Slot()
