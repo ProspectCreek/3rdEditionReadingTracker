@@ -1,3 +1,4 @@
+
 # prospectcreek/3rdeditionreadingtracker/database_helpers/schema.py
 import sqlite3
 
@@ -94,6 +95,8 @@ class SchemaSetup:
             ("reading_dialogue_instr", "TEXT"),
             # --- NEW: Add Reading Rules Column ---
             ("reading_rules_html", "TEXT"),
+            # --- NEW: Add Syntopic Rules Column ---
+            ("syntopic_rules_html", "TEXT"),
         ]
 
         # Safely add each new column to the 'instructions' table

@@ -46,6 +46,36 @@ except ImportError:
     print("Error: Could not import AddCitationDialog for SynthesisTab")
     AddCitationDialog = None
 
+# --- NEW: Import View Dialog ---
+try:
+    from dialogs.view_syntopic_rules_dialog import ViewSyntopicRulesDialog
+except ImportError:
+    print("Error: Could not import ViewSyntopicRulesDialog")
+    ViewSyntopicRulesDialog = None
+# --- END NEW ---
+
+
+# --- NEW: Default Rules Text ---
+DEFAULT_SYNTOPIC_RULES_HTML = """
+<p><b>I. Surveying the Field Preparatory to Syntopical Reading</b></p>
+<ol>
+<li>Create a tentative bibliography of your subject by recourse to library catalogues, advisors, and bibliographies in books.</li>
+<li>Inspect all of the books on the tentative bibliography to ascertain which are germane to your subject, and also to acquire a clearer idea of the subject.</li>
+</ol>
+<p><i>Note: These two steps are not, strictly speaking, chronologically distinct; that is, the two steps have an effect on each other, with the second, in particular, serving to modify the first.</i></p>
+<p>&nbsp;</p>
+<p><b>II. Syntopical Reading of the Bibliography Amassed in Stage I</b></p>
+<ol>
+<li>Inspect the books already identified as relevant to your subject in Stage I in order to find the most relevant passages.</li>
+<li>Bring the authors to terms by constructing a neutral terminology of the subject that all, or the great majority, of the authors can be interpreted as employing, whether they actually employ the words or not.</li>
+<li>Establish a set of neutral propositions for all of the authors by framing a set of questions to which all or most of the authors can be interpreted as giving answers, whether they actually treat the questions explicitly or not.</li>
+<li>Define the issues, both major and minor ones, by ranging the opposing answers of authors to the various questions on one side of an issue or another. You should remember that an issue does not always exist explicitly between or among authors, but that it sometimes has to be constructed by interpretation of the authors' views on matters that may not have been their primary concern.</li>
+<li>Analyze the discussion by ordering the questions and issues in such a way as to throw maximum light on the subject. More general issues should precede less general ones, and relations among issues should be clearly indicated.</li>
+</ol>
+<p><i>Note: Dialectical detachment or objectivity should, ideally, be maintained throughout. One way to insure this is always to accompany an interpretation of an author's views on an issue with an actual quotation from his text.</i></p>
+"""
+# --- END NEW ---
+
 
 class SynthesisTab(QWidget):
     """
@@ -81,6 +111,23 @@ class SynthesisTab(QWidget):
         left_layout.addWidget(QLabel("Synthesis Tags"))
         self.tag_list = QListWidget()
         left_layout.addWidget(self.tag_list)
+
+        # --- NEW: Add Syntopic Rules Button ---
+        # Create a horizontal layout to snap button to the right and prevent resizing
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()  # Pushes the button to the right
+
+        self.btn_syntopic_rules = QPushButton("Syntopic Rules")
+        button_layout.addWidget(self.btn_syntopic_rules)
+
+        left_layout.addLayout(button_layout)
+
+        if ViewSyntopicRulesDialog:
+            self.btn_syntopic_rules.clicked.connect(self._show_syntopic_rules)
+        else:
+            self.btn_syntopic_rules.setEnabled(False)
+        # --- END NEW ---
+
         left_panel.setLayout(left_layout)
 
         right_panel = QFrame()
@@ -327,7 +374,7 @@ class SynthesisTab(QWidget):
             self.anchor_display.setHtml(html)
 
         except Exception as e:
-            self.anchor_display.setHtml(f"<p><b>Error loading anchors:</b><br>{e}</p>")
+            self.anchor_display.setHtml(f"<p><b>Error loading details:</b><br>{e}</p>")
             import traceback
             traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Could not load anchors: {e}")
@@ -451,18 +498,8 @@ class SynthesisTab(QWidget):
             QMessageBox.critical(self, "Error", "ManageAnchorsDialog could not be loaded.")
             return
 
-        # ##################################################################
-        # #
-        # #                      --- MODIFICATION START ---
-        # #
-        # ##################################################################
         # Pass the project_id to the dialog
         dialog = ManageAnchorsDialog(self.db, self.project_id, tag_id, tag_name, self)
-        # ##################################################################
-        # #
-        # #                      --- MODIFICATION END ---
-        # #
-        # ##################################################################
 
         dialog.anchorDeleted.connect(self._on_anchor_deleted_from_dialog)
         dialog.exec()
@@ -503,3 +540,21 @@ class SynthesisTab(QWidget):
                 self.notes_editor.focus_editor()
             else:
                 QMessageBox.warning(self, "Error", "Notes editor is not available.")
+
+    # --- NEW: Show Rules Logic ---
+    @Slot()
+    def _show_syntopic_rules(self):
+        """Opens the dialog to view syntopic rules."""
+        if not ViewSyntopicRulesDialog:
+            return
+
+        # 1. Get from DB or Default
+        instructions = self.db.get_or_create_instructions(self.project_id)
+        html = instructions.get("syntopic_rules_html", "")
+        if not html or html.isspace():
+            html = DEFAULT_SYNTOPIC_RULES_HTML
+
+        # 2. Open dialog
+        dialog = ViewSyntopicRulesDialog(html, self)
+        dialog.exec()
+    # --- END NEW ---

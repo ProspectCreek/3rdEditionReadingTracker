@@ -1,3 +1,5 @@
+#fileName: prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-47bfcd72f7141086e803a1dc9d0219052235aec5/database_helpers/items_mixin.py
+
 import sqlite3
 
 
@@ -178,14 +180,15 @@ class ItemsMixin:
 
     # --- START OF MODIFICATIONS ---
 
-    # List of all 17 instruction columns
+    # List of all 18 instruction columns
     INSTRUCTION_COLUMNS = [
         "key_questions_instr", "thesis_instr", "insights_instr", "unresolved_instr",
         "synthesis_terminology_instr", "synthesis_propositions_instr", "synthesis_notes_instr",
         "reading_dq_instr", "reading_lp_instr", "reading_unity_instr", "reading_elevator_instr",
         "reading_parts_instr", "reading_key_terms_instr", "reading_arguments_instr",
         "reading_gaps_instr", "reading_theories_instr", "reading_dialogue_instr",
-        "reading_rules_html"  # --- NEW ---
+        "reading_rules_html",
+        "syntopic_rules_html"  # --- NEW ---
     ]
 
     # ------------------------- instructions -------------------------
@@ -211,9 +214,9 @@ class ItemsMixin:
         count = self.cursor.fetchone()[0]
         if count == 0:
             try:
-                # Create a new row with all 17 columns explicitly set to ''
+                # Create a new row with all columns explicitly set to ''
                 all_cols = ", ".join(self.INSTRUCTION_COLUMNS)
-                # Create a string of 17 placeholders ('')
+                # Create a string of placeholders ('')
                 all_placeholders = ", ".join(["''" for _ in self.INSTRUCTION_COLUMNS])
 
                 self.cursor.execute(f"""
@@ -240,7 +243,7 @@ class ItemsMixin:
 
     def update_instructions(self, project_id, instructions_data: dict):
         """
-        Updates all 17 instruction fields from a data dictionary.
+        Updates all instruction fields from a data dictionary.
         """
 
         # Build the SET clause

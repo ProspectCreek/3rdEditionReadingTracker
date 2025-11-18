@@ -16,19 +16,15 @@ from tabs.project_editor_tab import ProjectEditorTab
 from tabs.rich_text_editor_tab import RichTextEditorTab
 from tabs.mindmap_tab import MindmapTab
 from tabs.assignment_tab import AssignmentTab
-from tabs.reading_notes_tab import ReadingNotesTab
-from tabs.synthesis_tab import SynthesisTab
-from tabs.graph_view_tab import GraphViewTab  # <-- This now imports the NEW Obsidian-style tab
+from tabs.reading_notes_tab import ReadingNotesTab, DEFAULT_READING_RULES_HTML  # Import default reading rules
+from tabs.synthesis_tab import SynthesisTab, DEFAULT_SYNTOPIC_RULES_HTML  # Import default syntopic rules
+from tabs.graph_view_tab import GraphViewTab
 from tabs.todo_list_tab import TodoListTab
-
-# from tabs.obsidian_test_tab import ObsidianTestTab  # <-- REMOVED
 
 try:
     from dialogs.add_reading_dialog import AddReadingDialog
     from dialogs.edit_instructions_dialog import EditInstructionsDialog
     from dialogs.reorder_dialog import ReorderDialog
-    # --- ADDITION 1: Import EditReadingRulesDialog ---
-    from dialogs.edit_reading_rules_dialog import EditReadingRulesDialog
 except ImportError:
     print("Error: Could not import Dialogs")
     sys.exit(1)
@@ -46,46 +42,21 @@ except ImportError:
     print("Error: Could not import ExportEngine")
     ExportEngine = None
 
-# --- ADDITION 2: Copy DEFAULT_READING_RULES_HTML constant ---
-# This is needed here to be passed to the dialogs
-DEFAULT_READING_RULES_HTML = """
-<p><b>I. The First Stage of Analytical Reading: Rules for Finding What a Book Is About</b></p>
-<ol>
-    <li>Classify the book according to kind and subject matter.</li>
-    <li>State what the whole book is about with the utmost brevity.</li>
-    <li>Enumerate its major parts in their order and relation and outline these parts as you have outlined the whole.</li>
-    <li>Define the problem or problems the author has tried to solve.</li>
-</ol>
-<p>&nbsp;</p>
-<p><b>II. The Second Stage of Analytical Reading: Rules for Interpreting a Book's Contents</b></p>
-<ol start="5">
-    <li>Come to terms with the author by interpreting his key words.</li>
-    <li>Grasp the author's leading propositions by dealing with his most important sentences.</li>
-    <li>Know the author's arguments, by finding them in, or constructing them out of, sequences of sentences.</li>
-    <li>Determine which of his problems the author has solved, and which he has not; and of the latter, decide which the author knew he had failed to solve.</li>
-</ol>
-<p>&nbsp;</p>
-<p><b>The Third Stage of Analytical Reading: Rules for Criticizing a Book as a Communication of Knowledge</b></p>
-<p><b>A. General Maxims of Intellectual Etiquette</b></p>
-<ol start="9">
-    <li>Do not begin criticism until you have completed your outline and your interpretation of the book. (Do not say you agree, disagree, or suspend judgment, until you can say "I understand.")</li>
-    <li>Do not disagree disputatiously or contentiously.</li>
-    <li>Demonstrate that you recognize the difference between knowledge and mere personal opinion by presenting good reasons for any critical judgment you make.</li>
-</ol>
-<p>&nbsp;</p>
-<p><b>B. Special Criteria for Points of Criticism</b></p>
-<ol start="12">
-    <li>Show wherein the author is uninformed.</li>
-    <li>Show wherein the author is misinformed.</li>
-    <li>Show wherein the author is illogical.</li>
-    <li>Show wherein the author's analysis or account is incomplete.</li>
-</ol>
-<p>&nbsp;</p>
-<p><i>Note: Of these last four, the first three are criteria for disagreement. Failing in all of these, you must agree, at least in part, although you may suspend judgment on the whole, in the light of the last point.</i></p>
-"""
+# --- NEW: Import Edit Rule Dialogs ---
+try:
+    from dialogs.edit_syntopic_rules_dialog import EditSyntopicRulesDialog
+except ImportError:
+    print("Error: Could not import EditSyntopicRulesDialog")
+    EditSyntopicRulesDialog = None
+
+try:
+    from dialogs.edit_reading_rules_dialog import EditReadingRulesDialog
+except ImportError:
+    print("Error: Could not import EditReadingRulesDialog")
+    EditReadingRulesDialog = None
 
 
-# --- END ADDITION 2 ---
+# --- END NEW ---
 
 
 class ProjectDashboardWidget(QWidget):
@@ -102,7 +73,6 @@ class ProjectDashboardWidget(QWidget):
         self.reading_tabs = {}  # Stores {reading_id: ReadingNotesTab}
         self.synthesis_tab = None
         self.graph_view_tab = None
-        self.obsidian_test_tab = None  # <-- ADDED
         self.todo_list_tab = None
         self.assignment_tab = None
         self.mindmaps_tab = None
@@ -271,27 +241,34 @@ class ProjectDashboardWidget(QWidget):
         self.reading_tabs.clear()
         self.synthesis_tab = None
         self.graph_view_tab = None
-        # self.obsidian_test_tab = None  # <-- REMOVED
         self.todo_list_tab = None
         self.assignment_tab = None
         self.mindmaps_tab = None
 
         settings_menu = self.menu_bar.addMenu("Settings")
+
+        # 1. Edit Dashboard Instructions
         edit_instr_action = QAction("Edit Dashboard Instructions", self)
         edit_instr_action.triggered.connect(self.open_edit_instructions)
         settings_menu.addAction(edit_instr_action)
 
-        # --- MODIFICATION: Add "Edit Reading Rules" to the main Settings menu ---
-        settings_menu.addSeparator()
-        edit_rules_action = QAction("Edit Reading Rules...", self)
+        # 2. Edit Reading Rules
+        edit_read_rules_action = QAction("Edit Reading Rules...", self)
         if EditReadingRulesDialog:
-            edit_rules_action.setEnabled(True)
-            edit_rules_action.triggered.connect(self.open_edit_reading_rules)
+            edit_read_rules_action.setEnabled(True)
+            edit_read_rules_action.triggered.connect(self._edit_reading_rules)
         else:
-            edit_rules_action.setEnabled(False)
-            edit_rules_action.setToolTip("EditReadingRulesDialog not loaded")
-        settings_menu.addAction(edit_rules_action)
-        # --- END MODIFICATION ---
+            edit_read_rules_action.setEnabled(False)
+        settings_menu.addAction(edit_read_rules_action)
+
+        # 3. Edit Syntopic Rules
+        edit_syntopic_action = QAction("Edit Syntopic Rules...", self)
+        if EditSyntopicRulesDialog:
+            edit_syntopic_action.setEnabled(True)
+            edit_syntopic_action.triggered.connect(self._edit_syntopic_rules)
+        else:
+            edit_syntopic_action.setEnabled(False)
+        settings_menu.addAction(edit_syntopic_action)
 
         # --- NEW: Add Export Menu ---
         export_menu = self.menu_bar.addMenu("Export")
@@ -325,14 +302,6 @@ class ProjectDashboardWidget(QWidget):
         self.graph_view_tab.tagDoubleClicked.connect(self.open_tag_from_graph)
         self.graph_view_tab.tagsUpdated.connect(self._on_tags_updated)
         self.top_tab_widget.addTab(self.graph_view_tab, "Connections")
-
-        # ---!!--- REMOVED OBSIDIAN TEST TAB ---!!---
-        # self.obsidian_test_tab = ObsidianTestTab(self.db, self.project_id)
-        # self.obsidian_test_tab.readingDoubleClicked.connect(self.open_reading_tab)
-        # self.obsidian_test_tab.tagDoubleClicked.connect(self.open_tag_from_graph)
-        # self.obsidian_test_tab.tagsUpdated.connect(self._on_tags_updated)
-        # self.top_tab_widget.addTab(self.obsidian_test_tab, "Obsidian Test")
-        # ---!!--- END REMOVED ---!!---
 
         # --- NEW: Add To-Do List Tab ---
         self.todo_list_tab = TodoListTab(self.db, self.project_id)
@@ -536,10 +505,6 @@ class ProjectDashboardWidget(QWidget):
             self.mindmaps_tab.load_mindmaps()
         elif current_widget == self.graph_view_tab:
             self.graph_view_tab.load_graph()
-        # ---!!--- REMOVED OBSIDIAN TEST TAB ---!!---
-        # elif current_widget == self.obsidian_test_tab:
-        #     self.obsidian_test_tab.load_graph()
-        # ---!!--- END REMOVED ---!!---
         elif current_widget == self.todo_list_tab:
             self.todo_list_tab.load_items()
 
@@ -581,7 +546,6 @@ class ProjectDashboardWidget(QWidget):
         if self.synthesis_tab and hasattr(self.synthesis_tab, 'save_editors'):
             self.synthesis_tab.save_editors()
 
-    # --- START OF MODIFICATION ---
     @Slot()
     def open_edit_instructions(self):
         if self.project_id == -1:
@@ -616,47 +580,63 @@ class ProjectDashboardWidget(QWidget):
                         reading_tab.update_all_tab_instructions(new_instr)
                 # --- END NEW ---
 
-    # --- END OF MODIFICATION ---
-
-    # --- ADDITION 3: Add methods to get/open reading rules dialog ---
-    def _get_reading_rules_html(self):
-        """Fetches rules from DB, falling back to default."""
-        # Use self.project_id which is set when project is loaded
-        instructions = self.db.get_or_create_instructions(self.project_id)
-        html = instructions.get("reading_rules_html", "")
-        if not html or html.isspace():
-            html = DEFAULT_READING_RULES_HTML
-        return html
-
+    # --- NEW: Edit Reading Rules ---
     @Slot()
-    def open_edit_reading_rules(self):
-        """
-        Opens the rich text editor dialog to edit the reading rules.
-        """
+    def _edit_reading_rules(self):
+        """Opens the dialog to edit the reading rules (from dashboard settings)."""
+        if self.project_id == -1:
+            return
         if not EditReadingRulesDialog:
             QMessageBox.critical(self, "Error", "EditReadingRulesDialog not loaded.")
             return
 
-        if self.project_id == -1:
-            QMessageBox.warning(self, "Error", "No project is loaded.")
-            return
+        # 1. Get current HTML
+        instructions = self.db.get_or_create_instructions(self.project_id)
+        html = instructions.get("reading_rules_html", "")
+        if not html or html.isspace():
+            html = DEFAULT_READING_RULES_HTML
 
-        html = self._get_reading_rules_html()
-
-        # Pass spell_checker_service
+        # 2. Open Dialog
         dialog = EditReadingRulesDialog(html, self.spell_checker_service, self)
-
         if dialog.exec() == QDialog.DialogCode.Accepted:
             new_html = dialog.get_html()
 
-            # Get the full instructions dict, update the one field, save it back
+            # 3. Save Back
             instructions = self.db.get_or_create_instructions(self.project_id)
             instructions["reading_rules_html"] = new_html
-
             self.db.update_instructions(self.project_id, instructions)
-            QMessageBox.information(self, "Success", "Reading rules updated.")
+            QMessageBox.information(self, "Success", "Reading Rules updated.")
 
-    # --- END ADDITION 3 ---
+    # --- END NEW ---
+
+    # --- NEW: Edit Syntopic Rules ---
+    @Slot()
+    def _edit_syntopic_rules(self):
+        """Opens the dialog to edit the syntopical reading rules."""
+        if self.project_id == -1:
+            return
+        if not EditSyntopicRulesDialog:
+            QMessageBox.critical(self, "Error", "EditSyntopicRulesDialog not loaded.")
+            return
+
+        # 1. Get current HTML
+        instructions = self.db.get_or_create_instructions(self.project_id)
+        html = instructions.get("syntopic_rules_html", "")
+        if not html or html.isspace():
+            html = DEFAULT_SYNTOPIC_RULES_HTML
+
+        # 2. Open Dialog
+        dialog = EditSyntopicRulesDialog(html, self.spell_checker_service, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            new_html = dialog.get_html()
+
+            # 3. Save Back
+            instructions = self.db.get_or_create_instructions(self.project_id)
+            instructions["syntopic_rules_html"] = new_html
+            self.db.update_instructions(self.project_id, instructions)
+            QMessageBox.information(self, "Success", "Syntopical Reading Rules updated.")
+
+    # --- END NEW ---
 
     # --- NEW: Export Functionality ---
     @Slot()
@@ -885,11 +865,6 @@ class ProjectDashboardWidget(QWidget):
         if self.graph_view_tab:
             self.graph_view_tab.load_graph()
 
-        # ---!!--- REMOVED OBSIDIAN TEST TAB ---!!---
-        # if self.obsidian_test_tab:
-        #     self.obsidian_test_tab.load_graph()
-        # ---!!--- END REMOVED ---!!---
-
     @Slot(int, int, int, int, str)
     def open_reading_from_graph(self, anchor_id, reading_id, outline_id=0, item_link_id=0, item_type=''):
         """Slot to open a reading tab from the graph view."""
@@ -937,3 +912,4 @@ class ProjectDashboardWidget(QWidget):
 
         self.save_all_editors()
         self.returnToHome.emit()
+
