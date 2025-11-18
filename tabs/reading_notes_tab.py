@@ -116,6 +116,59 @@ try:
 except ImportError:
     print("Error: Could not import EditInstructionsDialog")
     EditInstructionsDialog = None
+# --- END NEW ---
+
+# --- NEW: Import Reading Rules Dialogs ---
+try:
+    from dialogs.view_reading_rules_dialog import ViewReadingRulesDialog
+except ImportError:
+    print("Error: Could not import ViewReadingRulesDialog")
+    ViewReadingRulesDialog = None
+
+try:
+    from dialogs.edit_reading_rules_dialog import EditReadingRulesDialog
+except ImportError:
+    print("Error: Could not import EditReadingRulesDialog")
+    EditReadingRulesDialog = None
+# --- END NEW ---
+
+
+# --- NEW: Default Reading Rules Text ---
+DEFAULT_READING_RULES_HTML = """
+<p><b>I. The First Stage of Analytical Reading: Rules for Finding What a Book Is About</b></p>
+<ol>
+    <li>Classify the book according to kind and subject matter.</li>
+    <li>State what the whole book is about with the utmost brevity.</li>
+    <li>Enumerate its major parts in their order and relation and outline these parts as you have outlined the whole.</li>
+    <li>Define the problem or problems the author has tried to solve.</li>
+</ol>
+<p>&nbsp;</p>
+<p><b>II. The Second Stage of Analytical Reading: Rules for Interpreting a Book's Contents</b></p>
+<ol start="5">
+    <li>Come to terms with the author by interpreting his key words.</li>
+    <li>Grasp the author's leading propositions by dealing with his most important sentences.</li>
+    <li>Know the author's arguments, by finding them in, or constructing them out of, sequences of sentences.</li>
+    <li>Determine which of his problems the author has solved, and which he has not; and of the latter, decide which the author knew he had failed to solve.</li>
+</ol>
+<p>&nbsp;</p>
+<p><b>The Third Stage of Analytical Reading: Rules for Criticizing a Book as a Communication of Knowledge</b></p>
+<p><b>A. General Maxims of Intellectual Etiquette</b></p>
+<ol start="9">
+    <li>Do not begin criticism until you have completed your outline and your interpretation of the book. (Do not say you agree, disagree, or suspend judgment, until you can say "I understand.")</li>
+    <li>Do not disagree disputatiously or contentiously.</li>
+    <li>Demonstrate that you recognize the difference between knowledge and mere personal opinion by presenting good reasons for any critical judgment you make.</li>
+</ol>
+<p>&nbsp;</p>
+<p><b>B. Special Criteria for Points of Criticism</b></p>
+<ol start="12">
+    <li>Show wherein the author is uninformed.</li>
+    <li>Show wherein the author is misinformed.</li>
+    <li>Show wherein the author is illogical.</li>
+    <li>Show wherein the author's analysis or account is incomplete.</li>
+</ol>
+<p>&nbsp;</p>
+<p><i>Note: Of these last four, the first three are criteria for disagreement. Failing in all of these, you must agree, at least in part, although you may suspend judgment on the whole, in the light of the last point.</i></p>
+"""
 
 
 # --- END NEW ---
@@ -144,6 +197,7 @@ class ReadingNotesTab(QWidget):
 
         self.bottom_tabs_with_editors = []
         self._pending_anchor_focus = None
+        self.instruction_labels = {}  # --- NEW: To store simple editor labels ---
 
         # Main Layout: A horizontal splitter
         main_layout = QHBoxLayout(self)
@@ -333,10 +387,18 @@ class ReadingNotesTab(QWidget):
         details_btn_layout.addWidget(self.btn_save_details)
         parent_layout.addLayout(details_btn_layout)
 
+        # --- NEW: Connect Reading Rules Button ---
+        if ViewReadingRulesDialog:
+            self.btn_reading_rules.clicked.connect(self._show_reading_rules)
+        else:
+            self.btn_reading_rules.setEnabled(False)
+        # --- END NEW ---
+
     def _add_bottom_tabs(self):
         """Creates and adds all the tabs for the bottom-right panel."""
 
         self.bottom_tabs_with_editors.clear()
+        self.instruction_labels.clear()  # --- NEW ---
 
         if DrivingQuestionTab:
             self.driving_question_tab = DrivingQuestionTab(self.db, self.reading_id)
@@ -344,23 +406,28 @@ class ReadingNotesTab(QWidget):
         else:
             self.bottom_right_tabs.addTab(QLabel("Driving Question (Failed to load)"), "Driving Question")
 
-        def create_editor_tab(title, instructions, field_name):
+        # --- MODIFIED: Fallback now includes storing the label ---
+        def create_editor_tab(title, instructions, field_name, instr_key):
             # This is a fallback for if the main tab modules fail to import
             widget = QWidget()
             layout = QVBoxLayout(widget)
             layout.setContentsMargins(4, 4, 4, 4)
             layout.setSpacing(4)
 
-            # Create a label, but it won't be updatable
+            # Create a label, and store it for updates
             instr_label = QLabel(instructions)
             instr_label.setWordWrap(True)
             instr_label.setStyleSheet("font-style: italic; color: #555;")
+            instr_label.setVisible(False)  # Start hidden
             layout.addWidget(instr_label)
+            self.instruction_labels[instr_key] = instr_label  # Store the label
 
             editor = RichTextEditorTab(title, spell_checker_service=self.spell_checker_service)  # <-- PASS SERVICE
             self.bottom_tabs_with_editors.append((field_name, editor))
             layout.addWidget(editor)
             self.bottom_right_tabs.addTab(widget, title)
+
+        # --- END MODIFIED ---
 
         if LeadingPropositionsTab:
             self.leading_propositions_tab = LeadingPropositionsTab(
@@ -369,13 +436,13 @@ class ReadingNotesTab(QWidget):
             self.bottom_right_tabs.addTab(self.leading_propositions_tab, "Leading Propositions")
         else:
             create_editor_tab("Leading Propositions", "Instructions for Leading Propositions go here.",
-                              "propositions_html")
+                              "propositions_html", "reading_lp_instr")
 
         if UnityTab:
             self.unity_tab = UnityTab(self.db, self.project_id, self.reading_id)
             self.bottom_right_tabs.addTab(self.unity_tab, "Unity")
         else:
-            create_editor_tab("Unity", "Instructions for Unity go here.", "unity_html")
+            create_editor_tab("Unity", "Instructions for Unity go here.", "unity_html", "reading_unity_instr")
 
         if ElevatorAbstractTab:
             self.elevator_abstract_tab = ElevatorAbstractTab(
@@ -385,7 +452,7 @@ class ReadingNotesTab(QWidget):
             self.bottom_tabs_with_editors.append(("personal_dialogue_html", self.elevator_abstract_tab.editor))
         else:
             create_editor_tab("Elevator Abstract", "Instructions for Elevator Abstract go here.",
-                              "personal_dialogue_html")
+                              "personal_dialogue_html", "reading_elevator_instr")
 
         if PartsOrderRelationTab:
             self.parts_order_relation_tab = PartsOrderRelationTab(
@@ -395,32 +462,35 @@ class ReadingNotesTab(QWidget):
         else:
             # This fallback is incorrect as Parts tab doesn't use a rich text editor
             create_editor_tab("Parts: Order and Relation", "Instructions for Parts: Order and Relation go here.",
-                              "personal_dialogue_html")  # Key is wrong, but it's a fallback
+                              "personal_dialogue_html", "reading_parts_instr")  # Key is wrong, but it's a fallback
 
         if KeyTermsTab:
             self.key_terms_tab = KeyTermsTab(self.db, self.project_id, self.reading_id)
             self.bottom_right_tabs.addTab(self.key_terms_tab, "Key Terms")
         else:
-            create_editor_tab("Key Terms", "Instructions for Key Terms go here.", "key_terms_html")
+            create_editor_tab("Key Terms", "Instructions for Key Terms go here.", "key_terms_html",
+                              "reading_key_terms_instr")
 
         if ArgumentsTab:
             self.arguments_tab = ArgumentsTab(self.db, self.project_id, self.reading_id)
             self.bottom_right_tabs.addTab(self.arguments_tab, "Arguments")
         else:
-            create_editor_tab("Arguments", "Instructions for Arguments go here.", "arguments_html")
+            create_editor_tab("Arguments", "Instructions for Arguments go here.", "arguments_html",
+                              "reading_arguments_instr")
 
         if GapsTab:
             self.gaps_tab = GapsTab(spell_checker_service=self.spell_checker_service)  # <-- PASS SERVICE
             self.bottom_right_tabs.addTab(self.gaps_tab, "Gaps")
             self.bottom_tabs_with_editors.append(("gaps_html", self.gaps_tab.editor))
         else:
-            create_editor_tab("Gaps", "Instructions for Gaps go here.", "gaps_html")
+            create_editor_tab("Gaps", "Instructions for Gaps go here.", "gaps_html", "reading_gaps_instr")
 
         if TheoriesTab:
             self.theories_tab = TheoriesTab(self.db, self.project_id, self.reading_id)
             self.bottom_right_tabs.addTab(self.theories_tab, "Theories")
         else:
-            create_editor_tab("Theories", "Instructions for Theories go here.", "theories_html")
+            create_editor_tab("Theories", "Instructions for Theories go here.", "theories_html",
+                              "reading_theories_instr")
 
         if PersonalDialogueTab:
             self.personal_dialogue_tab = PersonalDialogueTab(
@@ -429,7 +499,7 @@ class ReadingNotesTab(QWidget):
             self.bottom_tabs_with_editors.append(("personal_dialogue_html", self.personal_dialogue_tab.editor))
         else:
             create_editor_tab("Personal Dialogue", "Instructions for Personal Dialogue go here.",
-                              "personal_dialogue_html")
+                              "personal_dialogue_html", "reading_dialogue_instr")
 
         if AttachmentsTab:
             self.attachments_tab = AttachmentsTab(self.db, self.reading_id)
@@ -457,6 +527,18 @@ class ReadingNotesTab(QWidget):
         # --- END NEW ---
 
         settings_menu.addAction(edit_instr_action)
+
+        # --- NEW: Add Edit Reading Rules Action ---
+        settings_menu.addSeparator()
+        edit_rules_action = QAction("Edit Reading Rules...", self)
+        if EditReadingRulesDialog:
+            edit_rules_action.setEnabled(True)
+            edit_rules_action.triggered.connect(self._edit_reading_rules)
+        else:
+            edit_rules_action.setEnabled(False)
+            edit_rules_action.setToolTip("EditReadingRulesDialog not loaded")
+        settings_menu.addAction(edit_rules_action)
+        # --- END NEW ---
 
     # --- Data Loading and Saving ---
 
@@ -555,6 +637,23 @@ class ReadingNotesTab(QWidget):
                                                                                             'parts_order_relation_tab') and editor.editor_title == "Parts: Order and Relation":
                 continue
 
+            # --- MODIFIED: Use new simple tab logic ---
+            if field_name == 'personal_dialogue_html' and ElevatorAbstractTab and hasattr(self,
+                                                                                          'elevator_abstract_tab') and editor.editor_title == "Elevator Abstract":
+                html = self._get_detail(field_name, default="")
+                editor.set_html(html)
+                continue
+            if field_name == 'gaps_html' and GapsTab and hasattr(self, 'gaps_tab') and editor.editor_title == "Gaps":
+                html = self._get_detail(field_name, default="")
+                editor.set_html(html)
+                continue
+            if field_name == 'personal_dialogue_html' and PersonalDialogueTab and hasattr(self,
+                                                                                          'personal_dialogue_tab') and editor.editor_title == "Personal Dialogue":
+                html = self._get_detail(field_name, default="")
+                editor.set_html(html)
+                continue
+            # --- END MODIFIED ---
+
             html = self._get_detail(field_name, default="")
             editor.set_html(html)
 
@@ -584,6 +683,36 @@ class ReadingNotesTab(QWidget):
             if field_name == 'personal_dialogue_html' and PartsOrderRelationTab and hasattr(self,
                                                                                             'parts_order_relation_tab') and editor.editor_title == "Parts: Order and Relation":
                 continue
+
+            # --- MODIFIED: Use new simple tab logic ---
+            if field_name == 'personal_dialogue_html' and ElevatorAbstractTab and hasattr(self,
+                                                                                          'elevator_abstract_tab') and editor.editor_title == "Elevator Abstract":
+                def create_callback(fname):
+                    return lambda html: self.db.update_reading_field(
+                        self.reading_id, fname, html
+                    ) if html is not None else None
+
+                editor.get_html(create_callback(field_name))
+                continue
+            if field_name == 'gaps_html' and GapsTab and hasattr(self, 'gaps_tab') and editor.editor_title == "Gaps":
+                def create_callback(fname):
+                    return lambda html: self.db.update_reading_field(
+                        self.reading_id, fname, html
+                    ) if html is not None else None
+
+                editor.get_html(create_callback(field_name))
+                continue
+            if field_name == 'personal_dialogue_html' and PersonalDialogueTab and hasattr(self,
+                                                                                          'personal_dialogue_tab') and editor.editor_title == "Personal Dialogue":
+                def create_callback(fname):
+                    return lambda html: self.db.update_reading_field(
+                        self.reading_id, fname, html
+                    ) if html is not None else None
+
+                editor.get_html(create_callback(field_name))
+                continue
+
+            # --- END MODIFIED ---
 
             def create_callback(fname):
                 return lambda html: self.db.update_reading_field(
@@ -884,6 +1013,54 @@ class ReadingNotesTab(QWidget):
         except Exception as e:
             print(f"Warning: Could not enforce right split: {e}")
 
+    # --- NEW: Reading Rules Methods ---
+
+    def _get_reading_rules_html(self):
+        """Fetches rules from DB, falling back to default."""
+        instructions = self.db.get_or_create_instructions(self.project_id)
+        html = instructions.get("reading_rules_html", "")
+        if not html or html.isspace():
+            html = DEFAULT_READING_RULES_HTML
+        return html
+
+    @Slot()
+    def _show_reading_rules(self):
+        """
+        Opens the read-only dialog to display the reading rules.
+        """
+        if not ViewReadingRulesDialog:
+            QMessageBox.critical(self, "Error", "ViewReadingRulesDialog not loaded.")
+            return
+
+        html = self._get_reading_rules_html()
+        dialog = ViewReadingRulesDialog(html, self)
+        dialog.exec()
+
+    @Slot()
+    def _edit_reading_rules(self):
+        """
+        Opens the rich text editor dialog to edit the reading rules.
+        """
+        if not EditReadingRulesDialog:
+            QMessageBox.critical(self, "Error", "EditReadingRulesDialog not loaded.")
+            return
+
+        html = self._get_reading_rules_html()
+
+        dialog = EditReadingRulesDialog(html, self.spell_checker_service, self)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            new_html = dialog.get_html()
+
+            # Get the full instructions dict, update the one field, save it back
+            instructions = self.db.get_or_create_instructions(self.project_id)
+            instructions["reading_rules_html"] = new_html
+
+            self.db.update_instructions(self.project_id, instructions)
+            QMessageBox.information(self, "Success", "Reading rules updated.")
+
+    # --- END NEW ---
+
     # --- NEW: Instruction Methods ---
     @Slot()
     def open_edit_reading_instructions(self):
@@ -930,10 +1107,18 @@ class ReadingNotesTab(QWidget):
 
         # Call update_instructions on each tab that exists
         for tab_widget, key in tab_key_map:
-            if tab_widget and hasattr(tab_widget, 'update_instructions'):
+            # --- MODIFIED: Store simple editor labels for fallback ---
+            if tab_widget is None and key in self.instruction_labels:
+                # This is a fallback editor created in _add_bottom_tabs
+                label = self.instruction_labels[key]
+                text = instructions_data.get(key, "")
+                label.setText(text)
+                label.setVisible(bool(text))
+            elif tab_widget and hasattr(tab_widget, 'update_instructions'):
                 tab_widget.update_instructions(instructions_data, key)
             elif tab_widget:
                 print(f"Warning: Tab {tab_widget.objectName()} is missing 'update_instructions' method.")
+            # --- END MODIFIED ---
 
     # --- END NEW ---
 
@@ -952,21 +1137,21 @@ class ReadingNotesTab(QWidget):
         print(
             f"    ReadingTab.set_outline_selection: START (anchor={anchor_id}). Current focus: {QApplication.instance().focusWidget()}")
 
-        self._pending_anchor_focus = anchor_id if (anchor_id and outline_id) else None
+        self._pending_anchor_focus = anchor_id if (anchor_id and (
+                    outline_id is not None and outline_id > 0)) else None  # --- FIX: Only queue if outline_id is valid ---
 
         # --- Part 1: Select Outline Item ---
-        if outline_id == 0:
+        if outline_id == 0 or outline_id is None:  # --- FIX: Handle None ---
             self._pending_anchor_focus = None
 
             # ---!!--- THIS IS THE FIX V4 ---!!---
             # DO NOT block signals. Let clearSelection() emit its
             # currentItemChanged signal normally.
-            # self.outline_tree.blockSignals(True)
             self.outline_tree.clearSelection()
-            # self.outline_tree.blockSignals(False)
 
-            # DO NOT call this manually. Let the signal do the work.
-            # self.on_outline_selection_changed(None, None)
+            # --- FIX: Manually call if selection is *already* None ---
+            if self.outline_tree.currentItem() is None:
+                self.on_outline_selection_changed(None, None)
             # ---!!--- END OF FIX V4 ---!!---
 
         else:
@@ -1047,7 +1232,7 @@ class ReadingNotesTab(QWidget):
                         return  # We are done.
 
         # --- Part 3: Fallback Focus ---
-        if outline_id != 0:
+        if outline_id != 0 and outline_id is not None:  # --- FIX: Handle None ---
             # --- FIX: Re-introduce 0ms timer to set focus ---
             print(f"    ReadingTab.set_outline_selection: (Fallback) Queuing 0ms timer to focus outline_tree...")
             QTimer.singleShot(0, lambda: (
@@ -1293,18 +1478,3 @@ class ReadingNotesTab(QWidget):
         # [FIX] Check for standard web links using their schemes
         elif url.scheme() in ("http", "https"):
             QDesktopServices.openUrl(url)
-
-    def _create_reading_menu(self, menu_bar: QMenuBar):
-        settings_menu = menu_bar.addMenu("Reading Settings")
-        edit_instr_action = QAction("Edit Tab Instructions...", self)
-
-        # --- NEW: Enable and connect the action ---
-        if EditInstructionsDialog:
-            edit_instr_action.setEnabled(True)
-            edit_instr_action.triggered.connect(self.open_edit_reading_instructions)
-        else:
-            edit_instr_action.setEnabled(False)
-            edit_instr_action.setToolTip("EditInstructionsDialog not loaded")
-        # --- END NEW ---
-
-        settings_menu.addAction(edit_instr_action)

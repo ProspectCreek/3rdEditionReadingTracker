@@ -92,6 +92,8 @@ class SchemaSetup:
             ("reading_gaps_instr", "TEXT"),
             ("reading_theories_instr", "TEXT"),
             ("reading_dialogue_instr", "TEXT"),
+            # --- NEW: Add Reading Rules Column ---
+            ("reading_rules_html", "TEXT"),
         ]
 
         # Safely add each new column to the 'instructions' table

@@ -184,7 +184,8 @@ class ItemsMixin:
         "synthesis_terminology_instr", "synthesis_propositions_instr", "synthesis_notes_instr",
         "reading_dq_instr", "reading_lp_instr", "reading_unity_instr", "reading_elevator_instr",
         "reading_parts_instr", "reading_key_terms_instr", "reading_arguments_instr",
-        "reading_gaps_instr", "reading_theories_instr", "reading_dialogue_instr"
+        "reading_gaps_instr", "reading_theories_instr", "reading_dialogue_instr",
+        "reading_rules_html"  # --- NEW ---
     ]
 
     # ------------------------- instructions -------------------------
