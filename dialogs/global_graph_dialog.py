@@ -7,12 +7,14 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QSplitter, QGraphicsView,
     QGraphicsScene, QGraphicsItem, QLabel, QTextBrowser,
     QMessageBox, QWidget, QGraphicsDropShadowEffect, QApplication,
-    QFrame, QFormLayout, QPushButton, QColorDialog, QScrollArea
+    QFrame, QFormLayout, QPushButton, QColorDialog, QScrollArea,
+    QMenu
 )
 from PySide6.QtCore import Qt, QTimer, QRectF, QPointF, QLineF, Signal, Slot, QUrl
 from PySide6.QtGui import QPainter, QColor, QFont, QPen, QBrush, QPainterPath
 
-# ---!!--- IMPORT NEW SHARED HELPERS ---!!---
+    # ---!!--- IMPORT NEW SHARED HELPERS ---!!---
+
 try:
     from tabs.graph_helpers import (
         ZoomableGraphicsView, GraphEdgeItem, ObsidianNodeItem, ObsidianGraphScene
@@ -27,6 +29,16 @@ try:
 except ImportError:
     print("Error: Could not import EditTagDialog for GlobalGraphDialog")
     EditTagDialog = None
+
+# --- NEW: Import Details Dialog ---
+try:
+    from dialogs.global_tag_details_dialog import GlobalTagDetailsDialog
+except ImportError:
+    print("Error: Could not import GlobalTagDetailsDialog")
+    GlobalTagDetailsDialog = None
+
+
+# --- END NEW ---
 
 
 class GlobalGraphDialog(QDialog):
@@ -44,6 +56,7 @@ class GlobalGraphDialog(QDialog):
         self.edges = []
         self.color_map = {}  # Stores { 'project_colors': {id: hex}, 'tag_color': hex }
         self.color_buttons = {}  # Stores { 'p_123': button, 'tag_0': button }
+        self.tag_id_name_map = {}  # Map ID to Name for lookups
 
         self.setWindowTitle("Global Knowledge Connections")
         self.setMinimumSize(1000, 700)
@@ -126,9 +139,6 @@ class GlobalGraphDialog(QDialog):
         self.CENTER_PULL = 0.002
         self.MIN_DIST = 50.0
 
-        # --- Connect Internal Signal ---
-        # self._tagDoubleClicked.connect(self.load_anchors_for_tag)
-
         # --- Connect View Signals ---
         self.view.mousePressEvent = self.view_mouse_press
         self.view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -137,6 +147,7 @@ class GlobalGraphDialog(QDialog):
         # Load the graph
         QTimer.singleShot(0, self.load_global_graph)
 
+    # --- FIX: Allow panning by not returning early ---
     def view_mouse_press(self, event):
         """Overrides the view's mouse press event."""
         item_at_pos = self.view.itemAt(event.pos())
@@ -144,11 +155,12 @@ class GlobalGraphDialog(QDialog):
         if item_at_pos is None and event.button() == Qt.MouseButton.LeftButton:
             self.scene.clearSelection()
             self.scene.update_highlights()
-            event.accept()
-            return
+            # Removed event.accept() and return so drag event propagates to base class
 
-        # Pass event to base class for node selection/dragging
+        # Pass event to base class for node selection/dragging/panning
         ZoomableGraphicsView.mousePressEvent(self.view, event)
+
+    # --- END FIX ---
 
     def _build_control_panel(self, projects):
         """Creates the color-picker buttons for projects and tags."""
@@ -247,6 +259,7 @@ class GlobalGraphDialog(QDialog):
         self.scene.clear_graph()
         self.nodes.clear()
         self.edges.clear()
+        self.tag_id_name_map.clear()  # Clear map
 
         try:
             data = self.db.get_global_graph_data()
@@ -255,6 +268,9 @@ class GlobalGraphDialog(QDialog):
             # Build control panel with project list
             self._build_control_panel(data['projects'])
             self._update_color_buttons()
+
+            # Populate tag map for double-click lookups
+            self.tag_id_name_map = {t['id']: t['name'] for t in data['tags']}
 
         except Exception as e:
             QMessageBox.critical(self, "Database Error", f"Could not load global tags: {e}")
@@ -378,63 +394,55 @@ class GlobalGraphDialog(QDialog):
         except Exception as e:
             print(f"Error centering global graph: {e}")
 
+    # --- NEW: Double Click Handlers ---
+    @Slot(int)
+    def emit_tag_double_clicked(self, tag_id):
+        """Handle double click on a tag node."""
+        tag_name = self.tag_id_name_map.get(tag_id)
+        if tag_name:
+            self._open_tag_details(tag_name)
+
+    # --- NEW: Handle Project Double Click ---
+    @Slot(int)
+    def emit_project_double_clicked(self, project_id):
+        """Handle double click on a project node."""
+        # Jump to project root (reading_id=0, outline_id=0)
+        self.jumpToAnchor.emit(project_id, 0, 0)
+        self.accept()  # Close global graph
+
+    # --- END NEW ---
+
+    def _open_tag_details(self, tag_name):
+        """Opens the GlobalTagDetailsDialog."""
+        if not GlobalTagDetailsDialog:
+            QMessageBox.warning(self, "Error", "GlobalTagDetailsDialog not available.")
+            return
+
+        dialog = GlobalTagDetailsDialog(self.db, tag_name, self)
+        dialog.jumpToAnchor.connect(self._handle_jump_from_details)
+        dialog.exec()
+
+    def _handle_jump_from_details(self, p_id, r_id, o_id):
+        """Forwards the jump signal and closes the graph window."""
+        self.jumpToAnchor.emit(p_id, r_id, o_id)
+        self.accept()
+
+    # Stub handlers for other types
+    @Slot(int)
+    def emit_reading_double_clicked(self, reading_id):
+        pass
+
+    @Slot(int)
+    def emit_anchor_double_clicked(self, anchor_id):
+        pass
+
     @Slot(str)
     def load_anchors_for_tag(self, tag_name):
-        """Fetches and displays all anchors for a given tag name."""
-        try:
-            anchors = self.db.get_global_anchors_for_tag_name(tag_name)
-
-            html = f"<h2>Global Synthesis for: {tag_name}</h2>"
-
-            current_project = None
-            current_reading = None
-
-            for anchor in anchors:
-                project_name = anchor['project_name']
-                if project_name != current_project:
-                    current_project = project_name
-                    html += f"<hr><h3>Project: {current_project}</h3>"
-                    current_reading = None  # Reset reading for new project
-
-                reading_name = anchor['reading_nickname'] or anchor['reading_title']
-                if reading_name != current_reading:
-                    current_reading = reading_name
-                    html += f"<h4>{current_reading}</h4>"
-
-                context_parts = []
-                if anchor['outline_title']:
-                    context_parts.append(f"Section: {anchor['outline_title']}")
-
-                jumpto_link = f"jumpto:{anchor['project_id']}:{anchor['reading_id']}:{anchor['outline_id'] or 0}"
-
-                if context_parts:
-                    html += f"<p><i><a href='{jumpto_link}'>({', '.join(context_parts)})</a></i></p>"
-                else:
-                    html += f"<p><i><a href='{jumpto_link}'>(Reading-Level Note)</a></i></p>"
-
-                html += "<blockquote>"
-
-                # Use selected_text, which is the summary for all anchor types
-                selected_text_html = (anchor['selected_text'] or "Anchor").replace("\n", "<br>")
-                html += f"<p>{selected_text_html}</p>"
-
-                if anchor['comment']:
-                    comment_html = anchor['comment'].replace("\n", "<br>")
-                    html += f"<p><i>— {comment_html}</i></p>"
-                html += "</blockquote>"
-
-            if not anchors:
-                html += "<i>No anchors found for this tag.</i>"
-
-            self.synthesis_display.setHtml(html)
-            self.splitter.setSizes([self.width() // 3, self.width() // 3, self.width() // 3])
-
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Could not load anchors: {e}")
+        self._open_tag_details(tag_name)
 
     @Slot(QUrl)
     def on_anchor_link_clicked(self, url):
-        """Handles clicks on 'jumpto' links."""
+        """Handles clicks on 'jumpto' links in the old side panel."""
         url_str = url.toString()
         if url_str.startswith("jumpto:"):
             try:
@@ -464,7 +472,6 @@ class GlobalGraphDialog(QDialog):
             if not node.isSelected():
                 self.scene.clearSelection()
                 node.setSelected(True)
-            # No rename/delete for now in global graph
             menu.addAction("View Info (Tooltip)", lambda: None).setEnabled(False)
 
         else:  # Clicked on empty space

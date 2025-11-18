@@ -5,37 +5,61 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
     QPushButton, QDialogButtonBox, QMessageBox, QInputDialog
 )
-from PySide6.QtCore import Qt, Slot
+from PySide6.QtCore import Qt, Slot, Signal
 
-# Import the dialog for renaming
+    # Import the dialog for renaming
+
 try:
     from dialogs.edit_tag_dialog import EditTagDialog
 except ImportError:
     EditTagDialog = None
 
+# --- NEW: Import Details Dialog ---
+try:
+    from dialogs.global_tag_details_dialog import GlobalTagDetailsDialog
+except ImportError:
+    GlobalTagDetailsDialog = None
+
+
+# --- END NEW ---
+
 class GlobalTagManagerDialog(QDialog):
     """
     A dialog for managing all global synthesis tags:
-    rename, delete, and merge.
+    rename, delete, merge, AND view details.
     """
+
+    # --- NEW: Signal to bubble up jump requests ---
+    jumpToAnchor = Signal(int, int, int)
+
+    # --- END NEW ---
 
     def __init__(self, db, parent=None):
         super().__init__(parent)
         self.db = db
         self.setWindowTitle("Global Tag Manager")
-        self.setMinimumSize(400, 500)
+        self.setMinimumSize(500, 600)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
 
         main_layout = QVBoxLayout(self)
 
         self.tag_list = QListWidget()
         self.tag_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.tag_list.itemDoubleClicked.connect(self._view_details)  # Double click to view
         main_layout.addWidget(self.tag_list)
 
         btn_layout = QHBoxLayout()
+
+        # --- NEW: View Details Button ---
+        self.view_btn = QPushButton("View Details")
+        self.view_btn.setStyleSheet("font-weight: bold;")
+        btn_layout.addWidget(self.view_btn)
+        # --- END NEW ---
+
         self.rename_btn = QPushButton("Rename...")
         self.delete_btn = QPushButton("Delete...")
         self.merge_btn = QPushButton("Merge...")
+
         btn_layout.addWidget(self.rename_btn)
         btn_layout.addWidget(self.delete_btn)
         btn_layout.addWidget(self.merge_btn)
@@ -45,10 +69,11 @@ class GlobalTagManagerDialog(QDialog):
         main_layout.addWidget(self.button_box)
 
         # Connections
+        self.view_btn.clicked.connect(self._view_details)  # Connect new button
         self.rename_btn.clicked.connect(self._rename_tag)
         self.delete_btn.clicked.connect(self._delete_tag)
         self.merge_btn.clicked.connect(self._merge_tags)
-        self.button_box.rejected.connect(self.reject) # Close maps to reject
+        self.button_box.rejected.connect(self.reject)
         self.tag_list.itemSelectionChanged.connect(self._update_button_states)
 
         self.load_tags()
@@ -70,9 +95,40 @@ class GlobalTagManagerDialog(QDialog):
     def _update_button_states(self):
         """Updates button enabled state based on selection."""
         selected_count = len(self.tag_list.selectedItems())
+        self.view_btn.setEnabled(selected_count == 1)  # Only view one at a time
         self.rename_btn.setEnabled(selected_count == 1)
         self.delete_btn.setEnabled(selected_count > 0)
-        self.merge_btn.setEnabled(selected_count > 1) # Merge requires 2 or more
+        self.merge_btn.setEnabled(selected_count > 1)
+
+    # --- NEW: View Details Slot ---
+    @Slot()
+    def _view_details(self):
+        """Opens the details dialog for the selected tag."""
+        if not GlobalTagDetailsDialog:
+            QMessageBox.critical(self, "Error", "GlobalTagDetailsDialog not loaded.")
+            return
+
+        selected_items = self.tag_list.selectedItems()
+        if len(selected_items) != 1:
+            return
+
+        item = selected_items[0]
+        tag_name = item.text()
+
+        dialog = GlobalTagDetailsDialog(self.db, tag_name, self)
+
+        # Connect the jump signal from the details dialog to our own signal
+        # When the details dialog emits jump, we emit jump and close ourselves
+        dialog.jumpToAnchor.connect(self._handle_jump)
+
+        dialog.exec()
+
+    def _handle_jump(self, project_id, reading_id, outline_id):
+        """Relays the jump signal and closes the manager."""
+        self.jumpToAnchor.emit(project_id, reading_id, outline_id)
+        self.accept()  # Close the manager dialog so user can see the project
+
+    # --- END NEW ---
 
     @Slot()
     def _rename_tag(self):
@@ -98,7 +154,7 @@ class GlobalTagManagerDialog(QDialog):
             try:
                 self.db.rename_tag(tag_id, new_name)
                 self.load_tags()
-                self.accept()  # Signal to home screen to refresh
+                # We don't necessarily need to close on rename, just refresh
             except sqlite3.IntegrityError:
                 QMessageBox.warning(self, "Tag Exists", f"A tag named '{new_name}' already exists.")
             except Exception as e:
@@ -127,7 +183,6 @@ class GlobalTagManagerDialog(QDialog):
                     tag_id = item.data(Qt.ItemDataRole.UserRole)
                     self.db.delete_tag_and_anchors(tag_id)
                 self.load_tags()
-                self.accept()
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not delete tags: {e}")
 
@@ -163,6 +218,6 @@ class GlobalTagManagerDialog(QDialog):
                 self.db.merge_tags(source_tag_id, target_tag_id)
 
             self.load_tags()
-            self.accept()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not merge tags: {e}")
+

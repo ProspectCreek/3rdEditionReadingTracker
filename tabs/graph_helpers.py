@@ -172,6 +172,10 @@ class ObsidianNodeItem(QGraphicsItem):
             self.graph_view.emit_reading_double_clicked(self.data.get('reading_id', 0))
         elif self.node_type == 'tag':
             self.graph_view.emit_tag_double_clicked(self.data.get('tag_id', 0))
+        # --- NEW: Handle Project Double Click ---
+        elif self.node_type == 'project':
+            self.graph_view.emit_project_double_clicked(self.data.get('project_id', 0))
+        # --- END NEW ---
         elif self.data.get('anchor_id'):
             self.graph_view.emit_anchor_double_clicked(self.data.get('anchor_id', 0))
         event.accept()
@@ -243,56 +247,6 @@ class ObsidianNodeItem(QGraphicsItem):
         self.fill_color = fill_color
         self.border_color = border_color
         self.update()  # Trigger a repaint
-
-    def start_rename_editor(self):
-        """Starts the inline QLineEdit editor for renaming."""
-        # This is slightly different; the text is a child, not part of this item
-        if hasattr(self, 'line_edit'):
-            return  # Already editing
-
-        self.line_edit = QLineEdit()
-        self.line_edit.setText(self.name.strip())
-        self.line_edit.selectAll()
-
-        self.proxy = self.scene().addWidget(self.line_edit)
-        self.proxy.setParentItem(self)
-
-        # Position the proxy widget where the text item is
-        text_rect = self.text_item.boundingRect()
-        self.proxy.setPos(self.text_item.pos())
-        self.proxy.resize(text_rect.width() + 10, text_rect.height())  # Give a little extra width
-
-        self.text_item.hide()
-        self.line_edit.setFocus()
-
-        self.line_edit.editingFinished.connect(self._on_rename_finished)
-
-    @Slot()
-    def _on_rename_finished(self):
-        """Handles when editing is finished."""
-        if not hasattr(self, 'line_edit'):
-            return
-
-        new_name = self.line_edit.text().strip()
-
-        self.proxy.setParentItem(None)
-        self.scene().removeItem(self.proxy)
-        del self.proxy
-        del self.line_edit
-        self.text_item.show()
-
-        if new_name and new_name != self.name:
-            self.name = new_name
-            # Update text item and its position
-            self.text_item.setPlainText(self.name)
-            text_rect = self.text_item.boundingRect()
-            self.text_item.setPos(-text_rect.width() / 2, self.NODE_RADIUS + 2)
-            self.update()  # Update bounding rect
-
-            if self.node_type == 'reading':
-                self.graph_view.rename_reading(self.data['reading_id'], new_name)
-            elif self.node_type == 'tag':
-                self.graph_view.rename_tag(self.data['tag_id'], new_name)
 
 
 class ObsidianGraphScene(QGraphicsScene):

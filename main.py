@@ -33,17 +33,21 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.db = db
         self.spell_checker_service = spell_checker_service  # <-- STORE SERVICE
-        self.setWindowTitle("Reading Tracker (PySide6 Edition)")
+
+        # --- MODIFIED: Set initial title ---
+        self.base_title = "Tyler's Reading Tracker"
+        self.setWindowTitle(self.base_title)
+        # --- END MODIFIED ---
 
         self.stacked_widget = QStackedWidget()
         self.setCentralWidget(self.stacked_widget)
 
         # --- Page 0: Home Screen ---
-        self.home_screen = HomeScreenWidget(self.db, self.spell_checker_service) # <-- PASS SERVICE
+        self.home_screen = HomeScreenWidget(self.db, self.spell_checker_service)  # <-- PASS SERVICE
         self.stacked_widget.addWidget(self.home_screen)
 
         # --- Page 1: Project Dashboard ---
-        self.project_dashboard = ProjectDashboardWidget(self.db, self.spell_checker_service) # <-- PASS SERVICE
+        self.project_dashboard = ProjectDashboardWidget(self.db, self.spell_checker_service)  # <-- PASS SERVICE
         self.stacked_widget.addWidget(self.project_dashboard)
 
         self.stacked_widget.setCurrentIndex(0)
@@ -71,6 +75,12 @@ class MainWindow(QMainWindow):
         try:
             # 1. Load project structure (creates tabs, but doesn't load text)
             self.project_dashboard.load_project(project_details)
+
+            # --- NEW: Update Window Title ---
+            project_name = project_details.get('name', 'Untitled Project')
+            self.setWindowTitle(f"{self.base_title}: {project_name}")
+            # --- END NEW ---
+
             # 2. Switch stack to make dashboard visible
             self.stacked_widget.setCurrentIndex(1)
             self.showMaximized()
@@ -87,6 +97,10 @@ class MainWindow(QMainWindow):
         self.project_dashboard.save_all_editors()
 
         self.stacked_widget.setCurrentIndex(0)
+
+        # --- NEW: Reset Window Title ---
+        self.setWindowTitle(self.base_title)
+        # --- END NEW ---
 
         # --- FIX: Explicitly resize to the "correct" smaller size ---
         self.showNormal()
@@ -126,9 +140,11 @@ class MainWindow(QMainWindow):
             # Switch to dashboard
             self.show_project_dashboard(project_details)
 
-            # Tell dashboard to open the tab
-            # Use QTimer to run *after* the dashboard is fully loaded and visible
-            QTimer.singleShot(150, lambda: self.project_dashboard.open_reading_tab(0, reading_id, outline_id))
+            # --- FIX: Only open reading tab if ID is valid ---
+            if reading_id and reading_id > 0:
+                QTimer.singleShot(150, lambda: self.project_dashboard.open_reading_tab(0, reading_id, outline_id))
+            # --- END FIX ---
+
         except Exception as e:
             print(f"Error in open_project_from_global: {e}")
 
@@ -173,7 +189,7 @@ def main():
 
     spell_checker_service = GlobalSpellChecker()  # <-- CREATE INSTANCE
     db = DatabaseManager()
-    window = MainWindow(db, spell_checker_service) # <-- PASS INSTANCE
+    window = MainWindow(db, spell_checker_service)  # <-- PASS INSTANCE
     window.show()
     sys.exit(app.exec())
 
