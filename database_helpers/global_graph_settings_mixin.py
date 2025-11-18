@@ -10,10 +10,12 @@ class GlobalGraphSettingsMixin:
 
     GLOBAL_NODE_TYPES = ['project', 'tag']
 
+    # --- NEW: Modern Pastel Palette ---
     DEFAULT_GLOBAL_COLORS = {
-        'project': '#cce0f5',
-        'tag': '#cce8cc'
+        'project': '#BFDBFE',  # Soft Blue (Matches Reading color)
+        'tag': '#A7F3D0'       # Soft Mint
     }
+    # --- END NEW ---
 
     def create_global_graph_settings_table(self):
         """

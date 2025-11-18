@@ -27,6 +27,256 @@ except ImportError as e:
     print(f"Error importing modules: {e}")
     sys.exit(1)
 
+# --- NEW: Modern Light Theme Stylesheet ---
+MODERN_LIGHT_STYLESHEET = """
+/* General Window & Background */
+QMainWindow, QDialog {
+    background-color: #F9FAFB;
+    color: #374151;
+}
+
+QWidget {
+    background-color: #F9FAFB;
+    color: #374151;
+    font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+    font-size: 14px;
+}
+
+/* Text Areas */
+QLabel {
+    color: #374151;
+    background: transparent;
+}
+
+QLineEdit, QTextEdit, QPlainTextEdit, QTextBrowser {
+    background-color: #FFFFFF;
+    border: 1px solid #D1D5DB;
+    border-radius: 6px;
+    padding: 6px;
+    color: #111827;
+    selection-background-color: #BFDBFE;
+    selection-color: #111827;
+}
+
+QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QTextBrowser:focus {
+    border: 1px solid #2563EB;
+}
+
+/* Lists & Trees */
+QListWidget, QTreeWidget {
+    background-color: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 6px;
+    outline: none;
+}
+
+QListWidget::item, QTreeWidgetItem {
+    padding: 6px;
+    border-bottom: 1px solid #F3F4F6;
+}
+
+QListWidget::item:selected, QTreeWidget::item:selected {
+    background-color: #EFF6FF;
+    color: #1E40AF;
+    border-left: 3px solid #2563EB;
+}
+
+/* --- Style Checkboxes INSIDE Lists/Trees (To-Do List) --- */
+QListWidget::indicator, QTreeWidget::indicator {
+    width: 18px;
+    height: 18px;
+    border: 1px solid #D1D5DB;
+    border-radius: 4px;
+    background-color: #FFFFFF;
+}
+
+QListWidget::indicator:checked, QTreeWidget::indicator:checked {
+    background-color: #2563EB;
+    border: 1px solid #2563EB;
+    image: url(data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgMjQgMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIzIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwb2x5bGluZSBwb2ludHM9IjIwIDYgOSAxNyA0IDEyIi8+PC9zdmc+);
+}
+
+QListWidget::indicator:hover, QTreeWidget::indicator:hover {
+    border-color: #2563EB;
+}
+/* --------------------------------------------------------- */
+
+QHeaderView::section {
+    background-color: #F3F4F6;
+    padding: 4px;
+    border: none;
+    font-weight: bold;
+    color: #4B5563;
+}
+
+/* Buttons */
+QPushButton {
+    background-color: #FFFFFF;
+    border: 1px solid #D1D5DB;
+    border-radius: 6px;
+    padding: 6px 12px;
+    color: #374151;
+    font-weight: 600;
+}
+
+QPushButton:hover {
+    background-color: #F3F4F6;
+    border-color: #9CA3AF;
+}
+
+QPushButton:pressed {
+    background-color: #E5E7EB;
+}
+
+/* Tab Widget */
+QTabWidget::pane {
+    border: 1px solid #E5E7EB;
+    background-color: #FFFFFF;
+    border-radius: 6px;
+}
+
+QTabBar::tab {
+    background-color: #F3F4F6;
+    color: #6B7280;
+    padding: 8px 16px;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    border: 1px solid #E5E7EB;
+    margin-right: 2px;
+}
+
+QTabBar::tab:selected {
+    background-color: #FFFFFF;
+    color: #2563EB;
+    border-bottom: 1px solid #FFFFFF; /* Blend with pane */
+    font-weight: bold;
+}
+
+QTabBar::tab:hover {
+    background-color: #FFFFFF;
+}
+
+/* Menus */
+QMenuBar {
+    background-color: #FFFFFF;
+    border-bottom: 1px solid #E5E7EB;
+}
+
+QMenuBar::item {
+    padding: 6px 10px;
+    background: transparent;
+}
+
+QMenuBar::item:selected {
+    background-color: #F3F4F6;
+}
+
+QMenu {
+    background-color: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 6px;
+    padding: 4px;
+}
+
+QMenu::item {
+    padding: 6px 24px;
+    border-radius: 4px;
+}
+
+QMenu::item:selected {
+    background-color: #EFF6FF;
+    color: #1E3A8A;
+}
+
+/* Splitter */
+QSplitter::handle {
+    background-color: #E5E7EB;
+}
+
+/* Group Box / Frames */
+QGroupBox {
+    border: 1px solid #E5E7EB;
+    border-radius: 6px;
+    margin-top: 1.5em;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    padding: 0 3px;
+    color: #374151;
+    font-weight: bold;
+}
+
+/* Scrollbars */
+QScrollBar:vertical {
+    border: none;
+    background: #F3F4F6;
+    width: 10px;
+    margin: 0px 0px 0px 0px;
+}
+QScrollBar::handle:vertical {
+    background: #D1D5DB;
+    min-height: 20px;
+    border-radius: 5px;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+
+/* --- Radio Buttons & Standalone Checkboxes --- */
+
+QRadioButton, QCheckBox {
+    background: transparent;
+    spacing: 6px;
+    color: #374151;
+    padding: 4px;
+    min-height: 20px;
+}
+
+/* Radio Button: Use SVG images to guarantee perfect circles */
+QRadioButton::indicator {
+    width: 18px;
+    height: 18px;
+    border: none;
+    background: transparent;
+    /* Unchecked: Gray Circle */
+    image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTgiIGhlaWdodD0iMTgiIHZpZXdCb3g9IjAgMCAxOCAxOCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSI5IiBjeT0iOSIgcj0iOC41IiBmaWxsPSJ3aGl0ZSIgc3Ryb2tlPSIjOTQ5NDk0IiBzdHJva2Utd2lkdGg9IjEiLz48L3N2Zz4=);
+}
+
+QRadioButton::indicator:checked {
+    /* Checked: Blue Donut */
+    image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTgiIGhlaWdodD0iMTgiIHZpZXdCb3g9IjAgMCAxOCAxOCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSI5IiBjeT0iOSIgcj0iOC41IiBmaWxsPSJ3aGl0ZSIgc3Ryb2tlPSIjMjU2M0VCIiBzdHJva2Utd2lkdGg9IjEiLz48Y2lyY2xlIGN4PSI5IiBjeT0iOSIgcj0iNCIgZmlsbD0iIzI1NjNFQiIvPjwvc3ZnPg==);
+}
+
+QRadioButton::indicator:hover {
+    /* Hover: Slightly darker gray outline */
+    image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTgiIGhlaWdodD0iMTgiIHZpZXdCb3g9IjAgMCAxOCAxOCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSI5IiBjeT0iOSIgcj0iOC41IiBmaWxsPSJ3aGl0ZSIgc3Ryb2tlPSIjNjY2NjY2IiBzdHJva2Utd2lkdGg9IjEiLz48L3N2Zz4=);
+}
+
+/* Checkbox: Square with Checkmark */
+QCheckBox::indicator {
+    width: 18px;
+    height: 18px;
+    border: 1px solid #D1D5DB;
+    border-radius: 3px;
+    background-color: #FFFFFF;
+}
+
+QCheckBox::indicator:checked {
+    background-color: #2563EB;
+    border: 1px solid #2563EB;
+    image: url(data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgMjQgMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIzIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwb2x5bGluZSBwb2ludHM9IjIwIDYgOSAxNyA0IDEyIi8+PC9zdmc+);
+}
+
+QCheckBox::indicator:hover {
+    border-color: #2563EB;
+}
+"""
+
+
+# --- END NEW ---
+
 
 class MainWindow(QMainWindow):
     def __init__(self, db, spell_checker_service):
@@ -183,6 +433,10 @@ class MainWindow(QMainWindow):
 def main():
     os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9222"
     app = QApplication(sys.argv)
+
+    # --- NEW: Apply the stylesheet ---
+    app.setStyleSheet(MODERN_LIGHT_STYLESHEET)
+    # --- END NEW ---
 
     profile = QWebEngineProfile.defaultProfile()
     profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.MemoryHttpCache)

@@ -1,12 +1,12 @@
-# prospectcreek/3rdeditionreadingtracker/tabs/rich_text_editor_tab.py
+# tabs/rich_text_editor_tab.py
 import sys
-import uuid
+import uuid  # <-- NEW: For synthesis anchors
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QComboBox, QPushButton,
     QTextBrowser, QInputDialog, QMessageBox, QSizePolicy, QColorDialog,
     QMenu
 )
-from PySide6.QtCore import Qt, Signal, QPoint, Slot, QUrl
+from PySide6.QtCore import Qt, Signal, QPoint, Slot, QUrl  # <-- Added Slot
 from PySide6.QtGui import (
     QFontDatabase, QTextCharFormat, QTextCursor, QTextListFormat,
     QColor, QFont, QAction, QBrush
@@ -31,8 +31,6 @@ AnchorTagIDProperty = BaseAnchorProperty + 2
 AnchorTagNameProperty = BaseAnchorProperty + 3
 AnchorCommentProperty = BaseAnchorProperty + 4
 AnchorUUIDProperty = BaseAnchorProperty + 5
-
-
 # --- END NEW ---
 
 
@@ -85,10 +83,38 @@ class RichTextEditorTab(QWidget):
         h.setContentsMargins(6, 4, 6, 4)
         h.setSpacing(6)
 
+        # --- FIX: Stylesheet Override ---
+        # We explicitly define borders for both QComboBox and QPushButton here
+        # to ensure they look consistent and visible.
         bar.setStyleSheet("""
-            QComboBox, QPushButton { height: 24px; font-size: 11px; }
-            QComboBox::drop-down { width: 16px; }
+            QComboBox, QPushButton { 
+                height: 24px; 
+                font-size: 11px; 
+                padding: 2px 4px;     /* Slight horizontal padding for text */
+                margin: 0px;
+                border-radius: 3px;
+                background-color: #FFFFFF;
+                border: 1px solid #D1D5DB; /* Define explicit border */
+                color: #374151;
+            }
+            QPushButton {
+                min-width: 20px;
+            }
+            QPushButton:hover, QComboBox:hover {
+                background-color: #F3F4F6;
+                border-color: #9CA3AF;
+            }
+            QPushButton:checked {
+                background-color: #E5E7EB;
+                border-color: #6B7280;
+            }
+            QComboBox::drop-down { 
+                width: 16px;
+                border: none; /* Let main border handle it */
+                background: transparent;
+            }
         """)
+        # --- END FIX ---
 
         BTN_W = 26
         BTN_WW = 28

@@ -64,6 +64,9 @@ class PropositionReferenceWidget(QFrame):
         self.delete_btn = QPushButton("-")
         self.delete_btn.setToolTip("Remove this reference")
         self.delete_btn.setFixedSize(24, 24)
+        # --- FIX: Style to fix blank button ---
+        self.delete_btn.setStyleSheet("padding: 0px; font-weight: bold; font-size: 14px;")
+        # --- END FIX ---
         self.delete_btn.clicked.connect(lambda: self.deleteRequested.emit(self))
         delete_button_layout.addWidget(self.delete_btn)
         main_layout.addLayout(delete_button_layout, 0)
@@ -121,6 +124,9 @@ class PropositionReadingGroup(QFrame):
         self.add_ref_btn = QPushButton("+")
         self.add_ref_btn.setToolTip("Add a reference for this reading")
         self.add_ref_btn.setFixedSize(24, 24)
+        # --- FIX: Style to fix blank button ---
+        self.add_ref_btn.setStyleSheet("padding: 0px; font-weight: bold; font-size: 14px;")
+        # --- END FIX ---
         self.add_ref_btn.clicked.connect(self.add_reference_widget)
         header_layout.addWidget(self.add_ref_btn, 0)
         main_layout.addLayout(header_layout)

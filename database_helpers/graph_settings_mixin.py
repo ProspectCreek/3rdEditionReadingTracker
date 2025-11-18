@@ -14,16 +14,18 @@ class GraphSettingsMixin:
         'proposition', 'argument', 'theory', 'default'
     ]
 
+    # --- NEW: Modern Pastel Palette ---
     DEFAULT_COLORS = {
-        'reading': '#cce0f5',
-        'tag': '#cce8cc',
-        'proposition': '#d6a800',
-        'dq': '#a83232',
-        'term': '#32a852',
-        'argument': '#326ba8',
-        'theory': '#a832a4',
-        'default': '#888888'
+        'reading': '#BFDBFE',      # Soft Blue
+        'tag': '#A7F3D0',          # Soft Mint
+        'proposition': '#FDE68A',  # Soft Yellow
+        'dq': '#FECACA',           # Soft Red
+        'term': '#FED7AA',         # Soft Orange
+        'argument': '#C7D2FE',     # Soft Indigo
+        'theory': '#E9D5FF',       # Soft Purple
+        'default': '#E5E7EB'       # Cool Gray
     }
+    # --- END NEW ---
 
     def create_graph_settings_table(self):
         """

@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit, QTextEdit,
     QDialogButtonBox, QScrollArea, QWidget, QLabel, QSplitter,
     QHBoxLayout, QPushButton, QComboBox, QFrame, QMessageBox,
-    QCheckBox  # --- NEW: Import QCheckBox ---
+    QCheckBox
 )
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QIcon
@@ -65,6 +65,9 @@ class ReferenceWidget(QFrame):
         self.delete_btn = QPushButton("-")
         self.delete_btn.setToolTip("Remove this reference")
         self.delete_btn.setFixedSize(24, 24)
+        # --- FIX: Style to fix blank button ---
+        self.delete_btn.setStyleSheet("padding: 0px; font-weight: bold; font-size: 14px;")
+        # --- END FIX ---
         self.delete_btn.clicked.connect(lambda: self.deleteRequested.emit(self))
         delete_button_layout.addWidget(self.delete_btn)
         main_layout.addLayout(delete_button_layout, 0)
@@ -115,15 +118,16 @@ class ReadingReferenceGroup(QFrame):
         header_label = QLabel(f"<b>{nickname}</b>")
         header_layout.addWidget(header_label, 1)
 
-        # --- NEW: (2) "Term Not In Reading" Checkbox ---
         self.not_in_reading_check = QCheckBox("Term Not In Reading")
         self.not_in_reading_check.toggled.connect(self._toggle_controls)
         header_layout.addWidget(self.not_in_reading_check)
-        # --- END NEW ---
 
         self.add_ref_btn = QPushButton("+")
         self.add_ref_btn.setToolTip("Add a reference for this reading")
         self.add_ref_btn.setFixedSize(24, 24)
+        # --- FIX: Style to fix blank button ---
+        self.add_ref_btn.setStyleSheet("padding: 0px; font-weight: bold; font-size: 14px;")
+        # --- END FIX ---
         self.add_ref_btn.clicked.connect(self.add_reference_widget)
         header_layout.addWidget(self.add_ref_btn, 0)
         main_layout.addLayout(header_layout)
@@ -143,9 +147,7 @@ class ReadingReferenceGroup(QFrame):
         self.references_layout.addWidget(ref_widget)
         self.reference_widgets.append(ref_widget)
 
-        # --- NEW: (2) Ensure new widget is disabled if checkbox is checked ---
         self._toggle_controls(self.not_in_reading_check.isChecked())
-        # --- END NEW ---
 
     @Slot(QWidget)
     def delete_reference_widget(self, widget):
@@ -155,7 +157,6 @@ class ReadingReferenceGroup(QFrame):
             self.reference_widgets.remove(widget)
             widget.deleteLater()
 
-    # --- NEW: (2) Methods to manage status ---
     @Slot(bool)
     def _toggle_controls(self, is_checked):
         """Disables/enables controls based on the 'Term Not In Reading' checkbox."""
@@ -174,8 +175,6 @@ class ReadingReferenceGroup(QFrame):
         """Sets the state of the checkbox and child widgets."""
         self.not_in_reading_check.setChecked(bool(not_in_reading))
         self._toggle_controls(bool(not_in_reading))
-
-    # --- END NEW ---
 
     def get_data(self):
         """Returns a list of data dicts from all child ReferenceWidgets."""
@@ -243,12 +242,10 @@ class AddTermDialog(QDialog):
         ReadingReferenceGroup widgets.
         """
         readings = self.db.get_readings(self.project_id)
-        # Get all outlines for the entire project in one go
         outline_map = self.db.get_all_outline_items_for_project(self.project_id)
 
         for reading in readings:
             reading_id = reading['id']
-            # Get the outline items for *this* reading, or an empty list
             outline_items = outline_map.get(reading_id, [])
 
             group_widget = ReadingReferenceGroup(reading, outline_items, self)
@@ -266,7 +263,6 @@ class AddTermDialog(QDialog):
         self.term_input.setText(data.get("term", ""))
         self.meaning_input.setHtml(data.get("meaning", ""))
 
-        # Group references by reading_id
         refs_by_reading = {}
         for ref in data.get("references", []):
             reading_id = ref['reading_id']
@@ -274,20 +270,14 @@ class AddTermDialog(QDialog):
                 refs_by_reading[reading_id] = []
             refs_by_reading[reading_id].append(ref)
 
-        # Populate the ReadingReferenceGroups
-        # --- FIX: This code was at the class level by mistake. ---
-        # --- It is now correctly inside the load_existing_term_data method. ---
         for group in self.reading_groups:
             reading_id = group.reading['id']
-            # Set the "Not In Reading" status
             statuses = data.get('statuses', {})
             group.set_status(statuses.get(reading_id, 0))
 
             if reading_id in refs_by_reading:
                 for ref_data in refs_by_reading[reading_id]:
-                    # Add a populated reference widget
                     group.add_reference_widget(ref_data)
-        # --- END FIX ---
 
     def get_data(self):
         """
@@ -298,7 +288,6 @@ class AddTermDialog(QDialog):
         for group in self.reading_groups:
             all_references.extend(group.get_data())
 
-        # Get status from all groups
         all_statuses = [group.get_status() for group in self.reading_groups]
 
         return {

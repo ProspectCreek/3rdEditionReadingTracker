@@ -40,6 +40,9 @@ class EvidenceWidget(QFrame):
         self.delete_btn = QPushButton("-")
         self.delete_btn.setToolTip("Remove this evidence")
         self.delete_btn.setFixedSize(24, 24)
+        # --- FIX: Style to fix blank button ---
+        self.delete_btn.setStyleSheet("padding: 0px; font-weight: bold; font-size: 14px;")
+        # --- END FIX ---
         self.delete_btn.clicked.connect(lambda: self.deleteRequested.emit(self))
         top_layout.addWidget(self.delete_btn)
         main_layout.addLayout(top_layout)
