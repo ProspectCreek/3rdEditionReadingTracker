@@ -120,7 +120,7 @@ class HomeScreenWidget(QWidget):
 
     def reset_splitter_sizes(self):
         """Forces the splitter back to its default 300:650 ratio."""
-        self.splitter.setSizes([300, 650])
+        self.splitter.setSizes([400, 600])
 
     @Slot()
     def open_global_graph(self):
