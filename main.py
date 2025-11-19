@@ -75,10 +75,11 @@ QListWidget::item, QTreeWidgetItem {
     border-bottom: 1px solid #F3F4F6;
 }
 
+/* --- FIXED: Light Blue Selection Style --- */
 QListWidget::item:selected, QTreeWidget::item:selected {
-    background-color: #EFF6FF;
-    color: #1E40AF;
-    border-left: 3px solid #2563EB;
+    background-color: #E5F3FF; /* Soft Light Blue */
+    color: #000000;            /* Black text */
+    border: none;              /* Remove intrusive border */
 }
 
 /* --- Style Checkboxes INSIDE Lists/Trees (To-Do List) --- */
@@ -246,7 +247,7 @@ QRadioButton::indicator {
 
 QRadioButton::indicator:checked {
     /* Checked: Blue Donut */
-    image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTgiIGhlaWdodD0iMTgiIHZpZXdCb3g9IjAgMCAxOCAxOCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSI5IiBjeT0iOSIgcj0iOC41IiBmaWxsPSJ3aGl0ZSIgc3Ryb2tlPSIjMjU2M0VCIiBzdHJva2Utd2lkdGg9IjEiLz48Y2lyY2xlIGN4PSI5IiBjeT0iOSIgcj0iNCIgZmlsbD0iIzI1NjNFQiIvPjwvc3ZnPg==);
+    image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTgiIGhlaWdodD0iMTgiIHZpZXdCb3g9IjAgMCAxOCAxOCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSI5IiBjeT0iOSIgcj0iNCIgZmlsbD0iIzI1NjNFQiIvPjwvc3ZnPg==);
 }
 
 QRadioButton::indicator:hover {
@@ -285,7 +286,7 @@ class MainWindow(QMainWindow):
         self.spell_checker_service = spell_checker_service  # <-- STORE SERVICE
 
         # --- MODIFIED: Set initial title ---
-        self.base_title = "Tyler's Reading Tracker"
+        self.base_title = "Moose's Reading Tracker"
         self.setWindowTitle(self.base_title)
         # --- END MODIFIED ---
 
@@ -304,8 +305,8 @@ class MainWindow(QMainWindow):
 
         # --- FIX: Store the "correct" home screen size ---
         # 300px (list) + 650px (logo panel) = 950px width
-        self.setMinimumSize(950, 750)
-        self.home_screen_size = QSize(950, 750)  # <-- Store the correct size
+        self.setMinimumSize(1000, 700)
+        self.home_screen_size = QSize(1000, 700)  # <-- Store the correct size
         self.resize(self.home_screen_size)  # <-- Apply it
         # --- END FIX ---
 

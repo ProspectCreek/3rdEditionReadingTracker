@@ -117,7 +117,7 @@ class SynthesisTab(QWidget):
         button_layout = QHBoxLayout()
         button_layout.addStretch()  # Pushes the button to the right
 
-        self.btn_syntopic_rules = QPushButton("Syntopic Rules")
+        self.btn_syntopic_rules = QPushButton("Syntopic Reading Guidelines")
         button_layout.addWidget(self.btn_syntopic_rules)
 
         left_layout.addLayout(button_layout)

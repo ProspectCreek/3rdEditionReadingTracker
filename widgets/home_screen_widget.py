@@ -113,7 +113,7 @@ class HomeScreenWidget(QWidget):
         self.btn_manage_tags.clicked.connect(self.open_global_tag_manager)
 
         self.splitter.addWidget(self.welcome_widget)
-        self.splitter.setSizes([300, 650])
+        self.splitter.setSizes([400, 600])
 
         # --- Connect the signal ---
         self.project_list.projectSelected.connect(self.projectSelected.emit)
