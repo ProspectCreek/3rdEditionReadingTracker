@@ -2,7 +2,7 @@
 import sys
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit, QTextEdit,
-    QComboBox, QRadioButton, QCheckBox, QDialogButtonBox,
+    QComboBox, QCheckBox, QDialogButtonBox,
     QWidget, QHBoxLayout, QPushButton, QLabel, QMessageBox
 )
 from PySide6.QtCore import Qt, Slot
@@ -13,6 +13,8 @@ try:
 except ImportError:
     print("Error: Could not import ConnectTagsDialog")
     ConnectTagsDialog = None
+
+
 # --- END NEW ---
 
 
@@ -21,13 +23,14 @@ class EditDrivingQuestionDialog(QDialog):
     Dialog for adding or editing a driving question.
     """
 
-    def __init__(self, all_questions, outline_items, db_manager=None, project_id=None, current_question_data=None, parent=None):
+    def __init__(self, all_questions, outline_items, db_manager=None, project_id=None, current_question_data=None,
+                 parent=None):
         super().__init__(parent)
 
         self.current_data = current_question_data if current_question_data else {}
         self.all_questions = all_questions
         self.outline_items = outline_items
-        self.db = db_manager        # <-- ADD
+        self.db = db_manager  # <-- ADD
         self.project_id = project_id  # <-- ADD
 
         self.setWindowTitle("Edit Driving Question")
@@ -59,22 +62,15 @@ class EditDrivingQuestionDialog(QDialog):
         self.nickname_edit.setText(self.current_data.get("nickname", ""))
         form_layout.addRow("Nickname:", self.nickname_edit)
 
-        # --- Type (Stated/Inferred) ---
-        type_widget = QWidget()
-        type_layout = QHBoxLayout(type_widget)
-        type_layout.setContentsMargins(0, 0, 0, 0)
-        self.radio_stated = QRadioButton("Stated")
-        self.radio_inferred = QRadioButton("Inferred")
+        # --- Type (Stated/Inferred) - CHANGED TO COMBOBOX ---
+        self.type_combo = QComboBox()
+        self.type_combo.addItems(["Stated", "Inferred"])
 
-        if self.current_data.get("type") == "Stated":
-            self.radio_stated.setChecked(True)
-        else:
-            self.radio_inferred.setChecked(True)  # Default
+        # Set current value or default to Inferred
+        current_type = self.current_data.get("type", "Inferred")
+        self.type_combo.setCurrentText(current_type)
 
-        type_layout.addWidget(self.radio_stated)
-        type_layout.addWidget(self.radio_inferred)
-        type_layout.addStretch()
-        form_layout.addRow("Type:", type_widget)
+        form_layout.addRow("Type:", self.type_combo)
 
         # --- Question Category ---
         self.category_combo = QComboBox()
@@ -215,13 +211,6 @@ class EditDrivingQuestionDialog(QDialog):
                 display_text = display_text[:70] + "..." if len(display_text) > 70 else display_text
                 self.parent_combo.addItem(display_text, q['id'])
 
-        # --- Disable if we are editing a root question's children ---
-        # This is a simple (but incomplete) safety check.
-        # The real safety is the exclude list.
-        # if current_question_id and not self.current_data.get("parent_id"):
-        #     self.parent_combo.setEnabled(False)
-        #     self.parent_combo.setToolTip("Cannot change parent of a root question (for now).")
-
     def _populate_where_combo(self, outline_items, indent=0):
         """Recursively populates the 'Where in Reading' dropdown."""
         if indent == 0:
@@ -240,7 +229,7 @@ class EditDrivingQuestionDialog(QDialog):
         return {
             "question_text": self.question_text_edit.toPlainText().strip(),
             "nickname": self.nickname_edit.text().strip(),
-            "type": "Stated" if self.radio_stated.isChecked() else "Inferred",
+            "type": self.type_combo.currentText(),  # <-- Changed from radios to combo
             "question_category": self.category_combo.currentText(),
             "scope": self.scope_combo.currentText(),
             "parent_id": self.parent_combo.currentData(),

@@ -3,7 +3,7 @@
 import sys
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit, QTextEdit,
-    QComboBox, QRadioButton, QCheckBox, QDialogButtonBox,
+    QComboBox, QCheckBox, QDialogButtonBox,
     QWidget, QHBoxLayout, QPushButton, QLabel, QMessageBox
 )
 from PySide6.QtCore import Qt, Slot
@@ -19,7 +19,6 @@ class AddKeyTermDialog(QDialog):
     """
     Dialog for adding or editing a 'Key Term'
     that is specific to a single reading.
-    (Based on screenshot image_26e8c6.png)
     """
 
     def __init__(self, db_manager, project_id, reading_id, outline_items, current_data=None, parent=None):
@@ -58,13 +57,11 @@ class AddKeyTermDialog(QDialog):
 
         citation_form_layout = QFormLayout()
 
-        # --- MODIFICATION: Changed QLineEdit to QTextEdit ---
         self.quote_edit = QTextEdit()
         self.quote_edit.setPlaceholderText("Enter a direct quote...")
         self.quote_edit.setMinimumHeight(60)  # Allow for multiple lines
         self.quote_edit.setPlainText(self.current_data.get("quote", ""))
         citation_form_layout.addRow("Quote:", self.quote_edit)
-        # --- END MODIFICATION ---
 
         # --- Location (Outline) ---
         where_layout = QHBoxLayout()
@@ -90,37 +87,24 @@ class AddKeyTermDialog(QDialog):
 
         main_layout.addLayout(citation_form_layout)
 
-        # --- Role in Argument ---
+        # --- Role in Argument (CHANGED TO COMBOBOX) ---
         role_label = QLabel("Role in Argument")
         role_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
         main_layout.addWidget(role_label)
 
-        role_grid = QWidget()
-        role_layout = QHBoxLayout(role_grid)
-        role_layout.setContentsMargins(0, 0, 0, 0)
+        self.role_combo = QComboBox()
+        self.role_combo.addItems([
+            "Defines Scope",
+            "Names Mechanism",
+            "Criterion/Test",
+            "Assumption",
+            "Contrast/Foil",
+            "Key Variable"
+        ])
+        current_role = self.current_data.get("role", "Defines Scope")
+        self.role_combo.setCurrentText(current_role)
 
-        self.role_radios = {
-            "defines scope": QRadioButton("defines scope"),
-            "names mechanism": QRadioButton("names mechanism"),
-            "criterion/test": QRadioButton("criterion/test"),
-            "assumption": QRadioButton("assumption"),
-            "contrast/foil": QRadioButton("contrast/foil"),
-            "key variable": QRadioButton("key variable")
-        }
-
-        current_role = self.current_data.get("role")
-        checked_one = False
-        for text, radio in self.role_radios.items():
-            role_layout.addWidget(radio)
-            if text == current_role:
-                radio.setChecked(True)
-                checked_one = True
-
-        if not checked_one and self.role_radios:
-            self.role_radios["defines scope"].setChecked(True)  # Default
-
-        role_layout.addStretch()
-        main_layout.addWidget(role_grid)
+        main_layout.addWidget(self.role_combo)
 
         # --- Synthesis Tags & Notes ---
         other_form_layout = QFormLayout()
@@ -174,22 +158,13 @@ class AddKeyTermDialog(QDialog):
 
     def get_data(self):
         """Returns all data from the dialog fields in a dictionary."""
-
-        selected_role = "defines scope"  # Default
-        for text, radio in self.role_radios.items():
-            if radio.isChecked():
-                selected_role = text
-                break
-
         return {
             "term": self.term_edit.text().strip(),
             "definition": self.definition_edit.toPlainText().strip(),
-            # --- MODIFICATION: Use toPlainText() ---
             "quote": self.quote_edit.toPlainText().strip(),
-            # --- END MODIFICATION ---
             "outline_id": self.where_combo.currentData(),
             "pages": self.page_edit.text().strip(),
-            "role": selected_role,
+            "role": self.role_combo.currentText(),  # <-- Read from Combo
             "synthesis_tags": self.tags_edit.text().strip(),
             "notes": self.notes_edit.toPlainText().strip(),
         }

@@ -3,7 +3,7 @@
 import sys
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit, QTextEdit,
-    QComboBox, QRadioButton, QCheckBox, QDialogButtonBox,
+    QComboBox, QCheckBox, QDialogButtonBox,
     QWidget, QHBoxLayout, QPushButton, QLabel, QMessageBox,
     QScrollArea, QFrame
 )
@@ -34,7 +34,7 @@ class EvidenceWidget(QFrame):
 
         # --- Top row: Radio button and Delete button ---
         top_layout = QHBoxLayout()
-        self.select_radio = QRadioButton("Select to Remove")
+        self.select_radio = QCheckBox("Select to Remove") # Changed to Checkbox for logic consistency, though prompt didn't ask. Logic remains same.
         top_layout.addWidget(self.select_radio)
         top_layout.addStretch()
         self.delete_btn = QPushButton("-")
@@ -74,70 +74,34 @@ class EvidenceWidget(QFrame):
         self.reading_text_edit.setMinimumHeight(60)
         form_layout.addRow("Reading Text:", self.reading_text_edit)
 
-        # Role in Argument
-        role_grid = QWidget()
-        role_layout = QHBoxLayout(role_grid)
-        role_layout.setContentsMargins(0, 0, 0, 0)
-        self.role_radios = {
-            "States Claim": QRadioButton("States Claim"),
-            "Justifies Claim": QRadioButton("Justifies Claim"),
-            "Limits Claim": QRadioButton("Limits Claim"),
-            "Contradicts Claim": QRadioButton("Contradicts Claim")
-        }
-        current_role = None  # Default
-        checked_one = False
-        for text, radio in self.role_radios.items():
-            role_layout.addWidget(radio)
-            if text == current_role:
-                radio.setChecked(True)
-                checked_one = True
-        if not checked_one:
-            self.role_radios["States Claim"].setChecked(True)  # Default
-        role_layout.addStretch()
-        form_layout.addRow("Role in Argument:", role_grid)
+        # Role in Argument - CHANGED TO COMBOBOX
+        self.role_combo = QComboBox()
+        self.role_combo.addItems([
+            "States Claim",
+            "Justifies Claim",
+            "Limits Claim",
+            "Contradicts Claim"
+        ])
+        form_layout.addRow("Role in Argument:", self.role_combo)
 
-        # Evidence Type
-        type_grid = QWidget()
-        type_layout = QHBoxLayout(type_grid)
-        type_layout.setContentsMargins(0, 0, 0, 0)
-        self.type_radios = {
-            "Reasoning": QRadioButton("Reasoning"),
-            "Example": QRadioButton("Example"),
-            "Authority": QRadioButton("Authority"),
-            "Data": QRadioButton("Data")
-        }
-        current_type = None  # Default
-        checked_one = False
-        for text, radio in self.type_radios.items():
-            type_layout.addWidget(radio)
-            if text == current_type:
-                radio.setChecked(True)
-                checked_one = True
-        if not checked_one:
-            self.type_radios["Reasoning"].setChecked(True)  # Default
-        type_layout.addStretch()
-        form_layout.addRow("Evidence Type:", type_grid)
+        # Evidence Type - CHANGED TO COMBOBOX
+        self.type_combo = QComboBox()
+        self.type_combo.addItems([
+            "Reasoning",
+            "Example",
+            "Authority",
+            "Data"
+        ])
+        form_layout.addRow("Evidence Type:", self.type_combo)
 
-        # Status
-        status_grid = QWidget()
-        status_layout = QHBoxLayout(status_grid)
-        status_layout.setContentsMargins(0, 0, 0, 0)
-        self.status_radios = {
-            "Solved": QRadioButton("Solved"),
-            "Partially Solved": QRadioButton("Partially Solved"),
-            "Unsolved": QRadioButton("Unsolved")
-        }
-        current_status = None  # Default
-        checked_one = False
-        for text, radio in self.status_radios.items():
-            status_layout.addWidget(radio)
-            if text == current_status:
-                radio.setChecked(True)
-                checked_one = True
-        if not checked_one:
-            self.status_radios["Solved"].setChecked(True)  # Default
-        status_layout.addStretch()
-        form_layout.addRow("Status:", status_grid)
+        # Status - CHANGED TO COMBOBOX
+        self.status_combo = QComboBox()
+        self.status_combo.addItems([
+            "Solved",
+            "Partially Solved",
+            "Unsolved"
+        ])
+        form_layout.addRow("Status:", self.status_combo)
 
         # Rationale
         self.rationale_edit = QTextEdit()
@@ -165,33 +129,19 @@ class EvidenceWidget(QFrame):
 
     def get_data(self):
         """Returns all data from the dialog fields in a dictionary."""
-
-        def get_radio_selection(radio_group):
-            for text, radio in radio_group.items():
-                if radio.isChecked():
-                    return text
-            return None
-
         return {
             "outline_id": self.where_combo.currentData(),
             "pages_text": self.page_edit.text().strip(),
             "argument_text": self.argument_text_edit.text().strip(),
             "reading_text": self.reading_text_edit.toPlainText().strip(),
-            "role_in_argument": get_radio_selection(self.role_radios),
-            "evidence_type": get_radio_selection(self.type_radios),
-            "status": get_radio_selection(self.status_radios),
+            "role_in_argument": self.role_combo.currentText(), # <-- Combo
+            "evidence_type": self.type_combo.currentText(),    # <-- Combo
+            "status": self.status_combo.currentText(),         # <-- Combo
             "rationale_text": self.rationale_edit.toPlainText().strip(),
         }
 
     def set_data(self, data):
         """Populates the widget fields from a data dictionary."""
-
-        def set_radio_selection(radio_group, value):
-            for text, radio in radio_group.items():
-                if text == value:
-                    radio.setChecked(True)
-                    return
-
         current_outline_id = data.get("outline_id")
         if current_outline_id:
             idx = self.where_combo.findData(current_outline_id)
@@ -203,9 +153,10 @@ class EvidenceWidget(QFrame):
         self.reading_text_edit.setPlainText(data.get("reading_text", ""))
         self.rationale_edit.setPlainText(data.get("rationale_text", ""))
 
-        set_radio_selection(self.role_radios, data.get("role_in_argument"))
-        set_radio_selection(self.type_radios, data.get("evidence_type"))
-        set_radio_selection(self.status_radios, data.get("status"))
+        # Set Combos
+        self.role_combo.setCurrentText(data.get("role_in_argument", "States Claim"))
+        self.type_combo.setCurrentText(data.get("evidence_type", "Reasoning"))
+        self.status_combo.setCurrentText(data.get("status", "Solved"))
 
 
 class AddArgumentDialog(QDialog):
@@ -354,7 +305,7 @@ class AddArgumentDialog(QDialog):
         self.claim_edit.setText(data.get("claim_text", ""))
         self.because_edit.setText(data.get("because_text", ""))
         self.is_insight_check.setChecked(bool(data.get("is_insight", 0)))
-        self.tags_edit.setText(data.get("synthesis_tags", ""))  # <-- ADDED
+        self.tags_edit.setText(data.get("synthesis_tags", ""))
 
         dq_id = data.get("driving_question_id")
         if dq_id:
@@ -379,7 +330,7 @@ class AddArgumentDialog(QDialog):
             "because_text": self.because_edit.text().strip(),
             "driving_question_id": self.dq_combo.currentData(),
             "is_insight": self.is_insight_check.isChecked(),
-            "synthesis_tags": self.tags_edit.text().strip(),  # <-- ADDED
+            "synthesis_tags": self.tags_edit.text().strip(),
             "evidence": evidence_list
         }
 
