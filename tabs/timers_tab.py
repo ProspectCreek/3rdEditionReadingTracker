@@ -24,61 +24,95 @@ class SingleTimerWidget(QWidget):
 
         main_layout = QVBoxLayout(self)
         main_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_layout.setSpacing(10)  # Add some spacing between elements
 
+        # --- Title ---
         title_label = QLabel(self.title_text)
-        title_font = QFont()
-        title_font.setPointSize(16)
-        title_font.setBold(True)
-        title_label.setFont(title_font)
+        # Use CSS for consistent large styling
+        title_label.setStyleSheet("font-size: 24px; font-weight: bold; color: #333;")
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         main_layout.addWidget(title_label)
 
         main_layout.addStretch(1)
 
-        # Remaining time
-        remaining_layout = QHBoxLayout()
-        remaining_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        remaining_layout.addWidget(QLabel("Remaining:"))
-        self.time_label = QLabel(self._format_time(self.remaining_seconds))
-        time_font = QFont()
-        time_font.setPointSize(48)
-        time_font.setBold(True)
-        self.time_label.setFont(time_font)
-        remaining_layout.addWidget(self.time_label)
-        main_layout.addLayout(remaining_layout)
+        # --- Remaining Time Display ---
+        # We stack "Remaining:" and the digits vertically for better layout
 
-        # Set time
+        # Label "Remaining:"
+        lbl_remaining = QLabel("Time Remaining")
+        lbl_remaining.setStyleSheet("font-size: 16px; color: #666; font-weight: bold;")
+        lbl_remaining.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_layout.addWidget(lbl_remaining)
+
+        # The Digits (HUGE)
+        self.time_label = QLabel(self._format_time(self.remaining_seconds))
+        # Use a massive font size and a monospaced-ish look if possible, or standard sans
+        self.time_label.setStyleSheet("""
+            font-size: 100px; 
+            font-weight: bold; 
+            color: #2563EB; 
+            font-family: 'Segoe UI', sans-serif;
+        """)
+        self.time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_layout.addWidget(self.time_label)
+
+        # --- Set Time Controls ---
         set_layout = QHBoxLayout()
         set_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        set_layout.addWidget(QLabel("Set (mm:ss):"))
+
+        # Style the set controls a bit to match
+        set_label = QLabel("Set Duration (mm:ss):")
+        set_label.setStyleSheet("font-weight: bold;")
+        set_layout.addWidget(set_label)
+
         self.minutes_spinbox = QSpinBox()
         self.minutes_spinbox.setRange(0, 180)
         self.minutes_spinbox.setValue(default_minutes)
+        self.minutes_spinbox.setFixedWidth(60)
+        self.minutes_spinbox.setFixedHeight(30)
+        self.minutes_spinbox.setStyleSheet("font-size: 14px;")
+
         self.seconds_spinbox = QSpinBox()
         self.seconds_spinbox.setRange(0, 59)
         self.seconds_spinbox.setValue(0)
+        self.seconds_spinbox.setFixedWidth(60)
+        self.seconds_spinbox.setFixedHeight(30)
+        self.seconds_spinbox.setStyleSheet("font-size: 14px;")
+
         self.btn_set = QPushButton("Set")
+        self.btn_set.setFixedHeight(30)
+
         set_layout.addWidget(self.minutes_spinbox)
         set_layout.addWidget(QLabel(":"))
         set_layout.addWidget(self.seconds_spinbox)
         set_layout.addWidget(self.btn_set)
         main_layout.addLayout(set_layout)
 
-        # Controls
+        # --- Action Buttons ---
         controls_layout = QHBoxLayout()
         controls_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # Make buttons slightly larger/nicer
+        btn_style = "padding: 8px 16px; font-size: 14px;"
+
         self.btn_start = QPushButton("Start")
+        self.btn_start.setStyleSheet(btn_style)
+
         self.btn_pause = QPushButton("Pause")
+        self.btn_pause.setStyleSheet(btn_style)
+
         self.btn_reset = QPushButton("Reset")
+        self.btn_reset.setStyleSheet(btn_style)
+
         controls_layout.addWidget(self.btn_start)
         controls_layout.addWidget(self.btn_pause)
         controls_layout.addWidget(self.btn_reset)
 
-        # --- NEW: Audible Alarm Checkbox ---
+        # --- Alarm Checkbox ---
         self.checkbox_alarm = QCheckBox("Audible Alarm")
         self.checkbox_alarm.setChecked(True)
+        self.checkbox_alarm.setStyleSheet("font-size: 14px; margin-left: 10px;")
         controls_layout.addWidget(self.checkbox_alarm)
-        # --- END NEW ---
 
         main_layout.addLayout(controls_layout)
 
@@ -132,7 +166,7 @@ class SingleTimerWidget(QWidget):
             self.timer.stop()
             self._update_button_states()
 
-            # --- NEW: Alarm logic ---
+            # --- Alarm logic ---
             if self.checkbox_alarm.isChecked():
                 QApplication.beep()
 
@@ -142,7 +176,6 @@ class SingleTimerWidget(QWidget):
                 msg_box.setIcon(QMessageBox.Icon.Information)
                 msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
                 msg_box.exec()
-            # --- END NEW ---
 
     def _update_button_states(self):
         self.btn_start.setEnabled(not self.is_running and self.remaining_seconds > 0)
@@ -151,7 +184,7 @@ class SingleTimerWidget(QWidget):
         self.btn_set.setEnabled(not self.is_running)
         self.minutes_spinbox.setEnabled(not self.is_running)
         self.seconds_spinbox.setEnabled(not self.is_running)
-        self.checkbox_alarm.setEnabled(not self.is_running)  # <-- Added this line
+        self.checkbox_alarm.setEnabled(not self.is_running)
 
 
 class TimersTab(QWidget):
