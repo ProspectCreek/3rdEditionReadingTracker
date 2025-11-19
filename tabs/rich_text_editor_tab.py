@@ -1,4 +1,3 @@
-# tabs/rich_text_editor_tab.py
 import sys
 import uuid  # <-- NEW: For synthesis anchors
 from PySide6.QtWidgets import (
@@ -707,18 +706,9 @@ class RichTextEditorTab(QWidget):
         if get_anchor_id(cursor.charFormat()) != anchor_id:
             cursor.movePosition(QTextCursor.MoveOperation.NextCharacter, QTextCursor.MoveMode.MoveAnchor)
 
-        start_pos = cursor.position()
-        # Try Qt's built-in anchor navigation first
-        cursor.movePosition(QTextCursor.MoveOperation.StartOfAnchor, QTextCursor.MoveMode.MoveAnchor)
-        if cursor.position() != start_pos:
-            cursor.movePosition(QTextCursor.MoveOperation.EndOfAnchor, QTextCursor.MoveMode.KeepAnchor)
-            self.editor.setTextCursor(cursor)
-            return
-
-        # Fallback manual method if StartOfAnchor is not supported
-        cursor.setPosition(start_pos)
-
         # Move forward to the end of the anchor
+        # (Manual loop since StartOfAnchor is not supported)
+        start_pos = cursor.position()
         while get_anchor_id(cursor.charFormat()) == anchor_id:
             if cursor.atBlockEnd():
                 break

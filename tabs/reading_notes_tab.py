@@ -1,11 +1,10 @@
-# prospectcreek/3rdeditionreadingtracker/tabs/reading_notes_tab.py
 import sys
 import uuid
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel, QFrame,
     QTreeWidget, QTreeWidgetItem, QFormLayout, QLineEdit, QComboBox,
     QPushButton, QMenu, QStackedWidget, QInputDialog, QMessageBox, QDialog,
-    QTabWidget, QTextEdit, QApplication, QAbstractItemView,  # <-- QMenuBar REMOVED
+    QTabWidget, QTextEdit, QApplication, QAbstractItemView,
     QTreeWidgetItemIterator, QListWidget, QListWidgetItem
 )
 from PySide6.QtCore import Qt, Signal, QPoint, Slot, QTimer, QUrl
@@ -125,9 +124,6 @@ except ImportError:
     print("Error: Could not import ViewReadingRulesDialog")
     ViewReadingRulesDialog = None
 
-# --- MODIFICATION: REMOVED EditReadingRulesDialog import ---
-
-
 # --- NEW: Default Reading Rules Text ---
 DEFAULT_READING_RULES_HTML = """
 <p><b>I. The First Stage of Analytical Reading: Rules for Finding What a Book Is About</b></p>
@@ -164,6 +160,8 @@ DEFAULT_READING_RULES_HTML = """
 <p>&nbsp;</p>
 <p><i>Note: Of these last four, the first three are criteria for disagreement. Failing in all of these, you must agree, at least in part, although you may suspend judgment on the whole, in the light of the last point.</i></p>
 """
+
+
 # --- END NEW ---
 
 
@@ -258,12 +256,6 @@ class ReadingNotesTab(QWidget):
         right_layout.setContentsMargins(6, 6, 6, 6)
         right_layout.setSpacing(0)
 
-        # --- MODIFICATION: REMOVED QMenuBar ---
-        # self.reading_menu_bar = QMenuBar()
-        # right_layout.addWidget(self.reading_menu_bar)
-        # self._create_reading_menu(self.reading_menu_bar)
-        # --- END MODIFICATION ---
-
         # Vertical splitter for notes and bottom tabs
         self.right_splitter = QSplitter(Qt.Orientation.Vertical)
         right_layout.addWidget(self.right_splitter)
@@ -347,7 +339,26 @@ class ReadingNotesTab(QWidget):
         form_layout = QFormLayout()
         form_layout.setSpacing(8)
 
-        self.edit_title = QLineEdit()
+        # --- MODIFIED: Use QTextEdit for Title ---
+        self.edit_title = QTextEdit()
+        self.edit_title.setMaximumHeight(60)
+        self.edit_title.setTabChangesFocus(True)  # Allow tabbing out
+        self.edit_title.setPlaceholderText("Title of the work...")
+        # Force border style to match QLineEdit exactly
+        self.edit_title.setStyleSheet("""
+            QTextEdit {
+                background-color: #FFFFFF;
+                border: 1px solid #D1D5DB;
+                border-radius: 6px;
+                padding: 6px;
+                color: #111827;
+            }
+            QTextEdit:focus {
+                border: 1px solid #2563EB;
+            }
+        """)
+        # --- END MODIFIED ---
+
         self.edit_author = QLineEdit()
         self.edit_published = QLineEdit()
         self.edit_nickname = QLineEdit()
@@ -508,8 +519,6 @@ class ReadingNotesTab(QWidget):
         else:
             self.bottom_right_tabs.addTab(QLabel("Timers (Failed to load)"), "Timers")
 
-    # --- MODIFICATION: REMOVED _create_reading_menu METHOD ---
-
     # --- Data Loading and Saving ---
 
     def _get_detail(self, key, default=''):
@@ -538,7 +547,10 @@ class ReadingNotesTab(QWidget):
             author = self._get_detail('author')
             nickname = self._get_detail('nickname')
 
-            self.edit_title.setText(title)
+            # --- MODIFIED: Use setPlainText for QTextEdit ---
+            self.edit_title.setPlainText(title)
+            # --- END MODIFIED ---
+
             self.edit_author.setText(author)
             self.edit_nickname.setText(nickname)
             self.edit_published.setText(self._get_detail('published'))
@@ -705,7 +717,9 @@ class ReadingNotesTab(QWidget):
             return
 
         details = {
-            'title': self.edit_title.text(),
+            # --- MODIFIED: Use toPlainText() for QTextEdit ---
+            'title': self.edit_title.toPlainText(),
+            # --- END MODIFIED ---
             'author': self.edit_author.text(),
             'nickname': self.edit_nickname.text(),
             'published': self.edit_published.text(),
@@ -1087,7 +1101,7 @@ class ReadingNotesTab(QWidget):
             f"    ReadingTab.set_outline_selection: START (anchor={anchor_id}). Current focus: {QApplication.instance().focusWidget()}")
 
         self._pending_anchor_focus = anchor_id if (anchor_id and (
-                    outline_id is not None and outline_id > 0)) else None  # --- FIX: Only queue if outline_id is valid ---
+                outline_id is not None and outline_id > 0)) else None  # --- FIX: Only queue if outline_id is valid ---
 
         # --- Part 1: Select Outline Item ---
         if outline_id == 0 or outline_id is None:  # --- FIX: Handle None ---
@@ -1153,7 +1167,7 @@ class ReadingNotesTab(QWidget):
                     elif isinstance(tree_or_list_widget, QListWidget):
                         for i in range(tree_or_list_widget.count()):
                             item = tree_or_list_widget.item(i)
-                            if item.data(0, Qt.ItemDataRole.UserRole) == item_link_id:
+                            if item.data(Qt.ItemDataRole.UserRole) == item_link_id:
                                 found_item = item
                                 break
                     # ---!!--- END OF FIX ---!!---

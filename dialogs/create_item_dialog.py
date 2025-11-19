@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QLabel, QLineEdit,
-    QRadioButton, QDialogButtonBox, QWidget, QHBoxLayout
+    QCheckBox, QDialogButtonBox, QWidget, QHBoxLayout
 )
 from PySide6.QtCore import Qt
 
@@ -32,23 +32,13 @@ class CreateItemDialog(QDialog):
         main_layout.addWidget(self.name_entry)
 
         if self.item_type == 'project':
-            # Assignment Radio Buttons
-            assign_label = QLabel("For assignment:")
-            main_layout.addWidget(assign_label)
+            # Assignment Checkbox (Replaces problematic Radio Buttons)
+            self.assignment_check = QCheckBox("For Assignment")
+            self.assignment_check.setChecked(True)  # Default to Yes
 
-            radio_widget = QWidget()  # Use a widget to hold the HBox
-            radio_layout = QHBoxLayout(radio_widget)
-            radio_layout.setContentsMargins(0, 0, 0, 0)
-
-            self.yes_radio = QRadioButton("Yes")
-            self.yes_radio.setChecked(True)
-            self.no_radio = QRadioButton("No")
-
-            radio_layout.addWidget(self.yes_radio)
-            radio_layout.addWidget(self.no_radio)
-            radio_layout.addStretch()  # Push buttons to the left
-
-            main_layout.addWidget(radio_widget)
+            # Add some vertical spacing
+            main_layout.addSpacing(10)
+            main_layout.addWidget(self.assignment_check)
 
         else:  # It's a 'class'
             self.is_assignment = 0  # Classes are not assignments
@@ -75,6 +65,6 @@ class CreateItemDialog(QDialog):
             return
 
         if self.item_type == 'project':
-            self.is_assignment = 1 if self.yes_radio.isChecked() else 0
+            self.is_assignment = 1 if self.assignment_check.isChecked() else 0
 
         super().accept()  # This closes the dialog with QDialog.Accepted
