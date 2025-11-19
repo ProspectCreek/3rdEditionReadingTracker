@@ -54,7 +54,7 @@ except ImportError:
     EditReadingRulesDialog = None
 
 
-# --- Word Wrap Delegate (FIXED FOR COMPACTNESS & COLOR) ---
+# --- Word Wrap Delegate (FIXED FOR COMPACTNESS & COLOR & WRAPPING) ---
 class WordWrapDelegate(QStyledItemDelegate):
     """
     A delegate that renders HTML/Rich text with wrapping in a QTreeWidget.
@@ -74,23 +74,21 @@ class WordWrapDelegate(QStyledItemDelegate):
         doc.setHtml(opt.text)
         doc.setDefaultFont(opt.font)
 
-        # --- FIX: Remove default margins for compactness ---
+        # Remove default margins for compactness
         doc.setDocumentMargin(0)
-        # ---------------------------------------------------
 
-        # Set width to column width
-        doc.setTextWidth(opt.rect.width())
+        # Set width to column width to force wrap in painting
+        horizontal_padding = 10
+        doc.setTextWidth(opt.rect.width() - horizontal_padding)
+        # doc.setTextWidth(opt.rect.width())
 
-        # --- FIX 3: CHANGE SELECTION COLOR HERE ---
         # Handle Selection Highlight manually to match the light theme
         if opt.state & QStyle.State_Selected:
             # Use a soft, light blue instead of the system dark blue
             painter.fillRect(opt.rect, QColor("#E5F3FF"))
-            # Ensure text is black by default for the doc (usually is, but just in case)
-            # Note: QTextDocument draws its own text color. If the HTML has colors, they are used.
-            # If not, it uses default. Standard rendering is black.
+            # Ensure text is black by default for the doc
 
-        # --- FIX: Calculate Vertical Centering ---
+        # Calculate Vertical Centering
         content_height = doc.size().height()
         rect_height = opt.rect.height()
         y_offset = (rect_height - content_height) / 2
@@ -99,8 +97,8 @@ class WordWrapDelegate(QStyledItemDelegate):
         if y_offset < 0: y_offset = 0
 
         # Move painter to cell + vertical center + small left padding
-        painter.translate(opt.rect.left() + 4, opt.rect.top() + y_offset)
-        # -----------------------------------------
+        left_padding = 10
+        painter.translate(opt.rect.left() + left_padding, opt.rect.top() + y_offset)
 
         # Draw the text
         doc.drawContents(painter)
@@ -114,17 +112,22 @@ class WordWrapDelegate(QStyledItemDelegate):
         doc = QTextDocument()
         doc.setHtml(opt.text)
         doc.setDefaultFont(opt.font)
-        doc.setDocumentMargin(0)  # Remove margins here too
+        doc.setDocumentMargin(0)
 
-        width = opt.rect.width()
-        if width <= 0:
-            width = 200
+        # --- FIX 1: Get the actual column width from the TreeWidget ---
+        # This ensures sizeHint calculates the height based on the REAL column width,
+        # forcing the row to expand vertically if the text wraps.
+        tree_widget = option.widget
+        if tree_widget:
+            column_width = tree_widget.columnWidth(index.column())
+            # Subtract a small padding to match the paint translation
+            doc.setTextWidth(column_width - 10)
+            vertical_padding = 20  # <--- Increase this number (e.g., 10, 14, 20) for more space
+        else:
+            doc.setTextWidth(opt.rect.width())
+        # ---------------------------------------------------------------
 
-        doc.setTextWidth(width)
-
-        # --- FIX 2: REMOVE EXTRA WHITESPACE ---
-        # Reduced padding to +4 (2px top/bottom) for maximum compactness
-        return QSize(int(doc.idealWidth()), int(doc.size().height()))
+        return QSize(int(doc.idealWidth()), int(doc.size().height()) + vertical_padding)
     # --- END DELEGATE ---
 
 
@@ -223,41 +226,40 @@ class ProjectDashboardWidget(QWidget):
 
         self.readings_tree = QTreeWidget()
         self.readings_tree.setHeaderLabels(["Nickname", "Title", "Author"])
-        # Tighten padding on items (this is fine to keep)
         self.readings_tree.setStyleSheet("""
             QTreeView::item {
-                padding-top: 0px;
-                padding-bottom: 0px;
+                padding-top: 5px;
+                padding-bottom: 5px;
             }
         """)
 
-        # --- use WordWrapDelegate for ALL columns, not just Title ---
+        # Use WordWrapDelegate for ALL columns
         delegate = WordWrapDelegate(self.readings_tree)
         self.readings_tree.setItemDelegate(delegate)
-        # --- Formatting logic ---
+
+        # Formatting logic
         self.readings_tree.setWordWrap(True)
         self.readings_tree.setTextElideMode(Qt.TextElideMode.ElideNone)
-        self.readings_tree.setUniformRowHeights(False)  # Allow variable height
+        self.readings_tree.setUniformRowHeights(False)  # Allow variable height for wrapping
         self.readings_tree.setSortingEnabled(False)
 
-        # Apply custom delegate ONLY to Title column (index 1)
-        #self.readings_tree.setItemDelegateForColumn(1, WordWrapDelegate(self.readings_tree))
-
         header = self.readings_tree.header()
-
-        # Make sure the last section is NOT auto-stretching
         header.setStretchLastSection(False)
+
+        # --- FIX 2: Enable Interactive Resizing for ALL columns ---
 
         # Column 0 (Nickname): Interactive
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
-        self.readings_tree.setColumnWidth(0, 230)
+        self.readings_tree.setColumnWidth(0, 200)
 
-        # Column 1 (Title): Stretch
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        # Column 1 (Title): Interactive (Changed from Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        self.readings_tree.setColumnWidth(1, 500)  # Give it a good default width
 
-        # Column 2 (Author): Fixed width
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self.readings_tree.setColumnWidth(2, 180)
+        # Column 2 (Author): Interactive (Changed from Fixed)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        self.readings_tree.setColumnWidth(2, 150)
+        # ----------------------------------------------------------
 
         rl.addWidget(self.readings_tree)
 
