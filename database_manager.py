@@ -22,13 +22,11 @@ from database_helpers.propositions_mixin import PropositionsMixin
 from database_helpers.todo_mixin import TodoMixin  # <-- This line is correct
 from database_helpers.key_terms_mixin import KeyTermsMixin
 from database_helpers.theories_mixin import TheoriesMixin
-# from database_helpers.key_terms_mixin import KeyTermsMixin # <-- REMOVED DUPLICATE
-# from database_helpers.theories_mixin import TheoriesMixin # <-- REMOVED DUPLICATE
 from database_helpers.arguments_mixin import ArgumentsMixin
 from database_helpers.utility_mixin import UtilityMixin
 from database_helpers.graph_settings_mixin import GraphSettingsMixin
 from database_helpers.global_graph_settings_mixin import GlobalGraphSettingsMixin # <-- IMPORT NEW MIXIN
-
+from database_helpers.settings_mixin import SettingsMixin # <-- NEW IMPORT
 
 class DatabaseManager(
     SchemaSetup,
@@ -50,6 +48,7 @@ class DatabaseManager(
     ArgumentsMixin,
     GraphSettingsMixin,
     GlobalGraphSettingsMixin, # <-- ADD NEW MIXIN
+    SettingsMixin,
     UtilityMixin
 ):
     def __init__(self, db_file="reading_tracker.db"):

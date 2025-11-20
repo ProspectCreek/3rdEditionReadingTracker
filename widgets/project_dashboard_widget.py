@@ -77,10 +77,10 @@ class WordWrapDelegate(QStyledItemDelegate):
         # Remove default margins for compactness
         doc.setDocumentMargin(0)
 
-        # Set width to column width to force wrap in painting
-        horizontal_padding = 10
+        # --- CHANGE 1: RIGHT PADDING ---
+        # Subtract total horizontal padding (Left + Right) from the available width.
+        horizontal_padding = 20
         doc.setTextWidth(opt.rect.width() - horizontal_padding)
-        # doc.setTextWidth(opt.rect.width())
 
         # Handle Selection Highlight manually to match the light theme
         if opt.state & QStyle.State_Selected:
@@ -96,7 +96,7 @@ class WordWrapDelegate(QStyledItemDelegate):
         # Clamp to 0 if content is larger than rect (shouldn't happen with sizeHint, but safe)
         if y_offset < 0: y_offset = 0
 
-        # Move painter to cell + vertical center + small left padding
+        # --- CHANGE 2: LEFT PADDING ---
         left_padding = 10
         painter.translate(opt.rect.left() + left_padding, opt.rect.top() + y_offset)
 
@@ -120,13 +120,13 @@ class WordWrapDelegate(QStyledItemDelegate):
         tree_widget = option.widget
         if tree_widget:
             column_width = tree_widget.columnWidth(index.column())
-            # Subtract a small padding to match the paint translation
-            doc.setTextWidth(column_width - 10)
-            vertical_padding = 20  # <--- Increase this number (e.g., 10, 14, 20) for more space
+            # --- CHANGE 3: MATCH PADDING ---
+            doc.setTextWidth(column_width - 20)
         else:
             doc.setTextWidth(opt.rect.width())
         # ---------------------------------------------------------------
 
+        vertical_padding = 14
         return QSize(int(doc.idealWidth()), int(doc.size().height()) + vertical_padding)
     # --- END DELEGATE ---
 
@@ -228,8 +228,8 @@ class ProjectDashboardWidget(QWidget):
         self.readings_tree.setHeaderLabels(["Nickname", "Title", "Author"])
         self.readings_tree.setStyleSheet("""
             QTreeView::item {
-                padding-top: 5px;
-                padding-bottom: 5px;
+                padding-top: 0px;
+                padding-bottom: 0px;
             }
         """)
 
@@ -250,15 +250,15 @@ class ProjectDashboardWidget(QWidget):
 
         # Column 0 (Nickname): Interactive
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
-        self.readings_tree.setColumnWidth(0, 200)
+        self.readings_tree.setColumnWidth(0, 220)
 
         # Column 1 (Title): Interactive (Changed from Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
-        self.readings_tree.setColumnWidth(1, 500)  # Give it a good default width
+        self.readings_tree.setColumnWidth(1, 550)
 
         # Column 2 (Author): Interactive (Changed from Fixed)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
-        self.readings_tree.setColumnWidth(2, 150)
+        self.readings_tree.setColumnWidth(2, 120)
         # ----------------------------------------------------------
 
         rl.addWidget(self.readings_tree)
@@ -511,13 +511,22 @@ class ProjectDashboardWidget(QWidget):
         if self.project_id == -1:
             return
 
-        dialog = AddReadingDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            title = dialog.title
-            author = dialog.author
-            nickname = dialog.nickname
+        # Pass self.db to the dialog so it can access settings
+        dialog = AddReadingDialog(self.db, self)
 
-            new_id = self.db.add_reading(self.project_id, title, author, nickname)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # Pass all new fields to add_reading
+            new_id = self.db.add_reading(
+                self.project_id,
+                dialog.title,
+                dialog.author,
+                dialog.nickname,
+                dialog.zotero_key,
+                dialog.published,
+                dialog.pages,
+                dialog.level,
+                dialog.classification
+            )
             self.load_readings()
 
             self.top_tab_widget.blockSignals(True)
@@ -703,20 +712,77 @@ class ProjectDashboardWidget(QWidget):
     @Slot(QPoint)
     def show_readings_context_menu(self, position):
         item = self.readings_tree.itemAt(position)
-        if not item:
-            return
 
         menu = QMenu(self)
-        delete_action = QAction("Delete Reading", self)
-        delete_action.triggered.connect(self.delete_reading)
-        menu.addAction(delete_action)
 
-        if self.readings_tree.topLevelItemCount() >= 2:
-            reorder_action = QAction("Reorder Readings", self)
-            reorder_action.triggered.connect(self.reorder_readings)
-            menu.addAction(reorder_action)
+        if item:
+            edit_action = QAction("Edit Reading...", self)
+            edit_action.triggered.connect(self.edit_reading)
+            menu.addAction(edit_action)
+
+            menu.addSeparator()
+
+            delete_action = QAction("Delete Reading", self)
+            delete_action.triggered.connect(self.delete_reading)
+            menu.addAction(delete_action)
+
+            if self.readings_tree.topLevelItemCount() >= 2:
+                reorder_action = QAction("Reorder Readings", self)
+                reorder_action.triggered.connect(self.reorder_readings)
+                menu.addAction(reorder_action)
+        else:
+            # Clicked on empty space
+            add_action = QAction("Add New Reading", self)
+            add_action.triggered.connect(self.add_reading)
+            menu.addAction(add_action)
+
+            if self.readings_tree.topLevelItemCount() >= 2:
+                reorder_action = QAction("Reorder Readings", self)
+                reorder_action.triggered.connect(self.reorder_readings)
+                menu.addAction(reorder_action)
 
         menu.exec(self.readings_tree.viewport().mapToGlobal(position))
+
+    def edit_reading(self):
+        item = self.readings_tree.currentItem()
+        if not item: return
+
+        reading_id = item.data(0, Qt.ItemDataRole.UserRole)
+
+        # Fetch current data
+        current_data = self.db.get_reading_details(reading_id)
+        if not current_data: return
+
+        # Convert Row to dict and ensure all keys exist
+        data_dict = dict(current_data)
+
+        # Open Dialog
+        dialog = AddReadingDialog(self.db, current_data=data_dict, parent=self)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # Prepare update dict
+            details = {
+                'title': dialog.title,
+                'author': dialog.author,
+                'nickname': dialog.nickname,
+                'published': dialog.published,
+                'pages': dialog.pages,
+                'level': dialog.level,
+                'classification': dialog.classification,
+                'zotero_item_key': dialog.zotero_key
+            }
+
+            # Save to DB
+            self.db.update_reading_details(reading_id, details)
+
+            # Refresh Tree
+            self.load_readings()
+
+            # Refresh Tab if open
+            if reading_id in self.reading_tabs:
+                tab = self.reading_tabs[reading_id]
+                tab.load_data()
+                self._handle_reading_title_change(reading_id, tab)  # Force title update
 
     @Slot()
     def delete_reading(self):

@@ -186,6 +186,10 @@ class ReadingNotesTab(QWidget):
         self._block_outline_save = False  # prevent save-on-switch loops
         self._is_loaded = False  # <<< guard to avoid saving blanks
 
+        # --- CRITICAL FIX: Recursion Guard ---
+        self._is_loading = False
+        # -------------------------------------
+
         self.bottom_tabs_with_editors = []
         self._pending_anchor_focus = None
         self.instruction_labels = {}  # --- NEW: To store simple editor labels ---
@@ -231,6 +235,13 @@ class ReadingNotesTab(QWidget):
         self.outline_tree = QTreeWidget()
         self.outline_tree.setHeaderHidden(True)
         self.outline_tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+
+        # --- NEW: Enable inline editing ---
+        self.outline_tree.setEditTriggers(
+            QTreeWidget.EditTrigger.DoubleClicked | QTreeWidget.EditTrigger.EditKeyPressed)
+        self.outline_tree.itemChanged.connect(self.on_outline_item_changed)
+        # ----------------------------------
+
         outline_layout.addWidget(self.outline_tree, 1)
 
         outline_btn_layout = QHBoxLayout()
@@ -536,6 +547,9 @@ class ReadingNotesTab(QWidget):
         Called by the dashboard to load all data for this reading tab.
         """
         try:
+            # --- SAFETY: LOCK UI UPDATES ---
+            self._is_loading = True
+
             details = self.db.get_reading_details(self.reading_id)
             if not details:
                 QMessageBox.critical(self, "Error", f"Could not load details for reading ID {self.reading_id}")
@@ -579,6 +593,8 @@ class ReadingNotesTab(QWidget):
             QMessageBox.critical(self, "Error Loading Reading", f"An error occurred: {e}")
             import traceback;
             traceback.print_exc()
+        finally:
+            self._is_loading = False  # UNLOCK
 
     def load_bottom_tabs_content(self):
         """Loads data into the bottom-right tabs."""
@@ -758,7 +774,14 @@ class ReadingNotesTab(QWidget):
 
     def load_outline(self):
         """Reloads the outline tree from the database."""
+        # --- SAFETY: LOCK UI UPDATES ---
+        was_loading = self._is_loading
+        self._is_loading = True
+
+        # Stop signals to prevent crash on clear()
+        self.outline_tree.blockSignals(True)
         self.outline_tree.clear()
+
         try:
             root_items = self.db.get_reading_outline(self.reading_id, parent_id=None)
             for item_data in root_items:
@@ -766,17 +789,47 @@ class ReadingNotesTab(QWidget):
                 self._add_outline_item(parent_widget, item_data)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not load reading outline: {e}")
+        finally:
+            # Restore signals
+            self.outline_tree.blockSignals(False)
+            if not was_loading:
+                self._is_loading = False
 
     def _add_outline_item(self, parent_widget, item_data: dict):
         """Recursive helper to add items to the outline tree."""
         item = QTreeWidgetItem(parent_widget, [item_data['section_title']])
         item.setData(0, Qt.ItemDataRole.UserRole, item_data['id'])
 
+        # --- ENABLE INLINE EDITING ---
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+        # -----------------------------
+
         children_data = self.db.get_reading_outline(self.reading_id, parent_id=item_data['id'])
         for child_data in children_data:
             self._add_outline_item(item, child_data)
 
         item.setExpanded(True)
+
+    def on_outline_item_changed(self, item, column):
+        """
+        Handles edits to the tree cells (Rename).
+        CRITICAL: Do NOT reload the tree here, or it loops/crashes.
+        """
+        # --- CRITICAL: Recursion Check ---
+        if self._is_loading:
+            return
+
+        item_id = item.data(0, Qt.ItemDataRole.UserRole)
+        new_text = item.text(column)
+
+        # Determine field based on column (0=Title)
+        if column == 0 and item_id:
+            try:
+                # Update DB directly
+                self.db.update_outline_section_title(item_id, new_text)
+                # DO NOT CALL self.load_outline() HERE
+            except Exception as e:
+                print(f"Error updating outline title: {e}")
 
     # --- NEW HELPER FUNCTION ---
     def _find_and_select_outline_item(self, section_id):
@@ -877,9 +930,30 @@ class ReadingNotesTab(QWidget):
 
         menu.exec(self.outline_tree.viewport().mapToGlobal(position))
 
+    # --- NEW: Helper to open a wider QInputDialog ---
+    def _get_text_input_wide(self, title, label, text_value=""):
+        """Helper to open a wider QInputDialog."""
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle(title)
+        dialog.setLabelText(label)
+        dialog.setTextValue(text_value)
+        dialog.setInputMode(QInputDialog.InputMode.TextInput)
+
+        # Force a larger width
+        dialog.resize(500, dialog.height())
+
+        # Sometimes resize isn't enough before show, so we set a min width on the input box if we can find it
+        # or just the dialog itself
+        dialog.setMinimumWidth(500)
+
+        ok = dialog.exec() == QDialog.DialogCode.Accepted
+        return dialog.textValue(), ok
+
+    # --- END NEW ---
+
     def add_section(self):
         """Adds a new root-level section."""
-        text, ok = QInputDialog.getText(self, "Add Section", "Section Title:")
+        text, ok = self._get_text_input_wide("Add Section", "Section Title:")
         if ok and text:
             try:
                 # --- MODIFICATION: Capture new ID ---
@@ -898,7 +972,7 @@ class ReadingNotesTab(QWidget):
             return
 
         parent_id = item.data(0, Qt.ItemDataRole.UserRole)
-        text, ok = QInputDialog.getText(self, "Add Subsection", "Subsection Title:")
+        text, ok = self._get_text_input_wide("Add Subsection", "Subsection Title:")
         if ok and text:
             try:
                 # --- MODIFICATION: Capture new ID ---
@@ -919,7 +993,7 @@ class ReadingNotesTab(QWidget):
         section_id = item.data(0, Qt.ItemDataRole.UserRole)
         current_title = item.text(0)
 
-        new_title, ok = QInputDialog.getText(self, "Rename Section", "New Title:", text=current_title)
+        new_title, ok = self._get_text_input_wide("Rename Section", "New Title:", text_value=current_title)
         if ok and new_title and new_title != current_title:
             try:
                 self.db.update_outline_section_title(section_id, new_title)
@@ -1251,7 +1325,7 @@ class ReadingNotesTab(QWidget):
             fmt = cursor.charFormat()
 
             # --- MODIFIED: Use new helper ---
-            anchor_id = self.notes_editor._get_anchor_id_from_format(fmt)
+            anchor_id = self.notes_editor._get_id(fmt)
             # --- END MODIFIED ---
 
             if anchor_id:
@@ -1266,7 +1340,7 @@ class ReadingNotesTab(QWidget):
                         fmt = cursor.charFormat()
 
                         # --- MODIFIED: Use new helper ---
-                        next_anchor_id = self.notes_editor._get_anchor_id_from_format(fmt)
+                        next_anchor_id = self.notes_editor._get_id(fmt)
                         # --- END MODIFIED ---
 
                         if next_anchor_id != anchor_id:

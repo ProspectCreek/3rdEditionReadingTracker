@@ -1,7 +1,8 @@
 class ReadingsMixin:
     # --------------------------- readings ---------------------------
 
-    def add_reading(self, project_id, title, author, nickname):
+    def add_reading(self, project_id, title, author, nickname, zotero_key=None,
+                    published="", pages="", level="", classification=""):
         """Named params + computed display_order + verify presence."""
         self.cursor.execute(
             "SELECT COALESCE(MAX(display_order), -1) FROM readings WHERE project_id = ?",
@@ -15,11 +16,22 @@ class ReadingsMixin:
             "author": (author or "").strip(),
             "nickname": (nickname or "").strip(),
             "display_order": int(new_order),
+            "zotero_item_key": zotero_key,
+            "published": published,
+            "pages": pages,
+            "level": level,
+            "classification": classification
         }
 
         self.cursor.execute("""
-            INSERT INTO readings (project_id, title, author, nickname, display_order)
-            VALUES (:project_id, :title, :author, :nickname, :display_order)
+            INSERT INTO readings (
+                project_id, title, author, nickname, display_order, zotero_item_key,
+                published, pages, level, classification
+            )
+            VALUES (
+                :project_id, :title, :author, :nickname, :display_order, :zotero_item_key,
+                :published, :pages, :level, :classification
+            )
         """, payload)
         self.conn.commit()
 
@@ -41,16 +53,24 @@ class ReadingsMixin:
         return self._rowdict(self.cursor.fetchone())
 
     def update_reading_details(self, reading_id, details_dict):
+        """Updated to include zotero_item_key in the update."""
         self.cursor.execute("""
             UPDATE readings
             SET title = ?, author = ?, nickname = ?, published = ?, 
-                pages = ?, assignment = ?, level = ?, classification = ?
+                pages = ?, assignment = ?, level = ?, classification = ?,
+                zotero_item_key = ?
             WHERE id = ?
         """, (
-            details_dict.get('title', ''), details_dict.get('author', ''), details_dict.get('nickname', ''),
-            details_dict.get('published', ''), details_dict.get('pages', ''),
-            details_dict.get('assignment', ''), details_dict.get('level', ''),
-            details_dict.get('classification', ''), reading_id
+            details_dict.get('title', ''),
+            details_dict.get('author', ''),
+            details_dict.get('nickname', ''),
+            details_dict.get('published', ''),
+            details_dict.get('pages', ''),
+            details_dict.get('assignment', ''),
+            details_dict.get('level', ''),
+            details_dict.get('classification', ''),
+            details_dict.get('zotero_item_key'), # <-- Added this
+            reading_id
         ))
         self.conn.commit()
 

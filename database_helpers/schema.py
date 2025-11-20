@@ -1,4 +1,3 @@
-
 # prospectcreek/3rdeditionreadingtracker/database_helpers/schema.py
 import sqlite3
 
@@ -12,7 +11,6 @@ class SchemaSetup:
     def _add_column_if_not_exists(self, table_name, column_name, column_type="TEXT", default_value="''"):
         """
         Safely adds a column to a table if it doesn't already exist.
-        Defaults to TEXT with a default value of an empty string.
         """
         try:
             self.cursor.execute(f"PRAGMA table_info({table_name})")
@@ -21,19 +19,16 @@ class SchemaSetup:
                 self.cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type} DEFAULT {default_value}")
                 print(f"Added column: {column_name} to {table_name}")
         except Exception as e:
-            # This might fail if in a transaction, but it's okay for setup
             print(f"Warning: Could not add column {column_name} to {table_name}. {e}")
 
 
     def setup_database(self):
         """
-        Creates all 23 tables for the application in an order that
-        respects foreign key dependencies.
+        Creates all tables for the application.
         """
         print("--- Running SchemaSetup.setup_database() ---")
 
-        # --- Level 0: Core Tables (No dependencies on other app tables) ---
-
+        # --- Level 0: Core Tables ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,14 +70,11 @@ class SchemaSetup:
         )
         """)
 
-        # --- START: Add new instruction columns (Migration) ---
-        # This list contains all the new instruction fields we need.
+        # --- Instructions Migration ---
         new_instruction_columns = [
-            # Synthesis Tabs
             ("synthesis_terminology_instr", "TEXT"),
             ("synthesis_propositions_instr", "TEXT"),
             ("synthesis_notes_instr", "TEXT"),
-            # Reading Tabs
             ("reading_dq_instr", "TEXT"),
             ("reading_lp_instr", "TEXT"),
             ("reading_unity_instr", "TEXT"),
@@ -93,16 +85,11 @@ class SchemaSetup:
             ("reading_gaps_instr", "TEXT"),
             ("reading_theories_instr", "TEXT"),
             ("reading_dialogue_instr", "TEXT"),
-            # --- NEW: Add Reading Rules Column ---
             ("reading_rules_html", "TEXT"),
-            # --- NEW: Add Syntopic Rules Column ---
             ("syntopic_rules_html", "TEXT"),
         ]
-
-        # Safely add each new column to the 'instructions' table
         for col_name, col_type in new_instruction_columns:
             self._add_column_if_not_exists("instructions", col_name, col_type, "''")
-        # --- END: Add new instruction columns ---
 
 
         self.cursor.execute("""
@@ -165,8 +152,21 @@ class SchemaSetup:
         )
         """)
 
-        # --- Level 1: Depends on items ---
+        # --- User Settings Table ---
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            zotero_library_id TEXT,
+            zotero_api_key TEXT,
+            zotero_library_type TEXT DEFAULT 'user',
+            citation_style TEXT DEFAULT 'apa'
+        )
+        """)
+        # --- FIX: Ensure columns exist even if table created previously ---
+        self._add_column_if_not_exists("user_settings", "citation_style", "TEXT", "'apa'")
 
+
+        # --- Level 1 Tables ---
         if hasattr(self, 'create_graph_settings_table'):
             self.create_graph_settings_table()
         if hasattr(self, 'create_global_graph_settings_table'):
@@ -198,6 +198,8 @@ class SchemaSetup:
             FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE
         )
         """)
+        # --- Readings Migration ---
+        self._add_column_if_not_exists("readings", "zotero_item_key", "TEXT", "NULL")
 
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS project_tag_links (
@@ -209,8 +211,7 @@ class SchemaSetup:
         )
         """)
 
-        # --- Level 2: Depends on readings, mindmaps ---
-
+        # --- Level 2 Tables ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS reading_driving_questions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -342,9 +343,7 @@ class SchemaSetup:
         )
         """)
 
-        # --- Level 3: Depends on tables from Level 2 ---
-
-        # This is the key table for virtual anchors.
+        # --- Level 3 Tables ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS synthesis_anchors (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -412,8 +411,7 @@ class SchemaSetup:
         )
         """)
 
-        # --- Level 4: Depends on synthesis_anchors ---
-
+        # --- Level 4 Tables ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS anchor_tag_links (
             anchor_id INTEGER NOT NULL,
@@ -424,6 +422,5 @@ class SchemaSetup:
         )
         """)
 
-        # --- Finalize ---
         self.conn.commit()
         print("--- Schema setup complete. All tables created/updated. ---")
