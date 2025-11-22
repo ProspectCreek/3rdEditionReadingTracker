@@ -23,7 +23,7 @@ class QDAHomeScreen(QDialog):
         self.db = db
         self.selected_ws = None  # Tuple (id, name) if selected
 
-        self.setWindowTitle("QDA Coder")
+        self.setWindowTitle("Radar's QDA Coding Tool")
         self.resize(800, 500)  # Match the default size of the tracker
 
         # Use the layout logic from HomeScreenWidget

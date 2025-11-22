@@ -176,7 +176,7 @@ class QDAWindow(QMainWindow):
         self.db = db
         self.ws_id = ws_id
         self.ws_name = ws_name
-        self.setWindowTitle(f"QDA Coding – {ws_name}")
+        self.setWindowTitle(f"Radar's QDA Coding Tool – {ws_name}")
         self.resize(1300, 800)
         self.columns = []
         self.rows = []
