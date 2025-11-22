@@ -1,5 +1,6 @@
-# prospectcreek/3rdeditionreadingtracker/widgets/project_dashboard_widget.py
 import sys
+import os
+import subprocess
 import traceback
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
@@ -178,11 +179,20 @@ class ProjectDashboardWidget(QWidget):
         button_bar.setStyleSheet("background-color:#f0f0f0; padding:4px;")
         button_layout = QHBoxLayout(button_bar)
         button_layout.setContentsMargins(6, 2, 6, 2)
+
         btn_return_home = QPushButton("Return to Projects Home Screen")
+
+        # --- MODIFIED: Add Launch QDA Tool button ---
+        btn_launch_qda = QPushButton("Launch QDA Tool")
+
         btn_add_reading = QPushButton("Add Reading")
+
         btn_return_home.clicked.connect(self.return_to_home)
+        btn_launch_qda.clicked.connect(self.launch_qda_tool)
         btn_add_reading.clicked.connect(self.add_reading)
+
         button_layout.addWidget(btn_return_home)
+        button_layout.addWidget(btn_launch_qda)
         button_layout.addWidget(btn_add_reading)
         button_layout.addStretch()
         main_layout.addWidget(button_bar)
@@ -195,6 +205,29 @@ class ProjectDashboardWidget(QWidget):
 
         self.top_tab_widget.currentChanged.connect(self.on_top_tab_changed)
         QTimer.singleShot(0, self._enforce_equal_splits)
+
+    @Slot()
+    def launch_qda_tool(self):
+        """
+        Launches the separate QDA Coding App via subprocess.
+        Sets the CWD to the qda_tool directory so it finds its logo and DB.
+        """
+        try:
+            # Calculate path: root/widgets/project_dashboard_widget.py -> root/qda_tool/qda_coding_app.py
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            qda_dir = os.path.join(base_dir, 'qda_tool')
+            script_name = "qda_coding_app.py"
+            script_path = os.path.join(qda_dir, script_name)
+
+            if not os.path.exists(script_path):
+                QMessageBox.critical(self, "Error", f"Could not find QDA Tool at:\n{script_path}")
+                return
+
+            # Launch as a separate process
+            subprocess.Popen([sys.executable, script_name], cwd=qda_dir)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Launch Error", f"Failed to launch QDA Tool:\n{e}")
 
     def _build_dashboard_tab(self):
         """Top/Bottom split, each half left/right split — all equal on show."""

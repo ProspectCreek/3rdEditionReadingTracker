@@ -1,8 +1,10 @@
 import sys
+import os
+import subprocess
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem,
     QPushButton, QHBoxLayout, QMenu, QMessageBox, QInputDialog,
-    QApplication, QDialog, QTreeWidgetItemIterator  # <-- FIXED: Added QTreeWidgetItemIterator
+    QApplication, QDialog, QTreeWidgetItemIterator
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction
@@ -60,8 +62,9 @@ class ProjectListWidget(QWidget):
         button_layout.addWidget(btn_add_class)
         main_layout.addLayout(button_layout)
 
-        btn_connections = QPushButton("Connections")
-        main_layout.addWidget(btn_connections)
+        # --- MODIFIED: Button now launches QDA Tool ---
+        btn_qda = QPushButton("Launch QDA Tool")
+        main_layout.addWidget(btn_qda)
 
         # --- Bindings (PySide6 uses signals/slots and policies) ---
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -71,7 +74,9 @@ class ProjectListWidget(QWidget):
         # --- Connect button clicks ---
         btn_add_project.clicked.connect(lambda: self.handle_create_item('project', from_button=True))
         btn_add_class.clicked.connect(lambda: self.handle_create_item('class', from_button=True))
-        btn_connections.clicked.connect(self.open_connections_window)
+
+        # --- MODIFIED: Connect to launcher method ---
+        btn_qda.clicked.connect(self.launch_qda_tool)
 
     def load_data_to_tree(self):
         """
@@ -81,7 +86,7 @@ class ProjectListWidget(QWidget):
         expanded_ids = set()
         if self.tree.topLevelItemCount() > 0:
             # Use an iterator to find all items
-            it = QTreeWidgetItemIterator(self.tree)  # <-- This line caused the error
+            it = QTreeWidgetItemIterator(self.tree)
             while it.value():
                 item = it.value()
                 if item.isExpanded():
@@ -94,7 +99,7 @@ class ProjectListWidget(QWidget):
         self._load_children(parent_widget_item=self.tree, parent_db_id=None)
 
         # Restore expanded state
-        it = QTreeWidgetItemIterator(self.tree)  # <-- This line also needed the import
+        it = QTreeWidgetItemIterator(self.tree)
         while it.value():
             item = it.value()
             db_id = item.data(0, Qt.ItemDataRole.UserRole)
@@ -348,6 +353,28 @@ class ProjectListWidget(QWidget):
             self.db.update_order(ordered_ids)
             self.load_data_to_tree()
 
+    def launch_qda_tool(self):
+        """
+        Launches the separate QDA Coding App via subprocess.
+        Sets the CWD to the qda_tool directory so it finds its logo and DB.
+        """
+        try:
+            # Calculate path:  root/widgets/project_list_widget.py -> root/qda_tool/qda_coding_app.py
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            qda_dir = os.path.join(base_dir, 'qda_tool')
+            script_name = "qda_coding_app.py"
+            script_path = os.path.join(qda_dir, script_name)
+
+            if not os.path.exists(script_path):
+                QMessageBox.critical(self, "Error", f"Could not find QDA Tool at:\n{script_path}")
+                return
+
+            # Launch as a separate process
+            subprocess.Popen([sys.executable, script_name], cwd=qda_dir)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Launch Error", f"Failed to launch QDA Tool:\n{e}")
+
     def open_connections_window(self):
-        """Placeholder for opening the connections management window."""
-        QMessageBox.information(self, "Connections", "This feature is not yet implemented.")
+        """Placeholder (now unused, kept for compatibility if referenced elsewhere)."""
+        QMessageBox.information(self, "Connections", "Please use the 'Launch QDA Tool' button instead.")
