@@ -545,7 +545,8 @@ class ProjectDashboardWidget(QWidget):
             return
 
         # Pass self.db to the dialog so it can access settings
-        dialog = AddReadingDialog(self.db, self)
+        # FIX: Pass parent as keyword argument to avoid it being interpreted as current_data
+        dialog = AddReadingDialog(self.db, parent=self)
 
         if dialog.exec() == QDialog.DialogCode.Accepted:
             # Pass all new fields to add_reading
