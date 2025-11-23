@@ -20,7 +20,7 @@ class EditSyntopicRulesDialog(QDialog):
 
     def __init__(self, rules_html, spell_checker_service=None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Edit Syntopical Reading Rules")
+        self.setWindowTitle("Edit Syntopic Reading Guidelines")
         self.setMinimumSize(600, 700)
 
         self.new_html = rules_html  # Default to old html if no change
@@ -28,7 +28,7 @@ class EditSyntopicRulesDialog(QDialog):
         main_layout = QVBoxLayout(self)
 
         if RichTextEditorTab:
-            self.editor = RichTextEditorTab("Syntopic Rules Editor", spell_checker_service)
+            self.editor = RichTextEditorTab("Syntopic Reading Guidelines Editor", spell_checker_service)
             self.editor.set_html(rules_html)
             main_layout.addWidget(self.editor)
         else:

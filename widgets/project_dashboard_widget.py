@@ -383,7 +383,7 @@ class ProjectDashboardWidget(QWidget):
             edit_read_rules_action.setEnabled(False)
         settings_menu.addAction(edit_read_rules_action)
 
-        edit_syntopic_action = QAction("Edit Syntopic Rules...", self)
+        edit_syntopic_action = QAction("Edit Syntopic Guidelines...", self)
         if EditSyntopicRulesDialog:
             edit_syntopic_action.setEnabled(True)
             edit_syntopic_action.triggered.connect(self._edit_syntopic_rules)

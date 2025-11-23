@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
     QComboBox
 )
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon
 
 # Import PyZotero
 try:
@@ -101,6 +102,12 @@ class ZoteroSearchDialog(QDialog):
                 # Format Date
                 date = data.get('date', '')
 
+                # --- IMPROVED PAGE PARSING ---
+                # Try 'pages', then 'numPages' (for books)
+                pages = data.get('pages', '')
+                if not pages:
+                    pages = data.get('numPages', '')
+
                 display_text = f"{title} | {author_str_display} | {date}"
 
                 list_item = QListWidgetItem(display_text)
@@ -112,7 +119,7 @@ class ZoteroSearchDialog(QDialog):
                     'title': title,
                     'author': author_str_full,  # Use the full "Last, First" version
                     'date': date,
-                    'pages': data.get('pages', ''),
+                    'pages': pages,
                     'key': data.get('key')
                 }
 
@@ -173,8 +180,9 @@ class AddReadingDialog(QDialog):
         self.title_edit.setPlaceholderText("e.g. How to Read a Book")
 
         self.btn_zotero = QPushButton("Search Zotero")
-        self.btn_zotero_config = QPushButton("⚙")
-        self.btn_zotero_config.setFixedWidth(30)
+
+        # Configuration Button with clear icon/text
+        self.btn_zotero_config = QPushButton("⚙ Config")
         self.btn_zotero_config.setToolTip("Configure Zotero ID/Key")
 
         if zotero is None:
@@ -306,7 +314,9 @@ class AddReadingDialog(QDialog):
                     self.title_edit.setText(data['title'])
                     self.author_edit.setText(data['author'])
                     self.published_edit.setText(data['date'])
-                    self.pages_edit.setText(data['pages'])
+
+                    # --- FIX: Use the improved page parsing ---
+                    self.pages_edit.setText(str(data['pages']))  # Ensure string
 
                     # Auto-generate nickname (Lastname Year)
                     # Handle "Last, First" format for nickname generation
