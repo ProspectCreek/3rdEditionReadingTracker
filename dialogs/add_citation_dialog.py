@@ -1,21 +1,14 @@
-# dialogs/add_citation_dialog.py
 import sys
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QComboBox, QDialogButtonBox, QPushButton, QWidget,
-    QScrollArea, QMessageBox, QCheckBox
+    QScrollArea
 )
 from PySide6.QtCore import Qt
-from bs4 import BeautifulSoup
-
-try:
-    from pyzotero import zotero
-except ImportError:
-    zotero = None
 
 
 class CitationRow(QWidget):
-    """A single row widget for one citation entry."""
+    """A single row widget for one citation entry (Reading + Page)."""
 
     def __init__(self, readings_list, parent=None):
         super().__init__(parent)
@@ -27,19 +20,16 @@ class CitationRow(QWidget):
         self.source_combo.setPlaceholderText("Select Source")
         self.source_combo.setMinimumWidth(200)
 
-        for r in readings_list:
-            try:
-                nickname = r['nickname']
-            except IndexError:
-                nickname = None
+        for r in self.readings:
+            # Prioritize nickname, fallback to title
+            nickname = r.get('nickname')
+            display_text = nickname if (nickname and nickname.strip()) else r.get('title', 'Unknown Title')
 
-            display_text = nickname if (nickname and nickname.strip()) else r['title']
-            if r.get('zotero_item_key'):
-                display_text = f"📚 {display_text}"
             self.source_combo.addItem(display_text, r['id'])
 
         self.page_label = QLabel("Page(s):")
         self.page_entry = QLineEdit()
+        self.page_entry.setPlaceholderText("e.g. 12")
         self.page_entry.setFixedWidth(80)
 
         self.layout.addWidget(self.source_combo)
@@ -58,7 +48,6 @@ class CitationRow(QWidget):
         reading = next((r for r in self.readings if r['id'] == reading_id), None)
 
         return {
-            "reading_id": reading_id,  # Store ID for reconstruction
             "reading": reading,
             "page_text": page_text
         }
@@ -71,32 +60,20 @@ class CitationRow(QWidget):
 
 class AddCitationDialog(QDialog):
     """
-    A dialog to build a citation string.
+    A simplified dialog to build a citation string with multiple references.
+    Output format: (Nickname, p. XX; Nickname 2, p. YY)
     """
 
-    def __init__(self, readings_list, parent=None, db=None, enable_zotero=False, citation_style='apa',
-                 current_data=None):
+    def __init__(self, readings_list, parent=None, current_data=None):
         super().__init__(parent)
-        self.setWindowTitle("Edit Citation" if current_data else "Add Zotero Citation")
+        self.setWindowTitle("Add Citation")
         self.setMinimumWidth(500)
 
-        # --- INIT VARIABLES IMMEDIATELY ---
-        self.is_endnote_mode = False
-        self.generated_citations = []  # List of formatted strings
-        self.result_text = ""  # Combined string (for in-text)
-        self.result_data = []  # Raw data for saving
-        self.citation_rows = []
-        # ----------------------------------
-
         self.readings = readings_list
-        self.db = db
-        self.enable_zotero = enable_zotero and (zotero is not None) and (self.db is not None)
-        self.citation_style = citation_style
+        self.citation_rows = []
+        self.result_text = ""  # The final string to insert
 
         main_layout = QVBoxLayout(self)
-
-        if self.enable_zotero:
-            main_layout.addWidget(QLabel(f"Using Style: <b>{citation_style.upper()}</b>"))
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -104,22 +81,17 @@ class AddCitationDialog(QDialog):
         self.widget = QWidget()
         self.rows_layout = QVBoxLayout(self.widget)
         self.rows_layout.setSpacing(10)
+        self.rows_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.scroll.setWidget(self.widget)
         main_layout.addWidget(self.scroll)
 
         controls = QHBoxLayout()
         btn_add = QPushButton("+ Add Source")
         btn_del = QPushButton("- Delete Last")
-        self.checkbox_endnote = QCheckBox("Insert as Endnote")
 
-        # Auto-check if style name implies it
-        if "note" in self.citation_style.lower():
-            self.checkbox_endnote.setChecked(True)
-
-        controls.addWidget(self.checkbox_endnote)
-        controls.addStretch()
         controls.addWidget(btn_add)
         controls.addWidget(btn_del)
+        controls.addStretch()
         main_layout.addLayout(controls)
 
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -130,26 +102,15 @@ class AddCitationDialog(QDialog):
         btn_add.clicked.connect(self._add_row)
         btn_del.clicked.connect(self._delete_last_row)
 
-        # Load existing data if editing
-        if current_data:
-            # If we are editing, we assume the mode based on context,
-            # but usually editing is for in-text.
-            # If editing, current_data is a list of dicts.
-            for entry in current_data:
-                row = self._add_row()
-                # Handle both structure variations if necessary
-                rid = entry.get('reading_id')
-                page = entry.get('page_text', '')
-                row.set_data(rid, page)
-        else:
-            self._add_row()
+        # Always start with one row
+        self._add_row()
 
     def _add_row(self):
         row = CitationRow(self.readings)
         self.rows_layout.addWidget(row)
         self.citation_rows.append(row)
-        if self.height() < 600:
-            self.resize(self.width(), self.height() + 50)
+        if self.height() < 600 and len(self.citation_rows) > 3:
+            self.resize(self.width(), self.height() + 40)
         return row
 
     def _delete_last_row(self):
@@ -157,91 +118,37 @@ class AddCitationDialog(QDialog):
             row = self.citation_rows.pop()
             self.rows_layout.removeWidget(row)
             row.deleteLater()
-            self.resize(self.width(), max(300, self.height() - 50))
-
-    def _get_zotero_client(self):
-        settings = self.db.get_user_settings()
-        if not settings: return None
-        return zotero.Zotero(settings['zotero_library_id'], settings.get('zotero_library_type', 'user'),
-                             settings['zotero_api_key'])
 
     def accept(self):
-        # 1. Collect Data
-        self.result_data = [row.get_data() for row in self.citation_rows if row.get_data()]
-        if not self.result_data:
-            super().accept()
-            return
+        """Generates the result string."""
+        parts = []
 
-        self.is_endnote_mode = self.checkbox_endnote.isChecked()
-        zot = self._get_zotero_client() if self.enable_zotero else None
+        for row in self.citation_rows:
+            data = row.get_data()
+            if not data: continue
 
-        self.generated_citations = []
+            reading = data['reading']
+            page = data['page_text']
 
-        # 2. Generate Citations
-        if self.is_endnote_mode:
-            # Generate individual strings. The caller (AssignmentTab) will merge them.
-            for data in self.result_data:
-                self.generated_citations.append(self._generate_single_citation(zot, data, format='bib'))
-        else:
-            # In-Text: Generate individual strings (Author Year), then merge here.
-            parts = []
-            for data in self.result_data:
-                cit = self._generate_single_citation(zot, data, format='citation')
-                # Strip outer parens if present so we can merge them into one set
-                if cit.startswith("(") and cit.endswith(")"):
-                    cit = cit[1:-1]
-                parts.append(cit)
+            # Determine Name: Nickname > Author > Title
+            name = reading.get('nickname')
+            if not name or not name.strip():
+                name = reading.get('author')
+            if not name or not name.strip():
+                name = reading.get('title', 'Unknown')
 
+            ref_str = name.strip()
+
+            if page:
+                # Auto-detect multiple pages
+                prefix = "pp." if ("-" in page or "," in page) else "p."
+                ref_str += f", {prefix} {page}"
+
+            parts.append(ref_str)
+
+        if parts:
             self.result_text = f"({'; '.join(parts)})"
-            self.generated_citations = [self.result_text]
+        else:
+            self.result_text = ""
 
         super().accept()
-
-    def _generate_single_citation(self, zot, data, format):
-        r = data['reading']
-        key = r.get('zotero_item_key')
-        page = data['page_text']
-
-        if zot and key:
-            try:
-                if format == 'bib':
-                    # Full note style
-                    items = zot.items(itemKey=key, format='bib', style=self.citation_style)
-                    if items:
-                        soup = BeautifulSoup(items[0], "html.parser")
-                        text = soup.get_text().strip()
-                        # Clean trailing period before adding page
-                        if text.endswith(".") and page: text = text[:-1]
-
-                        if page:
-                            text += f", {page}."
-                        elif not text.endswith("."):
-                            text += "."
-                        return text
-                else:
-                    # In-text style
-                    resp = zot.items(itemKey=key, format='citation', style=self.citation_style)
-                    if resp:
-                        text = resp[0]  # e.g. "(Smith, 2020)"
-                        # Hacky page insertion for in-text
-                        if page:
-                            if text.endswith(")"):
-                                text = text[:-1] + f", {page})"
-                            else:
-                                text += f", {page}"
-                        return text
-            except Exception as e:
-                print(f"Zotero error: {e}")
-
-        # Fallback
-        return self._manual_fallback(r, page, format == 'bib')
-
-    def _manual_fallback(self, reading, page, is_full):
-        author = reading.get('author', 'Unknown')
-        title = reading.get('title', 'Unknown')
-        year = reading.get('published', 'n.d.')
-        prefix = "p." if page else ""
-        if is_full:
-            return f"{author}. {title}. {year}. {prefix} {page}."
-        else:
-            return f"({author}, {year}, {prefix} {page})"

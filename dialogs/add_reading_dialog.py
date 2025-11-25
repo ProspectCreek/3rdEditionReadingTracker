@@ -1,12 +1,11 @@
 import sys
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QFormLayout, QLineEdit,
-    QDialogButtonBox, QPushButton, QHBoxLayout, QMessageBox,
+    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit,
+    QDialogButtonBox, QPushButton, QMessageBox,
     QListWidget, QListWidgetItem, QInputDialog, QLabel, QWidget,
     QComboBox
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QIcon
 
 # Import PyZotero
 try:
@@ -38,6 +37,11 @@ class ZoteroSearchDialog(QDialog):
         btn_search = QPushButton("Search")
         btn_search.clicked.connect(self._perform_search)
 
+        # --- FIX: Make Search button the default for Enter key ---
+        btn_search.setAutoDefault(True)
+        btn_search.setDefault(True)
+        # -------------------------------------------------------
+
         search_layout.addWidget(self.search_edit)
         search_layout.addWidget(btn_search)
         layout.addLayout(search_layout)
@@ -52,6 +56,13 @@ class ZoteroSearchDialog(QDialog):
         btn_box.accepted.connect(self.accept)
         btn_box.rejected.connect(self.reject)
         layout.addWidget(btn_box)
+
+        # --- FIX: Prevent Ok button from stealing Enter ---
+        ok_btn = btn_box.button(QDialogButtonBox.Ok)
+        if ok_btn:
+            ok_btn.setAutoDefault(False)
+            ok_btn.setDefault(False)
+        # ------------------------------------------------
 
         self.items_map = {}  # Store full item data keyed by list row
 
@@ -102,11 +113,8 @@ class ZoteroSearchDialog(QDialog):
                 # Format Date
                 date = data.get('date', '')
 
-                # --- IMPROVED PAGE PARSING ---
-                # Try 'pages', then 'numPages' (for books)
-                pages = data.get('pages', '')
-                if not pages:
-                    pages = data.get('numPages', '')
+                # FIX: Retrieve pages from 'pages' (articles) OR 'numPages' (books)
+                pages = data.get('pages') or data.get('numPages', '')
 
                 display_text = f"{title} | {author_str_display} | {date}"
 
@@ -180,9 +188,8 @@ class AddReadingDialog(QDialog):
         self.title_edit.setPlaceholderText("e.g. How to Read a Book")
 
         self.btn_zotero = QPushButton("Search Zotero")
-
-        # Configuration Button with clear icon/text
-        self.btn_zotero_config = QPushButton("⚙ Config")
+        self.btn_zotero_config = QPushButton("⚙")
+        self.btn_zotero_config.setFixedWidth(30)
         self.btn_zotero_config.setToolTip("Configure Zotero ID/Key")
 
         if zotero is None:
@@ -314,9 +321,7 @@ class AddReadingDialog(QDialog):
                     self.title_edit.setText(data['title'])
                     self.author_edit.setText(data['author'])
                     self.published_edit.setText(data['date'])
-
-                    # --- FIX: Use the improved page parsing ---
-                    self.pages_edit.setText(str(data['pages']))  # Ensure string
+                    self.pages_edit.setText(data['pages'])
 
                     # Auto-generate nickname (Lastname Year)
                     # Handle "Last, First" format for nickname generation

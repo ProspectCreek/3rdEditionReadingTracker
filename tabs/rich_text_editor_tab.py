@@ -3,7 +3,7 @@ import uuid
 import json
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QComboBox, QPushButton,
-    QTextBrowser, QInputDialog, QMessageBox, QSizePolicy, QColorDialog,
+    QTextEdit, QInputDialog, QMessageBox, QSizePolicy, QColorDialog,
     QMenu
 )
 from PySide6.QtCore import Qt, Signal, QPoint, Slot, QUrl
@@ -33,16 +33,25 @@ AnchorUUIDProperty = BaseAnchorProperty + 5
 CitationDataProperty = BaseAnchorProperty + 10
 
 
-def _apply_char_format(editor: QTextBrowser, fmt: QTextCharFormat):
-    c = editor.textCursor()
-    if not c.hasSelection():
-        editor.mergeCurrentCharFormat(fmt)
-    else:
-        c.mergeCharFormat(fmt)
-        editor.setTextCursor(c)
+def _apply_char_format(editor: QTextEdit, fmt: QTextCharFormat):
+    """
+    Applies formatting to the editor.
+    Blocks signals to prevent 'Stack Overflow' crashes (0xC00000FD)
+    when modifying large selections.
+    """
+    editor.blockSignals(True)
+    try:
+        c = editor.textCursor()
+        if not c.hasSelection():
+            editor.mergeCurrentCharFormat(fmt)
+        else:
+            c.mergeCharFormat(fmt)
+            editor.setTextCursor(c)
+    finally:
+        editor.blockSignals(False)
 
 
-def _set_indent(editor: QTextBrowser, delta: int):
+def _set_indent(editor: QTextEdit, delta: int):
     c = editor.textCursor()
     bfmt = c.blockFormat()
     indent = max(0, bfmt.indent() + delta)
@@ -51,25 +60,53 @@ def _set_indent(editor: QTextBrowser, delta: int):
     editor.setTextCursor(c)
 
 
-# --- NEW: Custom Editor Class to Fix Font Bugs ---
-class SmartEditor(QTextBrowser):
+# --- SmartEditor Class ---
+class SmartEditor(QTextEdit):
     """
-    A customized QTextBrowser that enforces default formatting on new lines.
+    A customized QTextEdit that:
+    1. Enforces default formatting on new lines (Enter key).
+    2. Detects clicks on anchors/links and emits a signal.
+    3. Shows a hand cursor when hovering over links, and reverts otherwise.
     """
+    # Define a signal on the editor itself to bubble up clicks
+    smartAnchorClicked = Signal(QUrl)
 
     def __init__(self, parent_tab, parent=None):
         super().__init__(parent)
-        self.parent_tab = parent_tab  # Reference to the tab holding the defaults
+        self.parent_tab = parent_tab
+        self.setMouseTracking(True)  # Required for mouseMoveEvent without holding click
 
     def keyPressEvent(self, event):
-        # Standard processing first
         super().keyPressEvent(event)
-
-        # FIX: If Enter/Return was pressed, force the default format
-        # onto the new block immediately. This prevents the "System Font" reversion.
+        # If Enter/Return was pressed, force the default format onto the new block
         if event.key() in (Qt.Key_Return, Qt.Key_Enter):
             if self.parent_tab and hasattr(self.parent_tab, 'default_format'):
                 self.setCurrentCharFormat(self.parent_tab.default_format)
+
+    def mouseMoveEvent(self, event):
+        # 1. Execute standard behavior first
+        super().mouseMoveEvent(event)
+
+        # 2. Check if hovering over a link/anchor
+        pos = event.position().toPoint()
+        anchor = self.anchorAt(pos)
+
+        if anchor:
+            # Hovering over a link -> Hand Cursor
+            self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            # NOT hovering over a link -> Revert to standard text cursor (IBeam)
+            self.viewport().setCursor(Qt.CursorShape.IBeamCursor)
+
+    def mouseReleaseEvent(self, event):
+        # Detect link/anchor clicks
+        pos = event.position().toPoint()
+        anchor = self.anchorAt(pos)
+
+        if anchor:
+            self.smartAnchorClicked.emit(QUrl(anchor))
+
+        super().mouseReleaseEvent(event)
 
 
 class RichTextEditorTab(QWidget):
@@ -136,17 +173,17 @@ class RichTextEditorTab(QWidget):
         # Headers
         self.headerCombo = QComboBox(bar)
         self.headerCombo.setMinimumWidth(56)
-        self.headerCombo.addItem("¶", 0);
-        self.headerCombo.addItem("H1", 1);
-        self.headerCombo.addItem("H2", 2);
+        self.headerCombo.addItem("¶", 0)
+        self.headerCombo.addItem("H1", 1)
+        self.headerCombo.addItem("H2", 2)
         self.headerCombo.addItem("H3", 3)
         h.addWidget(self.headerCombo)
 
         # Format Buttons
         def mkbtn(t, tip):
-            b = QPushButton(t);
-            b.setCheckable(True);
-            b.setToolTip(tip);
+            b = QPushButton(t)
+            b.setCheckable(True)
+            b.setToolTip(tip)
             b.setFixedWidth(26)
             return b
 
@@ -178,8 +215,8 @@ class RichTextEditorTab(QWidget):
 
         # Links/Clear
         def mkbtn1(t, tip):
-            b = QPushButton(t);
-            b.setToolTip(tip);
+            b = QPushButton(t)
+            b.setToolTip(tip)
             b.setFixedWidth(26)
             return b
 
@@ -198,18 +235,14 @@ class RichTextEditorTab(QWidget):
 
         # ===== Editor (Using SmartEditor) =====
         self.editor = SmartEditor(self, self)  # Pass self as parent_tab
-        self.editor.setReadOnly(False)
-        self.editor.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextEditorInteraction |
-            Qt.TextInteractionFlag.LinksAccessibleByMouse
-        )
-        self.editor.setOpenLinks(False)
         self.editor.setAcceptRichText(True)
         self.editor.setPlaceholderText("Start typing…")
 
         self.editor.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.editor.customContextMenuRequested.connect(self.show_context_menu)
-        self.editor.anchorClicked.connect(self.anchorClicked)
+
+        # Connect the custom SmartEditor signal to the Tab's signal
+        self.editor.smartAnchorClicked.connect(self.anchorClicked)
 
         if self.spell_checker_service:
             try:
@@ -224,11 +257,14 @@ class RichTextEditorTab(QWidget):
         self.default_format = QTextCharFormat()
         installed_families = set(QFontDatabase().families())
         default_font = "Times New Roman" if "Times New Roman" in installed_families else QFont().defaultFamily()
+
         idx = next((i for i in range(self.fontCombo.count()) if self.fontCombo.itemData(i) == default_font), 0)
         self.fontCombo.setCurrentIndex(idx)
+        self.sizeCombo.setCurrentIndex(self.sizeCombo.findData(16))
+
         self.default_format.setFontFamily(self.fontCombo.currentData())
         self.default_format.setFontPointSize(16.0)
-        self.sizeCombo.setCurrentIndex(self.sizeCombo.findData(16))
+
         _apply_char_format(self.editor, self.default_format)
 
         # Wire signals
@@ -292,31 +328,33 @@ class RichTextEditorTab(QWidget):
         self.editor.setCurrentCharFormat(pre)
 
     def remove_anchor_format(self):
-        c = self.editor.textCursor()
-        if not c.hasSelection(): return
-        fmt = c.charFormat()
+        cursor = self.editor.textCursor()
+        if not cursor.hasSelection(): return
+
+        fmt = cursor.charFormat()
+        fmt.clearBackground()
         fmt.clearProperty(AnchorIDProperty)
         fmt.clearProperty(AnchorTagIDProperty)
         fmt.clearProperty(AnchorTagNameProperty)
         fmt.clearProperty(AnchorCommentProperty)
         fmt.clearProperty(AnchorUUIDProperty)
-        fmt.setAnchor(False);
-        fmt.setAnchorHref("");
+        fmt.setAnchor(False)
+        fmt.setAnchorHref("")
         fmt.setToolTip("")
-        if fmt.foreground() == QBrush(QColor("#0000EE")):
+
+        if fmt.foreground().color() == QColor("#0000EE"):
             fmt.setForeground(self.default_format.foreground())
-        fmt.setFontUnderline(False);
-        fmt.clearBackground()
-        c.setCharFormat(fmt)
-        self.editor.setTextCursor(c)
+            fmt.setFontUnderline(False)
+
+        _apply_char_format(self.editor, fmt)
 
     def find_and_update_anchor_format(self, anchor_id, tag_id, tag_name, comment):
-        c = self.editor.textCursor();
+        c = self.editor.textCursor()
         c.setPosition(0)
         doc = self.editor.document()
         pos = 0
         while pos < doc.characterCount() - 1:
-            c.setPosition(pos);
+            c.setPosition(pos)
             c.movePosition(QTextCursor.NextCharacter, QTextCursor.KeepAnchor)
             aid = self._get_id(c.charFormat())
             if aid == anchor_id:
@@ -337,12 +375,12 @@ class RichTextEditorTab(QWidget):
                 pos += 1
 
     def find_and_remove_anchor_format(self, anchor_id):
-        c = self.editor.textCursor();
+        c = self.editor.textCursor()
         c.setPosition(0)
         doc = self.editor.document()
         pos = 0
         while pos < doc.characterCount() - 1:
-            c.setPosition(pos);
+            c.setPosition(pos)
             c.movePosition(QTextCursor.NextCharacter, QTextCursor.KeepAnchor)
             if self._get_id(c.charFormat()) == anchor_id:
                 while not c.atEnd():
@@ -358,12 +396,12 @@ class RichTextEditorTab(QWidget):
 
     def focus_anchor_by_id(self, anchor_id):
         if not anchor_id: return False
-        c = self.editor.textCursor();
+        c = self.editor.textCursor()
         c.setPosition(0)
         doc = self.editor.document()
         pos = 0
         while pos < doc.characterCount() - 1:
-            c.setPosition(pos);
+            c.setPosition(pos)
             c.movePosition(QTextCursor.NextCharacter, QTextCursor.KeepAnchor)
             if self._get_id(c.charFormat()) == anchor_id:
                 self.editor.setTextCursor(c)
@@ -426,7 +464,7 @@ class RichTextEditorTab(QWidget):
                 cit_data = fmt_prev.property(CitationDataProperty)
                 cursor = self.editor.cursorForPosition(pos)
 
-                # Spell Check
+        # Spell Check
         if self.spell_checker_service and not aid and not cit_data:
             sc = self.editor.cursorForPosition(pos)
             sc.select(QTextCursor.WordUnderCursor)
@@ -581,7 +619,8 @@ class RichTextEditorTab(QWidget):
         f = QTextCharFormat()
         f.setFontPointSize(self.default_format.fontPointSize())
         if lvl > 0:
-            f.setFontWeight(QFont.Weight.Bold); f.setFontPointSize({1: 24, 2: 18, 3: 16}.get(lvl))
+            f.setFontWeight(QFont.Weight.Bold);
+            f.setFontPointSize({1: 24, 2: 18, 3: 16}.get(lvl))
         else:
             f.setFontWeight(QFont.Weight.Normal)
         _apply_char_format(self.editor, f)

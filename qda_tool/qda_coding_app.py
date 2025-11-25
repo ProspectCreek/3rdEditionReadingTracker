@@ -276,7 +276,7 @@ class QDAWindow(QMainWindow):
         right_layout.setSpacing(6)
 
         toolbar = QHBoxLayout()
-        self.btn_add_row = QPushButton("+ Add Scene")
+        self.btn_add_row = QPushButton("+ Add Row")
         self.btn_export = QPushButton("Export CSV")
         self.btn_reports = QPushButton("Scene Reports…")
         toolbar.addWidget(self.btn_add_row)
