@@ -27,6 +27,7 @@ from tabs.synthesis_tab import SynthesisTab, DEFAULT_SYNTOPIC_RULES_HTML
 from tabs.graph_view_tab import GraphViewTab
 from tabs.todo_list_tab import TodoListTab
 
+# --- Dialog Imports ---
 try:
     from dialogs.add_reading_dialog import AddReadingDialog
     from dialogs.edit_instructions_dialog import EditInstructionsDialog
@@ -55,17 +56,26 @@ try:
 except ImportError:
     EditReadingRulesDialog = None
 
-# --- UPDATED IMPORT BLOCK FOR DEBUGGING ---
+try:
+    from dialogs.global_graph_dialog import GlobalGraphDialog
+except ImportError:
+    GlobalGraphDialog = None
+
+try:
+    from dialogs.global_tag_manager_dialog import GlobalTagManagerDialog
+except ImportError:
+    GlobalTagManagerDialog = None
+
+# --- PDF Feature Imports ---
 try:
     from tabs.pdf_node_viewer import PdfNodeViewer
 except ImportError as e:
     print("-" * 60)
     print("CRITICAL ERROR: Could not import PdfNodeViewer.")
     print(f"Error Details: {e}")
-    traceback.print_exc()  # This prints the file and line number
+    traceback.print_exc()
     print("-" * 60)
     PdfNodeViewer = None
-# ------------------------------------------
 
 try:
     from dialogs.pdf_link_dialog import PdfLinkDialog
@@ -74,14 +84,13 @@ except ImportError:
     PdfLinkDialog = None
 
 
-# --- Word Wrap Delegate (FIXED FOR COMPACTNESS & COLOR & WRAPPING) ---
+# --- Word Wrap Delegate ---
 class WordWrapDelegate(QStyledItemDelegate):
     """
     A delegate that renders HTML/Rich text with wrapping in a QTreeWidget.
     """
 
     def paint(self, painter, option, index):
-        # Use QStyleOptionViewItem directly
         if isinstance(option, QStyleOptionViewItem):
             opt = QStyleOptionViewItem(option)
         else:
@@ -97,32 +106,26 @@ class WordWrapDelegate(QStyledItemDelegate):
         # Remove default margins for compactness
         doc.setDocumentMargin(0)
 
-        # --- CHANGE 1: RIGHT PADDING ---
-        # Subtract total horizontal padding (Left + Right) from the available width.
+        # Right Padding
         horizontal_padding = 20
         doc.setTextWidth(opt.rect.width() - horizontal_padding)
 
-        # Handle Selection Highlight manually to match the light theme
+        # Handle Selection Highlight
         if opt.state & QStyle.State_Selected:
-            # Use a soft, light blue instead of the system dark blue
             painter.fillRect(opt.rect, QColor("#E5F3FF"))
-            # Ensure text is black by default for the doc
 
-        # Calculate Vertical Centering
+        # Vertical Centering
         content_height = doc.size().height()
         rect_height = opt.rect.height()
         y_offset = (rect_height - content_height) / 2
+        if y_offset < 0:
+            y_offset = 0
 
-        # Clamp to 0 if content is larger than rect (shouldn't happen with sizeHint, but safe)
-        if y_offset < 0: y_offset = 0
-
-        # --- CHANGE 2: LEFT PADDING ---
+        # Left Padding
         left_padding = 10
         painter.translate(opt.rect.left() + left_padding, opt.rect.top() + y_offset)
 
-        # Draw the text
         doc.drawContents(painter)
-
         painter.restore()
 
     def sizeHint(self, option, index):
@@ -134,25 +137,19 @@ class WordWrapDelegate(QStyledItemDelegate):
         doc.setDefaultFont(opt.font)
         doc.setDocumentMargin(0)
 
-        # --- FIX 1: Get the actual column width from the TreeWidget ---
-        # This ensures sizeHint calculates the height based on the REAL column width,
-        # forcing the row to expand vertically if the text wraps.
         tree_widget = option.widget
         if tree_widget:
             column_width = tree_widget.columnWidth(index.column())
-            # --- CHANGE 3: MATCH PADDING ---
             doc.setTextWidth(column_width - 20)
         else:
             doc.setTextWidth(opt.rect.width())
-        # ---------------------------------------------------------------
 
         vertical_padding = 14
         return QSize(int(doc.idealWidth()), int(doc.size().height()) + vertical_padding)
-    # --- END DELEGATE ---
 
 
 class ProjectDashboardWidget(QWidget):
-    """Main project dashboard page (native editors, compact, true 50/50)."""
+    """Main project dashboard page."""
     returnToHome = Signal()
 
     def __init__(self, db_manager, spell_checker_service=None, parent=None):
@@ -162,15 +159,15 @@ class ProjectDashboardWidget(QWidget):
         self.project_details = None
         self.project_id = -1
         self.bottom_tabs = []
-        self.reading_tabs = {}  # Stores {reading_id: ReadingNotesTab}
+        self.reading_tabs = {}
         self.synthesis_tab = None
         self.graph_view_tab = None
         self.todo_list_tab = None
         self.assignment_tab = None
         self.mindmaps_tab = None
 
-        # Store open PDF viewers to prevent garbage collection
-        self.pdf_viewers = []  # List of PdfNodeViewer instances
+        # Store open PDF viewers
+        self.pdf_viewers = []
 
         self._programmatic_tab_change = False
 
@@ -190,6 +187,7 @@ class ProjectDashboardWidget(QWidget):
         painter.end()
         self.book_icon = QIcon(pixmap)
 
+        # --- Layout ---
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
@@ -203,10 +201,7 @@ class ProjectDashboardWidget(QWidget):
         button_layout.setContentsMargins(6, 2, 6, 2)
 
         btn_return_home = QPushButton("Return to Projects Home Screen")
-
-        # --- MODIFIED: Add Launch QDA Tool button ---
         btn_launch_qda = QPushButton("Launch QDA Tool")
-
         btn_add_reading = QPushButton("Add Reading")
 
         btn_return_home.clicked.connect(self.return_to_home)
@@ -230,12 +225,7 @@ class ProjectDashboardWidget(QWidget):
 
     @Slot()
     def launch_qda_tool(self):
-        """
-        Launches the separate QDA Coding App via subprocess.
-        Sets the CWD to the qda_tool directory so it finds its logo and DB.
-        """
         try:
-            # Calculate path: root/widgets/project_dashboard_widget.py -> root/qda_tool/qda_coding_app.py
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             qda_dir = os.path.join(base_dir, 'qda_tool')
             script_name = "qda_coding_app.py"
@@ -245,14 +235,13 @@ class ProjectDashboardWidget(QWidget):
                 QMessageBox.critical(self, "Error", f"Could not find QDA Tool at:\n{script_path}")
                 return
 
-            # Launch as a separate process
             subprocess.Popen([sys.executable, script_name], cwd=qda_dir)
 
         except Exception as e:
             QMessageBox.critical(self, "Launch Error", f"Failed to launch QDA Tool:\n{e}")
 
     def _build_dashboard_tab(self):
-        """Top/Bottom split, each half left/right split — all equal on show."""
+        """Top/Bottom split, each half left/right split."""
         outer = QVBoxLayout(self.dashboard_tab)
         outer.setContentsMargins(4, 4, 4, 4)
         outer.setSpacing(4)
@@ -288,33 +277,22 @@ class ProjectDashboardWidget(QWidget):
             }
         """)
 
-        # Use WordWrapDelegate for ALL columns
         delegate = WordWrapDelegate(self.readings_tree)
         self.readings_tree.setItemDelegate(delegate)
 
-        # Formatting logic
         self.readings_tree.setWordWrap(True)
         self.readings_tree.setTextElideMode(Qt.TextElideMode.ElideNone)
-        self.readings_tree.setUniformRowHeights(False)  # Allow variable height for wrapping
+        self.readings_tree.setUniformRowHeights(False)
         self.readings_tree.setSortingEnabled(False)
 
         header = self.readings_tree.header()
         header.setStretchLastSection(False)
-
-        # --- FIX 2: Enable Interactive Resizing for ALL columns ---
-
-        # Column 0 (Nickname): Interactive
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
         self.readings_tree.setColumnWidth(0, 220)
-
-        # Column 1 (Title): Interactive (Changed from Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
         self.readings_tree.setColumnWidth(1, 550)
-
-        # Column 2 (Author): Interactive (Changed from Fixed)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
         self.readings_tree.setColumnWidth(2, 120)
-        # ----------------------------------------------------------
 
         rl.addWidget(self.readings_tree)
 
@@ -328,22 +306,25 @@ class ProjectDashboardWidget(QWidget):
         il = QVBoxLayout(info_widget)
         il.setContentsMargins(6, 6, 6, 6)
         il.setSpacing(6)
+
         il.addWidget(QLabel("Project Purpose"))
         self.purpose_text_editor = RichTextEditorTab("Project Purpose",
                                                      spell_checker_service=self.spell_checker_service)
         il.addWidget(self.purpose_text_editor)
+
         il.addWidget(QLabel("My Goals"))
-        self.goals_text_editor = RichTextEditorTab("Project Goals", spell_checker_service=self.spell_checker_service)
+        self.goals_text_editor = RichTextEditorTab("Project Goals",
+                                                   spell_checker_service=self.spell_checker_service)
         il.addWidget(self.goals_text_editor)
 
-        # --- NEW: Connect link to PDF signal ---
+        # Connect PDF linking
         self.purpose_text_editor.linkPdfNodeTriggered.connect(
             lambda: self._on_link_pdf_node_triggered(self.purpose_text_editor))
         self.goals_text_editor.linkPdfNodeTriggered.connect(
             lambda: self._on_link_pdf_node_triggered(self.goals_text_editor))
+
         self.purpose_text_editor.editor.smartAnchorClicked.connect(self._on_editor_link_clicked)
         self.goals_text_editor.editor.smartAnchorClicked.connect(self._on_editor_link_clicked)
-        # --- END NEW ---
 
         self.top_splitter.addWidget(readings_widget)
         self.top_splitter.addWidget(info_widget)
@@ -367,7 +348,6 @@ class ProjectDashboardWidget(QWidget):
         self.main_splitter.setStretchFactor(1, 1)
 
     def _enforce_equal_splits(self):
-        """Force true 50/50 splits once widgets have sizes."""
         try:
             total_h = max(2, self.main_splitter.size().height())
             self.main_splitter.setSizes([total_h // 2, total_h - total_h // 2])
@@ -400,6 +380,7 @@ class ProjectDashboardWidget(QWidget):
         self.assignment_tab = None
         self.mindmaps_tab = None
 
+        # --- MENUS ---
         settings_menu = self.menu_bar.addMenu("Settings")
 
         edit_instr_action = QAction("Edit Dashboard Instructions", self)
@@ -422,25 +403,39 @@ class ProjectDashboardWidget(QWidget):
             edit_syntopic_action.setEnabled(False)
         settings_menu.addAction(edit_syntopic_action)
 
+        # --- Tools Menu (Restored) ---
+        tools_menu = self.menu_bar.addMenu("Tools")
+
+        if GlobalGraphDialog:
+            global_graph_action = QAction("Global Graph View", self)
+            global_graph_action.triggered.connect(self.open_global_graph)
+            tools_menu.addAction(global_graph_action)
+
+        if GlobalTagManagerDialog:
+            tag_manager_action = QAction("Global Tag Manager", self)
+            tag_manager_action.triggered.connect(self.open_tag_manager)
+            tools_menu.addAction(tag_manager_action)
+
         export_menu = self.menu_bar.addMenu("Export")
         export_action = QAction("Export Project...", self)
         export_action.triggered.connect(self._open_export_dialog)
         export_menu.addAction(export_action)
 
+        # --- TABS ---
         self.top_tab_widget.addTab(self.dashboard_tab, "Project Dashboard")
 
         if self.project_details.get('is_assignment', 0) == 1:
             self.assignment_tab = AssignmentTab(self.db, self.project_id,
                                                 spell_checker_service=self.spell_checker_service)
             self.top_tab_widget.addTab(self.assignment_tab, "Assignment")
-            # --- NEW: Connect Assignment Editors ---
+
+            # Connect Assignment Editors
             self.assignment_tab.instructions_editor.linkPdfNodeTriggered.connect(
                 lambda: self._on_link_pdf_node_triggered(self.assignment_tab.instructions_editor))
             self.assignment_tab.draft_editor.linkPdfNodeTriggered.connect(
                 lambda: self._on_link_pdf_node_triggered(self.assignment_tab.draft_editor))
             self.assignment_tab.instructions_editor.editor.smartAnchorClicked.connect(self._on_editor_link_clicked)
             self.assignment_tab.draft_editor.editor.smartAnchorClicked.connect(self._on_editor_link_clicked)
-            # --- END NEW ---
 
         self.mindmaps_tab = MindmapTab(self.db, self.project_id)
         self.top_tab_widget.addTab(self.mindmaps_tab, "Mindmaps")
@@ -449,14 +444,16 @@ class ProjectDashboardWidget(QWidget):
                                           spell_checker_service=self.spell_checker_service)
         self.synthesis_tab.openReading.connect(self.open_reading_tab)
         self.synthesis_tab.tagsUpdated.connect(self._on_tags_updated)
+
+        # Connect Synthesis PDF Signal
+        self.synthesis_tab.openPdfNodeRequested.connect(self._jump_to_pdf_node)
+
         self.top_tab_widget.addTab(self.synthesis_tab, "Synthesis")
 
-        # --- NEW: Connect Synthesis Editors ---
         if hasattr(self.synthesis_tab, 'notes_editor'):
             self.synthesis_tab.notes_editor.linkPdfNodeTriggered.connect(
                 lambda: self._on_link_pdf_node_triggered(self.synthesis_tab.notes_editor))
             self.synthesis_tab.notes_editor.editor.smartAnchorClicked.connect(self._on_editor_link_clicked)
-        # --- END NEW ---
 
         self.graph_view_tab = GraphViewTab(self.db, self.project_id)
         self.graph_view_tab.readingDoubleClicked.connect(self.open_reading_tab)
@@ -485,11 +482,10 @@ class ProjectDashboardWidget(QWidget):
             self.editor_tab_widget.addTab(editor_tab, tab_title)
             self.bottom_tabs.append(editor_tab)
 
-            # --- NEW: Connect Bottom Tab Editors ---
+            # Connect Bottom Tab Editors
             editor_tab.editor.linkPdfNodeTriggered.connect(
                 lambda e=editor_tab.editor: self._on_link_pdf_node_triggered(e))
             editor_tab.editor.editor.smartAnchorClicked.connect(self._on_editor_link_clicked)
-            # --- END NEW ---
 
         QTimer.singleShot(0, self._enforce_equal_splits)
 
@@ -500,7 +496,6 @@ class ProjectDashboardWidget(QWidget):
         if not self.project_details:
             return
 
-        print("Loading all editor content...")
         try:
             self.purpose_text_editor.set_html(self.project_details.get('project_purpose_text', ''))
             self.goals_text_editor.set_html(self.project_details.get('project_goals_text', ''))
@@ -562,21 +557,16 @@ class ProjectDashboardWidget(QWidget):
         tab.readingTitleChanged.connect(self._handle_reading_title_change)
         tab.openSynthesisTab.connect(self.open_tag_from_graph)
 
-        # --- Connect AttachmentsTab PDF signal ---
         if hasattr(tab, 'attachments_tab'):
             tab.attachments_tab.openPdfNodesRequested.connect(self.open_pdf_node_viewer)
 
-        # --- NEW: Connect Editors inside Reading Tab (Notes + Bottom Tabs) ---
         if hasattr(tab, 'notes_editor'):
             tab.notes_editor.linkPdfNodeTriggered.connect(lambda: self._on_link_pdf_node_triggered(tab.notes_editor))
             tab.notes_editor.editor.smartAnchorClicked.connect(self._on_editor_link_clicked)
 
-        # Iterate through bottom tabs that have editors and connect them
-        # Note: This relies on ReadingNotesTab exposing them or us iterating them
         for _, editor in tab.bottom_tabs_with_editors:
             editor.linkPdfNodeTriggered.connect(lambda e=editor: self._on_link_pdf_node_triggered(e))
             editor.editor.smartAnchorClicked.connect(self._on_editor_link_clicked)
-        # --- END NEW ---
 
         self.reading_tabs[reading_id] = tab
 
@@ -612,12 +602,9 @@ class ProjectDashboardWidget(QWidget):
         if self.project_id == -1:
             return
 
-        # Pass self.db to the dialog so it can access settings
-        # FIX: Pass parent as keyword argument to avoid it being interpreted as current_data
         dialog = AddReadingDialog(self.db, parent=self)
 
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            # Pass all new fields to add_reading
             new_id = self.db.add_reading(
                 self.project_id,
                 dialog.title,
@@ -731,7 +718,6 @@ class ProjectDashboardWidget(QWidget):
         dialog = EditReadingRulesDialog(html, self.spell_checker_service, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             new_html = dialog.get_html()
-            instructions = self.db.get_or_create_instructions(self.project_id)
             instructions["reading_rules_html"] = new_html
             self.db.update_instructions(self.project_id, instructions)
             QMessageBox.information(self, "Success", "Reading Rules updated.")
@@ -752,10 +738,27 @@ class ProjectDashboardWidget(QWidget):
         dialog = EditSyntopicRulesDialog(html, self.spell_checker_service, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             new_html = dialog.get_html()
-            instructions = self.db.get_or_create_instructions(self.project_id)
             instructions["syntopic_rules_html"] = new_html
             self.db.update_instructions(self.project_id, instructions)
             QMessageBox.information(self, "Success", "Syntopical Reading Rules updated.")
+
+    @Slot()
+    def open_global_graph(self):
+        """Opens the Global Graph dialog."""
+        if not GlobalGraphDialog:
+            QMessageBox.critical(self, "Error", "Global Graph Dialog not loaded.")
+            return
+        dialog = GlobalGraphDialog(self.db, self.project_id, self)
+        dialog.exec()
+
+    @Slot()
+    def open_tag_manager(self):
+        """Opens the Global Tag Manager."""
+        if not GlobalTagManagerDialog:
+            QMessageBox.critical(self, "Error", "Global Tag Manager not loaded.")
+            return
+        dialog = GlobalTagManagerDialog(self.db, self.project_id, self)
+        dialog.exec()
 
     @Slot()
     def _open_export_dialog(self):
@@ -855,14 +858,12 @@ class ProjectDashboardWidget(QWidget):
         current_data = self.db.get_reading_details(reading_id)
         if not current_data: return
 
-        # Convert Row to dict and ensure all keys exist
+        # Convert Row to dict
         data_dict = dict(current_data)
 
-        # Open Dialog
         dialog = AddReadingDialog(self.db, current_data=data_dict, parent=self)
 
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            # Prepare update dict
             details = {
                 'title': dialog.title,
                 'author': dialog.author,
@@ -874,17 +875,13 @@ class ProjectDashboardWidget(QWidget):
                 'zotero_item_key': dialog.zotero_key
             }
 
-            # Save to DB
             self.db.update_reading_details(reading_id, details)
-
-            # Refresh Tree
             self.load_readings()
 
-            # Refresh Tab if open
             if reading_id in self.reading_tabs:
                 tab = self.reading_tabs[reading_id]
                 tab.load_data()
-                self._handle_reading_title_change(reading_id, tab)  # Force title update
+                self._handle_reading_title_change(reading_id, tab)
 
     @Slot()
     def delete_reading(self):
@@ -957,6 +954,7 @@ class ProjectDashboardWidget(QWidget):
 
     @Slot(int, int, int, int, str)
     def open_reading_tab(self, anchor_id, reading_id, outline_id, item_link_id=0, item_type=''):
+        """Opens a reading tab and navigates to a specific item."""
         print(f"--- JUMP START ---")
         print(f"  Dashboard: Current focus is: {QApplication.instance().focusWidget()}")
 
@@ -1030,10 +1028,7 @@ class ProjectDashboardWidget(QWidget):
             return
 
         try:
-            # Check if already open? (Optional optimization)
-            # For now, let's allow multiple windows so user can view different PDFs
-
-            viewer = PdfNodeViewer(self.db, reading_id, attachment_id, file_path, parent=None)  # Parent=None for popout
+            viewer = PdfNodeViewer(self.db, reading_id, attachment_id, file_path, parent=None)
             viewer.show()
 
             # Keep reference to prevent garbage collection
@@ -1052,10 +1047,7 @@ class ProjectDashboardWidget(QWidget):
     # --- NEW: Handle Link to PDF Node ---
     @Slot()
     def _on_link_pdf_node_triggered(self, editor_widget):
-        """
-        Opens the PdfLinkDialog and inserts the link into the editor
-        if selected.
-        """
+        """Opens the PdfLinkDialog and inserts the link into the editor."""
         if not PdfLinkDialog:
             QMessageBox.critical(self, "Error", "PdfLinkDialog not loaded.")
             return
@@ -1067,31 +1059,24 @@ class ProjectDashboardWidget(QWidget):
         dialog = PdfLinkDialog(self.db, self.project_id, parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             node_id = dialog.selected_node_id
-            node_label = dialog.selected_node_label
 
             if node_id:
                 # FIX 2: Use 3 slashes to avoid IP address normalization (0.0.0.1)
                 url_str = f"pdfnode:///{node_id}"
 
                 # FIX 1: Use formatting instead of raw HTML to preserve font
-                # Get current format to preserve font family/size
                 fmt = cursor.charFormat()
-
-                # Apply link style
                 fmt.setAnchor(True)
                 fmt.setAnchorHref(url_str)
-                fmt.setForeground(QColor("#800080"))  # Purple as per user snippet
+                fmt.setForeground(QColor("#008080"))  # Teal
                 fmt.setFontUnderline(True)
 
-                # Re-insert text with new format
-                # We are replacing the selection with itself, but styled
                 selected_text = cursor.selectedText()
                 cursor.insertText(selected_text, fmt)
 
     @Slot(QUrl)
     def _on_editor_link_clicked(self, url):
         """Handles clicks on pdfnode:// links."""
-        # Fix: Use .scheme() and .path() for robust parsing
         if url.scheme() == "pdfnode":
             try:
                 # Try path first (new format: pdfnode:///123 -> path is /123)
@@ -1102,15 +1087,20 @@ class ProjectDashboardWidget(QWidget):
                     node_id_str = path
 
                 if node_id_str and node_id_str.isdigit():
-                    node_id = int(node_id_str)
-                else:
-                    # Fallback to host (old format: pdfnode://123 -> 0.0.0.123 or similar)
-                    host = url.host()
-                    # If it looks like an IP, it's complicated, but if it's a simple int it might work
-                    if host:
-                        node_id = int(host)  # This raises the error the user saw for "0.0.0.1" but catches valid ints
+                    self._jump_to_pdf_node(int(node_id_str))
+                    return
 
-                self._jump_to_pdf_node(node_id)
+                # Fallback for old/weird formats
+                host = url.host()
+                if host.isdigit():
+                    self._jump_to_pdf_node(int(host))
+                    return
+
+                # IP fallback
+                parts = host.split('.')
+                if len(parts) == 4 and all(p.isdigit() for p in parts):
+                    self._jump_to_pdf_node(int(parts[-1]))
+                    return
 
             except Exception as e:
                 print(f"Error handling pdfnode link: {e}")
@@ -1118,7 +1108,6 @@ class ProjectDashboardWidget(QWidget):
     def _jump_to_pdf_node(self, node_id):
         """Opens the viewer and jumps to the node."""
         try:
-            # 1. Get node details
             node = self.db.get_pdf_node_details(node_id)
             if not node:
                 QMessageBox.warning(self, "Error", "Node not found.")
@@ -1127,13 +1116,11 @@ class ProjectDashboardWidget(QWidget):
             reading_id = node['reading_id']
             attachment_id = node['attachment_id']
 
-            # 2. Get file path
             attachment = self.db.get_attachment_details(attachment_id)
             if not attachment:
                 QMessageBox.warning(self, "Error", "Attachment file not found.")
                 return
 
-            # Construct full path
             project_root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
             attachments_dir = os.path.join(project_root_dir, "Attachments")
             file_path = os.path.join(attachments_dir, attachment['file_path'])
@@ -1142,7 +1129,6 @@ class ProjectDashboardWidget(QWidget):
                 QMessageBox.warning(self, "Error", f"File not found on disk:\n{file_path}")
                 return
 
-            # 3. Open Viewer (or find existing)
             # Check if viewer for this file is already open
             target_viewer = None
             for v in self.pdf_viewers:
@@ -1151,9 +1137,7 @@ class ProjectDashboardWidget(QWidget):
                     break
 
             if not target_viewer:
-                # Open new
                 self.open_pdf_node_viewer(reading_id, attachment_id, file_path)
-                # The new viewer is the last one added
                 if self.pdf_viewers:
                     target_viewer = self.pdf_viewers[-1]
 
@@ -1161,9 +1145,6 @@ class ProjectDashboardWidget(QWidget):
                 target_viewer.show()
                 target_viewer.raise_()
                 target_viewer.activateWindow()
-
-                # 4. Jump to Node
-                # Use a small timer to allow window to show/load
                 QTimer.singleShot(100, lambda: target_viewer.jump_to_node(node_id))
 
         except Exception as e:
@@ -1175,14 +1156,12 @@ class ProjectDashboardWidget(QWidget):
     def return_to_home(self):
         try:
             from dialogs.mindmap_editor_window import MindmapEditorWindow
-            # Close mindmaps
             for widget in QApplication.topLevelWidgets():
                 if isinstance(widget, MindmapEditorWindow):
                     print(f"Saving open mindmap: {widget.mindmap_name}...")
                     widget.save_mindmap(show_message=False)
                     widget.close()
 
-            # Close PDF viewers
             for viewer in list(self.pdf_viewers):
                 viewer.close()
 

@@ -46,16 +46,13 @@ except ImportError:
     print("Error: Could not import AddCitationDialog for SynthesisTab")
     AddCitationDialog = None
 
-# --- NEW: Import View Dialog ---
 try:
     from dialogs.view_syntopic_rules_dialog import ViewSyntopicRulesDialog
 except ImportError:
     print("Error: Could not import ViewSyntopicRulesDialog")
     ViewSyntopicRulesDialog = None
-# --- END NEW ---
 
 
-# --- NEW: Default Rules Text ---
 DEFAULT_SYNTOPIC_RULES_HTML = """
 <p><b>I. Surveying the Field Preparatory to Syntopical Reading</b></p>
 <ol>
@@ -74,7 +71,6 @@ DEFAULT_SYNTOPIC_RULES_HTML = """
 </ol>
 <p><i>Note: Dialectical detachment or objectivity should, ideally, be maintained throughout. One way to insure this is always to accompany an interpretation of an author's views on an issue with an actual quotation from his text.</i></p>
 """
-# --- END NEW ---
 
 
 class SynthesisTab(QWidget):
@@ -84,13 +80,14 @@ class SynthesisTab(QWidget):
     """
     openReading = Signal(int, int, int, int, str)
     tagsUpdated = Signal()
+    openPdfNodeRequested = Signal(int)
 
     def __init__(self, db, project_id, spell_checker_service=None, parent=None):
         super().__init__(parent)
         self.db = db
         self.project_id = project_id
-        self.spell_checker_service = spell_checker_service  # <-- STORE SERVICE
-        self.instruction_labels = {}  # --- NEW: To store notes label ---
+        self.spell_checker_service = spell_checker_service
+        self.instruction_labels = {}
 
         main_layout = QHBoxLayout(self)
         self.main_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -112,11 +109,9 @@ class SynthesisTab(QWidget):
         self.tag_list = QListWidget()
         left_layout.addWidget(self.tag_list)
 
-        # --- NEW: Add Syntopic Rules Button ---
-        # Create a horizontal layout to snap button to the right and prevent resizing
+        # Button layout
         button_layout = QHBoxLayout()
-        button_layout.addStretch()  # Pushes the button to the right
-
+        button_layout.addStretch()
         self.btn_syntopic_rules = QPushButton("Syntopic Reading Guidelines")
         button_layout.addWidget(self.btn_syntopic_rules)
 
@@ -126,7 +121,6 @@ class SynthesisTab(QWidget):
             self.btn_syntopic_rules.clicked.connect(self._show_syntopic_rules)
         else:
             self.btn_syntopic_rules.setEnabled(False)
-        # --- END NEW ---
 
         left_panel.setLayout(left_layout)
 
@@ -168,21 +162,19 @@ class SynthesisTab(QWidget):
 
         notes_container = QWidget()
         notes_layout = QVBoxLayout(notes_container)
-        notes_layout.setContentsMargins(4, 4, 4, 4)  # --- MODIFIED: Added padding ---
+        notes_layout.setContentsMargins(4, 4, 4, 4)
         notes_layout.setSpacing(4)
 
-        # --- NEW: Add Instruction Label for Notes Tab ---
         self.notes_prompt_label = QLabel("")
         self.notes_prompt_label.setWordWrap(True)
         self.notes_prompt_label.setStyleSheet("font-style: italic; color: #555;")
-        self.notes_prompt_label.setVisible(False)  # Hidden by default
+        self.notes_prompt_label.setVisible(False)
         notes_layout.addWidget(self.notes_prompt_label)
         self.instruction_labels["synthesis_notes_instr"] = self.notes_prompt_label
-        # --- END NEW ---
 
         if RichTextEditorTab:
             self.notes_editor = RichTextEditorTab("Notes",
-                                                  spell_checker_service=self.spell_checker_service)  # <-- PASS SERVICE
+                                                  spell_checker_service=self.spell_checker_service)
             notes_layout.addWidget(self.notes_editor, 1)
             notes_btn_layout = QHBoxLayout()
             notes_btn_layout.addStretch(1)
@@ -213,39 +205,23 @@ class SynthesisTab(QWidget):
         if RichTextEditorTab and hasattr(self, 'notes_editor'):
             self.notes_editor.set_html(project_details.get('synthesis_notes_html', ''))
 
-        # --- NEW: Load instructions for all tabs ---
         instructions = self.db.get_or_create_instructions(self.project_id)
         self.update_all_instructions(instructions)
-        # --- END NEW ---
 
-    # --- NEW: Instruction Refresh Method ---
     def update_all_instructions(self, instructions_data):
-        """
-        Pushes new instruction text to all child tabs
-        (Terminology, Propositions, Notes).
-        """
-
-        # 1. Update Terminology Tab
         if hasattr(self, 'terminology_tab') and hasattr(self.terminology_tab, 'update_instructions'):
             self.terminology_tab.update_instructions(instructions_data, "synthesis_terminology_instr")
-
-        # 2. Update Propositions Tab
         if hasattr(self, 'propositions_tab') and hasattr(self.propositions_tab, 'update_instructions'):
             self.propositions_tab.update_instructions(instructions_data, "synthesis_propositions_instr")
-
-        # 3. Update own "Notes" tab label
         if "synthesis_notes_instr" in self.instruction_labels:
             label = self.instruction_labels["synthesis_notes_instr"]
             text = instructions_data.get("synthesis_notes_instr", "")
             label.setText(text)
             label.setVisible(bool(text))
 
-    # --- END NEW ---
-
     def save_editors(self):
         if self.project_id == -1:
             return
-        print("Saving synthesis editors...")
         if RichTextEditorTab and hasattr(self, 'notes_editor'):
             def create_callback(field_name):
                 return lambda html: self.db.update_project_text_field(
@@ -288,6 +264,7 @@ class SynthesisTab(QWidget):
                 self.anchor_display.setHtml("<i>No anchors found for this tag.</i>")
                 return
 
+            # --- MODIFIED: Updated CSS for teal link ---
             html = """
             <style>
                 h3 { margin-top: 15px; margin-bottom: 5px; font-size: 1.2em; }
@@ -303,8 +280,17 @@ class SynthesisTab(QWidget):
                 a:hover { text-decoration: underline; }
                 .virtual-anchor-title { font-weight: bold; }
                 .virtual-anchor-content { font-style: italic; }
+                .pdf-link { 
+                    margin-top: 2px; 
+                    margin-bottom: 4px; /* Spacing before blockquote */
+                    font-size: 0.9em; 
+                    font-weight: bold;
+                }
+                /* Changed to teal */
+                .pdf-link a { color: #008080; }
             </style>
             """
+            # --- END MODIFICATION ---
 
             current_reading = None
             for anchor in anchors:
@@ -324,30 +310,34 @@ class SynthesisTab(QWidget):
                     f"{item_link_id or 0}:{item_type}"
                 )
 
+                # --- MODIFIED: Removed parenthesis and moved PDF link ---
                 if context_parts:
-                    html += f"<p><i><a href='{jumpto_link}'>({', '.join(context_parts)})</a></i></p>"
+                    location_text = f"{', '.join(context_parts)}"
                 else:
-                    html += f"<p><i><a href='{jumpto_link}'>(Reading-Level Note)</a></i></p>"
+                    location_text = "Reading-Level Note"
+
+                html += f"<p><i><a href='{jumpto_link}'>{location_text}</a></i></p>"
+
+                # Add PDF Node Link immediately below (no indent)
+                if anchor.get('pdf_node_id'):
+                    html += f"<div class='pdf-link'><a href='pdfnode:///{anchor['pdf_node_id']}'>View Connected PDF Node</a></div>"
+                # --- END MODIFICATION ---
 
                 html += "<blockquote>"
 
-                # --- THIS IS THE FIX ---
                 if item_link_id:
-                    # This is a VIRTUAL ANCHOR (DQ, Term, Prop, Arg, Theory)
-
-                    # 1. Get the title (Nickname or Anchor Summary)
+                    # Virtual Anchor
                     title = anchor.get('nickname') or anchor.get('selected_text', 'Linked Item')
                     title = title.replace("\n", "<br>")
                     html += f"<p class='virtual-anchor-title'>{title}</p>"
 
-                    # 2. Get the content (Definition, Question Text, Claim, etc.)
                     content_html = ""
                     if item_type == 'dq':
                         content_html = anchor.get('dq_question_text')
                     elif item_type == 'term':
-                        content_html = anchor.get('dq_definition')  # 'question_category' is aliased
+                        content_html = anchor.get('dq_definition')
                     elif item_type == 'theory':
-                        content_html = anchor.get('dq_definition')  # 'question_category' is aliased
+                        content_html = anchor.get('dq_definition')
                     elif item_type == 'proposition':
                         content_html = anchor.get('dq_question_text')
                     elif item_type == 'argument':
@@ -359,7 +349,7 @@ class SynthesisTab(QWidget):
                         html += f"<p class='virtual-anchor-content'>{content_html}</p>"
 
                 else:
-                    # This is a standard TEXT ANCHOR
+                    # Text Anchor
                     selected_text_html = anchor['selected_text'].replace("\n", "<br>")
                     html += f"<p>{selected_text_html}</p>"
 
@@ -367,7 +357,6 @@ class SynthesisTab(QWidget):
                     if comment:
                         comment_html = comment.replace("\n", "<br>")
                         html += f"<p><i>— {comment_html}</i></p>"
-                # --- END FIX ---
 
                 html += "</blockquote>"
 
@@ -382,21 +371,48 @@ class SynthesisTab(QWidget):
     @Slot(QUrl)
     def on_anchor_link_clicked(self, url):
         url_str = url.toString()
+
+        # --- NEW: Robust Parsing for PDF Nodes ---
+        if url.scheme() == "pdfnode":
+            try:
+                # 1. Try simple path parsing (pdfnode:///123 -> path is /123)
+                path = url.path()
+                if path.startswith('/'):
+                    node_id_str = path[1:]
+                else:
+                    node_id_str = path
+
+                if node_id_str and node_id_str.isdigit():
+                    self.openPdfNodeRequested.emit(int(node_id_str))
+                    return
+
+                # 2. Try host parsing (pdfnode://123 -> host is 0.0.0.123 or just 123)
+                host = url.host()
+                if host.isdigit():
+                    self.openPdfNodeRequested.emit(int(host))
+                    return
+
+                # 3. Handle IP Normalization (0.0.0.X)
+                parts = host.split('.')
+                if len(parts) == 4 and all(p.isdigit() for p in parts):
+                    # Take the last octet as the ID if it matches our pattern
+                    # Note: This is a fallback assumption
+                    self.openPdfNodeRequested.emit(int(parts[-1]))
+                    return
+
+            except Exception as e:
+                print(f"Error parsing PDF node ID from: {url_str} - {e}")
+            return
+        # --- END NEW ---
+
         if url_str.startswith("jumpto:"):
             try:
                 parts = url_str.split(":")
-                if len(parts) < 6:
-                    raise ValueError("Malformed jumpto link")
                 anchor_id = int(parts[1])
                 reading_id = int(parts[2])
                 outline_id = int(parts[3])
                 item_link_id = int(parts[4])
                 item_type = parts[5]
-                print(
-                    "Emitting openReading signal for "
-                    f"anchor_id={anchor_id}, reading_id={reading_id}, outline_id={outline_id}, "
-                    f"item_id={item_link_id}, type={item_type}"
-                )
                 self.openReading.emit(anchor_id, reading_id, outline_id, item_link_id, item_type)
             except Exception as e:
                 print(f"Error handling jumpto link: {e}")
@@ -424,21 +440,17 @@ class SynthesisTab(QWidget):
     @Slot()
     def _create_new_tag(self):
         if not EditTagDialog:
-            QMessageBox.critical(self, "Error", "EditTagDialog could not be loaded.")
             return
         dialog = EditTagDialog(parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             new_name = dialog.get_tag_name()
             if not new_name:
-                QMessageBox.warning(self, "Invalid Name", "Tag name cannot be empty.")
                 return
             try:
                 self.db.get_or_create_tag(new_name, self.project_id)
                 self.load_tags_list()
             except sqlite3.IntegrityError:
                 QMessageBox.warning(self, "Tag Exists", f"A tag named '{new_name}' already exists.")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Could not create tag: {e}")
 
     @Slot()
     def _rename_tag(self):
@@ -448,7 +460,6 @@ class SynthesisTab(QWidget):
         tag_id = item.data(Qt.ItemDataRole.UserRole)
         tag_name = item.data(Qt.ItemDataRole.UserRole + 1)
         if not EditTagDialog:
-            QMessageBox.critical(self, "Error", "EditTagDialog could not be loaded.")
             return
         dialog = EditTagDialog(current_name=tag_name, parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -461,8 +472,6 @@ class SynthesisTab(QWidget):
                 self.tagsUpdated.emit()
             except sqlite3.IntegrityError:
                 QMessageBox.warning(self, "Tag Exists", f"A tag named '{new_name}' already exists.")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Could not rename tag: {e}")
 
     @Slot()
     def _delete_tag(self):
@@ -473,8 +482,7 @@ class SynthesisTab(QWidget):
         tag_name = item.data(Qt.ItemDataRole.UserRole + 1)
         reply = QMessageBox.question(
             self, "Delete Tag",
-            f"Are you sure you want to delete the tag '{tag_name}'?\n\n"
-            "This will delete the tag itself AND all anchors associated with it from all projects.",
+            f"Are you sure you want to delete '{tag_name}'?\nThis will delete the tag and all anchors.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
@@ -495,12 +503,9 @@ class SynthesisTab(QWidget):
         tag_id = item.data(Qt.ItemDataRole.UserRole)
         tag_name = item.data(Qt.ItemDataRole.UserRole + 1)
         if not ManageAnchorsDialog:
-            QMessageBox.critical(self, "Error", "ManageAnchorsDialog could not be loaded.")
             return
 
-        # Pass the project_id to the dialog
         dialog = ManageAnchorsDialog(self.db, self.project_id, tag_id, tag_name, self)
-
         dialog.anchorDeleted.connect(self._on_anchor_deleted_from_dialog)
         dialog.exec()
 
@@ -508,9 +513,8 @@ class SynthesisTab(QWidget):
     def _on_anchor_deleted_from_dialog(self):
         self.tagsUpdated.emit()
         self.load_tags_list()
-        current_item = self.tag_list.currentItem()
-        if current_item:
-            self.on_tag_selected(current_item, None)
+        if self.tag_list.currentItem():
+            self.on_tag_selected(self.tag_list.currentItem(), None)
         else:
             self.anchor_display.clear()
 
@@ -526,35 +530,20 @@ class SynthesisTab(QWidget):
     @Slot()
     def open_notes_citation_dialog(self):
         if not AddCitationDialog:
-            QMessageBox.critical(self, "Error", "Citation dialog could not be loaded.")
             return
         readings = self.db.get_readings(self.project_id)
-        if not readings:
-            QMessageBox.information(self, "No Readings",
-                                    "You must add readings to this project before you can cite them.")
-            return
         dialog = AddCitationDialog(readings, self)
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.citation_text:
             if hasattr(self, 'notes_editor') and self.notes_editor:
                 self.notes_editor.editor.insertPlainText(f" {dialog.citation_text} ")
                 self.notes_editor.focus_editor()
-            else:
-                QMessageBox.warning(self, "Error", "Notes editor is not available.")
 
-    # --- NEW: Show Rules Logic ---
     @Slot()
     def _show_syntopic_rules(self):
-        """Opens the dialog to view syntopic rules."""
-        if not ViewSyntopicRulesDialog:
-            return
-
-        # 1. Get from DB or Default
+        if not ViewSyntopicRulesDialog: return
         instructions = self.db.get_or_create_instructions(self.project_id)
         html = instructions.get("syntopic_rules_html", "")
         if not html or html.isspace():
             html = DEFAULT_SYNTOPIC_RULES_HTML
-
-        # 2. Open dialog
         dialog = ViewSyntopicRulesDialog(html, self)
         dialog.exec()
-    # --- END NEW ---

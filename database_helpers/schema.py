@@ -392,6 +392,9 @@ class SchemaSetup:
             FOREIGN KEY (item_link_id) REFERENCES reading_driving_questions(id) ON DELETE CASCADE
         )
         """)
+        # --- MODIFIED: Add pdf_node_id column to synthesis_anchors ---
+        self._add_column_if_not_exists("synthesis_anchors", "pdf_node_id", "INTEGER", "NULL")
+        # --- END MODIFICATION ---
 
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS reading_argument_evidence (

@@ -204,8 +204,9 @@ class SynthesisMixin:
 
     def get_anchor_details(self, anchor_id):
         """Gets anchor details and ONE tag (for editing dialog)."""
+        # --- MODIFIED: Added pdf_node_id to selection ---
         self.cursor.execute("""
-            SELECT a.id, a.selected_text, a.comment, t.name as tag_name, t.id as tag_id
+            SELECT a.id, a.selected_text, a.comment, a.pdf_node_id, t.name as tag_name, t.id as tag_id
             FROM synthesis_anchors a
             LEFT JOIN anchor_tag_links atl ON a.id = atl.anchor_id
             LEFT JOIN synthesis_tags t ON atl.tag_id = t.id
@@ -230,11 +231,6 @@ class SynthesisMixin:
         """, (anchor_id,))
         return self._rowdict(self.cursor.fetchone())
 
-    # ##################################################################
-    # #
-    # #                 --- MODIFICATION START ---
-    # #
-    # ##################################################################
     def get_anchors_for_tag_simple(self, tag_id, project_id):
         """
         Gets simple anchor data for the ManageAnchorsDialog,
@@ -248,27 +244,22 @@ class SynthesisMixin:
         """, (tag_id, project_id))
         return self._map_rows(self.cursor.fetchall())
 
-    # ##################################################################
-    # #
-    # #                 --- MODIFICATION END ---
-    # #
-    # ##################################################################
-
     def get_anchors_for_tag_with_context(self, tag_id, project_id):
         """
         Gets all anchors for a tag (in a project), joining with context
         like reading and outline titles, and the *content* of virtual anchors.
         """
+        # --- MODIFIED: Added a.pdf_node_id ---
         self.cursor.execute("""
             SELECT 
                 a.id, a.project_id, a.reading_id, a.outline_id, 
                 a.unique_doc_id, a.selected_text, a.comment, 
                 a.item_link_id, a.item_type,
+                a.pdf_node_id,
                 r.title as reading_title,
                 r.nickname as reading_nickname,
                 o.section_title as outline_title,
 
-                -- THIS IS THE FIX: Get nickname from the DQ table --
                 dq.nickname, 
 
                 dq.question_text as dq_question_text,
@@ -321,15 +312,16 @@ class SynthesisMixin:
         return {'tags': tags_dict, 'anchors': anchors_dict}
 
     def create_anchor(self, project_id, reading_id, outline_id, tag_id, unique_doc_id, selected_text, comment,
-                      item_link_id=None, item_type=None):
+                      item_link_id=None, item_type=None, pdf_node_id=None):
         """Creates a new text or virtual anchor and links its tag."""
         try:
+            # --- MODIFIED: Insert pdf_node_id ---
             self.cursor.execute("""
                 INSERT INTO synthesis_anchors 
-                (project_id, reading_id, outline_id, tag_id, unique_doc_id, selected_text, comment, item_link_id, item_type)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (project_id, reading_id, outline_id, tag_id, unique_doc_id, selected_text, comment, item_link_id, item_type, pdf_node_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (project_id, reading_id, outline_id, tag_id, unique_doc_id, selected_text, comment, item_link_id,
-                  item_type))
+                  item_type, pdf_node_id))
             anchor_id = self.cursor.lastrowid
 
             # Also create the link in anchor_tag_links
@@ -346,24 +338,34 @@ class SynthesisMixin:
             return None
 
     def update_anchor(self, anchor_id, data):
-        """Updates an anchor's comment and tag list."""
+        """Updates an anchor's comment, PDF node link, and tag list."""
         try:
-            self.cursor.execute("""
-                UPDATE synthesis_anchors SET
-                comment = ?
-                WHERE id = ?
-            """, (data.get('comment', ''), anchor_id))
+            # --- MODIFIED: Handle optional pdf_node_id update ---
+            sql = "UPDATE synthesis_anchors SET comment = ?"
+            params = [data.get('comment', '')]
+
+            if 'pdf_node_id' in data:
+                sql += ", pdf_node_id = ?"
+                params.append(data['pdf_node_id'])
+
+            sql += " WHERE id = ?"
+            params.append(anchor_id)
+
+            self.cursor.execute(sql, tuple(params))
+            # --- END MODIFICATION ---
 
             # Handle tag links
-            self.cursor.execute("DELETE FROM anchor_tag_links WHERE anchor_id = ?", (anchor_id,))
-            if data.get('tags'):
-                for tag_id in data['tags']:
-                    self.cursor.execute("INSERT INTO anchor_tag_links (anchor_id, tag_id) VALUES (?, ?)",
-                                        (anchor_id, tag_id))
+            # Only update tags if 'tags' key exists in data
+            if 'tags' in data:
+                self.cursor.execute("DELETE FROM anchor_tag_links WHERE anchor_id = ?", (anchor_id,))
+                if data.get('tags'):
+                    for tag_id in data['tags']:
+                        self.cursor.execute("INSERT INTO anchor_tag_links (anchor_id, tag_id) VALUES (?, ?)",
+                                            (anchor_id, tag_id))
 
-            # Update the (deprecated) single tag_id field for compatibility
-            new_tag_id = data['tags'][0] if data.get('tags') else None
-            self.cursor.execute("UPDATE synthesis_anchors SET tag_id = ? WHERE id = ?", (new_tag_id, anchor_id))
+                # Update the (deprecated) single tag_id field for compatibility
+                new_tag_id = data['tags'][0] if data.get('tags') else None
+                self.cursor.execute("UPDATE synthesis_anchors SET tag_id = ? WHERE id = ?", (new_tag_id, anchor_id))
 
             self.conn.commit()
         except Exception as e:

@@ -2,24 +2,37 @@
 import sys
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit, QTextEdit,
-    QComboBox, QCheckBox, QDialogButtonBox, QLabel
+    QComboBox, QCheckBox, QDialogButtonBox, QLabel, QPushButton,
+    QMessageBox, QHBoxLayout
 )
 from PySide6.QtCore import Qt
+
+# Import PdfLinkDialog for node selection
+try:
+    from dialogs.pdf_link_dialog import PdfLinkDialog
+except ImportError:
+    PdfLinkDialog = None
 
 
 class CreateAnchorDialog(QDialog):
     """
     A dialog for creating or editing a synthesis anchor.
+    Replaced "Optional Comment" with "Add PDF Node".
     """
 
-    def __init__(self, selected_text, project_tags_list=None, current_data=None, parent=None):
+    def __init__(self, selected_text, project_tags_list=None, current_data=None, db=None, parent=None):
         super().__init__(parent)
+        self.db = db
         self.setWindowTitle("Create Synthesis Anchor")
         if current_data:
             self.setWindowTitle("Edit Synthesis Anchor")
 
         self.project_tags = project_tags_list if project_tags_list else []
         self.current_data = current_data if current_data else {}
+
+        # Store selected PDF node details
+        self.selected_pdf_node_id = self.current_data.get('pdf_node_id')
+        self._pdf_node_label = ""  # To be fetched if editing
 
         main_layout = QVBoxLayout(self)
 
@@ -56,12 +69,32 @@ class CreateAnchorDialog(QDialog):
         self.add_prefix_check.setChecked(True)
         form_layout.addRow("", self.add_prefix_check)
 
-        # Comment
-        self.comment_edit = QTextEdit()
-        self.comment_edit.setPlaceholderText("Add optional comment...")
-        self.comment_edit.setMinimumHeight(80)
-        self.comment_edit.setText(self.current_data.get('comment', ''))
-        form_layout.addRow("Comment (optional):", self.comment_edit)
+        # --- PDF Node Selection ---
+        self.pdf_node_label = QLabel("No PDF Node connected")
+        self.pdf_node_label.setStyleSheet("font-style: italic; color: #666;")
+
+        # Button layout for Add/Remove
+        pdf_btn_layout = QHBoxLayout()
+
+        self.btn_add_pdf_node = QPushButton("Add PDF Node")
+        self.btn_add_pdf_node.clicked.connect(self._open_pdf_link_dialog)
+
+        self.btn_remove_pdf_node = QPushButton("Remove")
+        self.btn_remove_pdf_node.clicked.connect(self._remove_pdf_node)
+        self.btn_remove_pdf_node.setVisible(False)  # Hidden by default
+        self.btn_remove_pdf_node.setStyleSheet("color: red;")
+
+        pdf_btn_layout.addWidget(self.btn_add_pdf_node)
+        pdf_btn_layout.addWidget(self.btn_remove_pdf_node)
+        pdf_btn_layout.addStretch()
+
+        if not PdfLinkDialog or not self.db:
+            self.btn_add_pdf_node.setEnabled(False)
+            self.btn_add_pdf_node.setToolTip("DB Connection or Dialog missing")
+
+        form_layout.addRow("Connected Node:", self.pdf_node_label)
+        form_layout.addRow("", pdf_btn_layout)
+        # --------------------------
 
         main_layout.addLayout(form_layout)
 
@@ -76,6 +109,15 @@ class CreateAnchorDialog(QDialog):
         self.tag_combo.currentTextChanged.connect(self._update_prefix_state)
         self._update_prefix_state(self.tag_combo.currentText())
 
+        # Initialize PDF Label if editing
+        if self.selected_pdf_node_id and self.db:
+            node = self.db.get_pdf_node_details(self.selected_pdf_node_id)
+            if node:
+                self.selected_pdf_node_id = node['id']
+                self._update_pdf_label(node['label'], node['page_number'])
+            else:
+                self.selected_pdf_node_id = None  # Clear invalid ID
+
     def _update_prefix_state(self, text):
         """Disables the '#' prefix checkbox if the tag already has one."""
         if text.startswith("#"):
@@ -84,6 +126,38 @@ class CreateAnchorDialog(QDialog):
         else:
             self.add_prefix_check.setEnabled(True)
 
+    def _open_pdf_link_dialog(self):
+        """Opens the dialog to select a PDF node."""
+        if not PdfLinkDialog or not self.db: return
+
+        # We can attempt to get the current project ID from the parent if available,
+        # but usually the link dialog handles navigation.
+        # We pass None for project_id so it shows all or lets user navigate.
+        dialog = PdfLinkDialog(self.db, parent=self)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            node_id = dialog.selected_node_id
+            # node_label comes formatted from the dialog selection
+            node_data = self.db.get_pdf_node_details(node_id)
+            if node_data:
+                self.selected_pdf_node_id = node_id
+                self._update_pdf_label(node_data['label'], node_data['page_number'])
+
+    def _update_pdf_label(self, label, page_num):
+        """Updates the UI label for the selected node."""
+        self.pdf_node_label.setText(f"{label} (Pg {page_num + 1})")
+        self.pdf_node_label.setStyleSheet("font-weight: bold; color: #2563EB;")
+        self.btn_add_pdf_node.setText("Change PDF Node")
+        self.btn_remove_pdf_node.setVisible(True)
+
+    def _remove_pdf_node(self):
+        """Removes the currently selected PDF node."""
+        self.selected_pdf_node_id = None
+        self.pdf_node_label.setText("No PDF Node connected")
+        self.pdf_node_label.setStyleSheet("font-style: italic; color: #666;")
+        self.btn_add_pdf_node.setText("Add PDF Node")
+        self.btn_remove_pdf_node.setVisible(False)
+
     def get_tag_text(self):
         """Gets the final tag text, adding prefix if needed."""
         text = self.tag_combo.currentText().strip()
@@ -91,6 +165,6 @@ class CreateAnchorDialog(QDialog):
             return f"#{text}"
         return text
 
-    def get_comment(self):
-        """Gets the comment text."""
-        return self.comment_edit.toPlainText().strip()
+    def get_pdf_node_id(self):
+        """Returns the ID of the selected PDF node (or None)."""
+        return self.selected_pdf_node_id

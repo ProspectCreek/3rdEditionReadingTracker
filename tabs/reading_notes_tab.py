@@ -851,11 +851,6 @@ class ReadingNotesTab(QWidget):
 
     def on_outline_selection_changed(self, current, previous):
         """Handles switching the notes editor when the tree selection changes."""
-        # --- DIAGNOSTIC PRINT ---
-        print(
-            f"      ReadingTab.on_outline_selection_changed: Triggered. Current focus: {QApplication.instance().focusWidget()}")
-        # --- END DIAGNOSTIC ---
-
         if previous:
             prev_id = previous.data(0, Qt.ItemDataRole.UserRole)
             if prev_id is not None and self._is_loaded:
@@ -1093,10 +1088,6 @@ class ReadingNotesTab(QWidget):
         html = self._get_reading_rules_html()
         dialog = ViewReadingRulesDialog(html, self)
         dialog.exec()
-
-    # --- MODIFICATION: REMOVED _edit_reading_rules METHOD ---
-
-    # --- END NEW ---
 
     # --- NEW: Instruction Methods ---
     @Slot()
@@ -1374,10 +1365,17 @@ class ReadingNotesTab(QWidget):
 
         tags = self.db.get_all_tags()
 
-        dialog = CreateAnchorDialog(selected_text, project_tags_list=tags, parent=self)
+        # --- MODIFIED: Pass self.db ---
+        dialog = CreateAnchorDialog(selected_text, project_tags_list=tags, db=self.db, parent=self)
+        # --- END MODIFICATION ---
+
         if dialog.exec() == QDialog.DialogCode.Accepted:
             tag_name = dialog.get_tag_text()
-            comment = dialog.get_comment()
+            # --- REMOVED: comment = dialog.get_comment() ---
+
+            # --- ADDED: Get PDF ID ---
+            pdf_node_id = dialog.get_pdf_node_id()
+            # --- END ADDED ---
 
             if not tag_name:
                 QMessageBox.warning(self, "Tag Required", "An anchor must have a tag.")
@@ -1390,16 +1388,19 @@ class ReadingNotesTab(QWidget):
                 tag_id = tag_data['id']
                 unique_doc_id = str(uuid.uuid4())
 
+                # --- MODIFIED: Pass pdf_node_id ---
                 anchor_id = self.db.create_anchor(
                     project_id=self.project_id,
                     reading_id=self.reading_id,
                     outline_id=self.current_outline_id,
                     tag_id=tag_id,
                     selected_text=selected_text,
-                    comment=comment,
+                    comment="",  # No longer used
                     unique_doc_id=unique_doc_id,
-                    item_link_id=None
+                    item_link_id=None,
+                    pdf_node_id=pdf_node_id
                 )
+                # --- END MODIFICATION ---
 
                 if not anchor_id:
                     raise Exception("Failed to create anchor in database.")
@@ -1408,7 +1409,7 @@ class ReadingNotesTab(QWidget):
                     anchor_id=anchor_id,
                     tag_id=tag_id,
                     tag_name=tag_name,
-                    comment=comment,
+                    comment="",  # No comment
                     unique_doc_id=unique_doc_id
                 )
                 self.save_current_outline_notes()
@@ -1425,16 +1426,21 @@ class ReadingNotesTab(QWidget):
                 return
 
             tags = self.db.get_all_tags()
+
+            # --- MODIFIED: Pass db and current_data ---
             dialog = CreateAnchorDialog(
                 selected_text=current_data['selected_text'],
                 project_tags_list=tags,
                 current_data=current_data,
+                db=self.db,
                 parent=self
             )
+            # --- END MODIFICATION ---
 
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 new_tag_name = dialog.get_tag_text()
-                new_comment = dialog.get_comment()
+                # --- REMOVED: new_comment = dialog.get_comment() ---
+                new_pdf_node_id = dialog.get_pdf_node_id()
 
                 if not new_tag_name:
                     QMessageBox.warning(self, "Tag Required", "An anchor must have a tag.")
@@ -1445,17 +1451,20 @@ class ReadingNotesTab(QWidget):
                     raise Exception(f"Could not get or create tag '{new_tag_name}'")
                 new_tag_id = tag_data['id']
 
+                # --- MODIFIED: Save pdf_node_id ---
                 update_data = {
-                    "comment": new_comment,
-                    "tags": [new_tag_id]  # update_anchor expects a list of tag IDs
+                    "comment": "",  # Cleared
+                    "tags": [new_tag_id],
+                    "pdf_node_id": new_pdf_node_id
                 }
                 self.db.update_anchor(anchor_id, update_data)
+                # --- END MODIFICATION ---
 
                 self.notes_editor.find_and_update_anchor_format(
                     anchor_id=anchor_id,
                     tag_id=new_tag_id,
                     tag_name=new_tag_name,
-                    comment=new_comment
+                    comment=""
                 )
                 self.save_current_outline_notes()
         except Exception as e:

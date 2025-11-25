@@ -100,12 +100,15 @@ class SmartEditor(QTextEdit):
             self.viewport().setCursor(Qt.CursorShape.IBeamCursor)
 
     def mouseReleaseEvent(self, event):
-        # Detect link/anchor clicks
-        pos = event.position().toPoint()
-        anchor = self.anchorAt(pos)
+        # --- MODIFIED: Only trigger navigation on Left Click ---
+        # This allows Right Click to pass through to contextMenuEvent
+        if event.button() == Qt.MouseButton.LeftButton:
+            pos = event.position().toPoint()
+            anchor = self.anchorAt(pos)
 
-        if anchor:
-            self.smartAnchorClicked.emit(QUrl(anchor))
+            if anchor:
+                self.smartAnchorClicked.emit(QUrl(anchor))
+        # --- END MODIFIED ---
 
         super().mouseReleaseEvent(event)
 
