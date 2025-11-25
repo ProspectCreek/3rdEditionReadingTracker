@@ -16,11 +16,11 @@ class SchemaSetup:
             self.cursor.execute(f"PRAGMA table_info({table_name})")
             columns = [row['name'] for row in self.cursor.fetchall()]
             if column_name not in columns:
-                self.cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type} DEFAULT {default_value}")
+                self.cursor.execute(
+                    f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type} DEFAULT {default_value}")
                 print(f"Added column: {column_name} to {table_name}")
         except Exception as e:
             print(f"Warning: Could not add column {column_name} to {table_name}. {e}")
-
 
     def setup_database(self):
         """
@@ -90,7 +90,6 @@ class SchemaSetup:
         ]
         for col_name, col_type in new_instruction_columns:
             self._add_column_if_not_exists("instructions", col_name, col_type, "''")
-
 
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS rubric_components (
@@ -162,9 +161,7 @@ class SchemaSetup:
             citation_style TEXT DEFAULT 'apa'
         )
         """)
-        # --- FIX: Ensure columns exist even if table created previously ---
         self._add_column_if_not_exists("user_settings", "citation_style", "TEXT", "'apa'")
-
 
         # --- Level 1 Tables ---
         if hasattr(self, 'create_graph_settings_table'):
@@ -198,7 +195,6 @@ class SchemaSetup:
             FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE
         )
         """)
-        # --- Readings Migration ---
         self._add_column_if_not_exists("readings", "zotero_item_key", "TEXT", "NULL")
 
         self.cursor.execute("""
@@ -266,6 +262,39 @@ class SchemaSetup:
             FOREIGN KEY (reading_id) REFERENCES readings(id) ON DELETE CASCADE
         )
         """)
+
+        # --- NEW: PDF Node Categories ---
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pdf_node_categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            color_hex TEXT DEFAULT '#FFFF00',
+            FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE
+        )
+        """)
+
+        # --- PDF Nodes Table ---
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pdf_nodes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            reading_id INTEGER NOT NULL,
+            attachment_id INTEGER NOT NULL,
+            category_id INTEGER, 
+            page_number INTEGER NOT NULL,
+            x_pos REAL NOT NULL,
+            y_pos REAL NOT NULL,
+            node_type TEXT DEFAULT 'Note',
+            color_hex TEXT DEFAULT '#FFFF00',
+            label TEXT,
+            description TEXT,
+            FOREIGN KEY (reading_id) REFERENCES readings(id) ON DELETE CASCADE,
+            FOREIGN KEY (attachment_id) REFERENCES reading_attachments(id) ON DELETE CASCADE,
+            FOREIGN KEY (category_id) REFERENCES pdf_node_categories(id) ON DELETE SET NULL
+        )
+        """)
+        # Migration for existing pdf_nodes table
+        self._add_column_if_not_exists("pdf_nodes", "category_id", "INTEGER", "NULL")
 
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS reading_arguments (

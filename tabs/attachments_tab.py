@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QPushButton, QMenu, QInputDialog, QMessageBox, QFileDialog, QLabel, QDialog
 )
 from PySide6.QtCore import Qt, Signal, QUrl, QSize
-from PySide6.QtGui import QAction, QDesktopServices, QIcon, QPixmap, QColor, QFont  # <-- Added QColor, QFont
+from PySide6.QtGui import QAction, QDesktopServices, QIcon, QPixmap, QColor, QFont
 
 # Import dialogs
 try:
@@ -22,6 +22,9 @@ class AttachmentsTab(QWidget):
     A widget for adding, removing, and opening file attachments
     associated with a specific reading.
     """
+    # Signal to tell the dashboard/main window to open the PDF Node Viewer
+    # Sends: (reading_id, attachment_id, file_path)
+    openPdfNodesRequested = Signal(int, int, str)
 
     def __init__(self, db, reading_id: int, parent=None):
         super().__init__(parent)
@@ -46,13 +49,25 @@ class AttachmentsTab(QWidget):
         # Button layout
         button_layout = QHBoxLayout()
         self.btn_add_attachment = QPushButton("Add Attachment...")
+
+        # --- NEW BUTTON ---
+        self.btn_open_nodes = QPushButton("Open Selected PDF in Nodes")
+        self.btn_open_nodes.setToolTip("Open the selected PDF in the spatial node viewer.")
+        self.btn_open_nodes.setEnabled(False)  # Disabled until selection
+        # ------------------
+
+        button_layout.addWidget(self.btn_open_nodes)  # Add to left
         button_layout.addStretch()
         button_layout.addWidget(self.btn_add_attachment)
         main_layout.addLayout(button_layout)
 
         # --- Connections ---
         self.btn_add_attachment.clicked.connect(self._add_attachment)
+        self.btn_open_nodes.clicked.connect(self._open_pdf_nodes)  # Connect new button
+
         self.list_widget.itemDoubleClicked.connect(self._open_attachment)
+        self.list_widget.currentItemChanged.connect(self._update_button_state)
+
         self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list_widget.customContextMenuRequested.connect(self.show_context_menu)
 
@@ -68,14 +83,13 @@ class AttachmentsTab(QWidget):
                 item.setFlags(Qt.ItemFlag.NoItemFlags)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
-                # --- FIX: Replaced setStyleSheet ---
                 item.setForeground(QColor("#888888"))
                 font = item.font()
                 font.setItalic(True)
                 item.setFont(font)
-                # --- END FIX ---
 
                 self.list_widget.addItem(item)
+                self.btn_open_nodes.setEnabled(False)
                 return
 
             for att in attachments:
@@ -84,8 +98,24 @@ class AttachmentsTab(QWidget):
                 item.setData(Qt.ItemDataRole.UserRole + 1, att['file_path'])
                 self.list_widget.addItem(item)
 
+            self._update_button_state()
+
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not load attachments: {e}")
+
+    def _update_button_state(self):
+        """Enable/Disable the PDF Node button based on selection."""
+        item = self.list_widget.currentItem()
+        if not item or item.data(Qt.ItemDataRole.UserRole) is None:
+            self.btn_open_nodes.setEnabled(False)
+            return
+
+        # Check file extension
+        relative_path = item.data(Qt.ItemDataRole.UserRole + 1)
+        if relative_path and relative_path.lower().endswith(".pdf"):
+            self.btn_open_nodes.setEnabled(True)
+        else:
+            self.btn_open_nodes.setEnabled(False)
 
     def show_context_menu(self, position):
         """Shows the right-click menu."""
@@ -99,6 +129,16 @@ class AttachmentsTab(QWidget):
         if item and item.data(Qt.ItemDataRole.UserRole) is not None:
             # Item-specific actions
             menu.addSeparator()
+
+            # --- NEW: Open in Nodes Action ---
+            relative_path = item.data(Qt.ItemDataRole.UserRole + 1)
+            if relative_path and relative_path.lower().endswith(".pdf"):
+                nodes_action = QAction("Open Selected PDF in Nodes", self)
+                nodes_action.triggered.connect(self._open_pdf_nodes)
+                menu.addAction(nodes_action)
+                menu.addSeparator()
+            # ---------------------------------
+
             rename_action = QAction("Rename Display Name...", self)
             rename_action.triggered.connect(self._rename_attachment)
             menu.addAction(rename_action)
@@ -107,7 +147,7 @@ class AttachmentsTab(QWidget):
             delete_action.triggered.connect(self._delete_attachment)
             menu.addAction(delete_action)
 
-        if self.list_widget.count() > 1 and item.data(Qt.ItemDataRole.UserRole) is not None:
+        if self.list_widget.count() > 1 and item and item.data(Qt.ItemDataRole.UserRole) is not None:
             menu.addSeparator()
             reorder_action = QAction("Reorder Attachments...", self)
             reorder_action.triggered.connect(self._reorder_attachments)
@@ -163,6 +203,28 @@ class AttachmentsTab(QWidget):
             QDesktopServices.openUrl(QUrl.fromLocalFile(full_path))
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not open file: {e}")
+
+    def _open_pdf_nodes(self):
+        """Emits signal to open the PDF Node Viewer."""
+        item = self.list_widget.currentItem()
+        if not item or item.data(Qt.ItemDataRole.UserRole) is None:
+            return
+
+        attachment_id = item.data(Qt.ItemDataRole.UserRole)
+        relative_path = item.data(Qt.ItemDataRole.UserRole + 1)
+
+        # Validate extension
+        if not relative_path.lower().endswith(".pdf"):
+            QMessageBox.warning(self, "Invalid File Type", "Only PDF files can be opened in the Node Viewer.")
+            return
+
+        full_path = os.path.join(self.attachments_dir, relative_path)
+        if not os.path.exists(full_path):
+            QMessageBox.critical(self, "Error", f"File not found:\n{full_path}")
+            return
+
+        # Emit Signal
+        self.openPdfNodesRequested.emit(self.reading_id, attachment_id, full_path)
 
     def _rename_attachment(self):
         """Renames the display name (not the file) of the selected attachment."""

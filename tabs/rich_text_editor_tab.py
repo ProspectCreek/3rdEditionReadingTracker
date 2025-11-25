@@ -1,3 +1,4 @@
+# tabs/rich_text_editor_tab.py
 import sys
 import uuid
 import json
@@ -119,6 +120,11 @@ class RichTextEditorTab(QWidget):
     anchorDeleteTriggered = Signal(int)
     anchorClicked = Signal(QUrl)
     citationEditTriggered = Signal(str)
+
+    # --- NEW: Signal for linking PDF Node ---
+    linkPdfNodeTriggered = Signal()
+
+    # --- END NEW ---
 
     def __init__(self, title: str = "Editor", spell_checker_service=None, parent=None):
         super().__init__(parent)
@@ -508,6 +514,17 @@ class RichTextEditorTab(QWidget):
             menu.addAction(ec)
 
         else:
+            # --- NEW: Add Link to PDF Node Option ---
+            link_pdf_action = QAction("Link to PDF Node...", self)
+            # Only enable if there is a selection
+            if self.editor.textCursor().hasSelection():
+                link_pdf_action.triggered.connect(self.linkPdfNodeTriggered.emit)
+            else:
+                link_pdf_action.setEnabled(False)
+            menu.addAction(link_pdf_action)
+            menu.addSeparator()
+            # --- END NEW ---
+
             ca = QAction("Create Synthesis Anchor...", self)
             if self.editor.textCursor().hasSelection():
                 txt = self.editor.textCursor().selectedText().strip()

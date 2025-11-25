@@ -19,14 +19,15 @@ from database_helpers.synthesis_mixin import SynthesisMixin
 from database_helpers.graph_mixin import GraphMixin
 from database_helpers.terminology_mixin import TerminologyMixin
 from database_helpers.propositions_mixin import PropositionsMixin
-from database_helpers.todo_mixin import TodoMixin  # <-- This line is correct
+from database_helpers.todo_mixin import TodoMixin
 from database_helpers.key_terms_mixin import KeyTermsMixin
 from database_helpers.theories_mixin import TheoriesMixin
 from database_helpers.arguments_mixin import ArgumentsMixin
 from database_helpers.utility_mixin import UtilityMixin
 from database_helpers.graph_settings_mixin import GraphSettingsMixin
-from database_helpers.global_graph_settings_mixin import GlobalGraphSettingsMixin # <-- IMPORT NEW MIXIN
-from database_helpers.settings_mixin import SettingsMixin # <-- NEW IMPORT
+from database_helpers.global_graph_settings_mixin import GlobalGraphSettingsMixin
+from database_helpers.settings_mixin import SettingsMixin
+from database_helpers.pdf_nodes_mixin import PdfNodesMixin # <-- IMPORT NEW MIXIN
 
 class DatabaseManager(
     SchemaSetup,
@@ -42,13 +43,14 @@ class DatabaseManager(
     GraphMixin,
     TerminologyMixin,
     PropositionsMixin,
-    TodoMixin,  # <-- ADD THIS MISSING LINE
+    TodoMixin,
     KeyTermsMixin,
     TheoriesMixin,
     ArgumentsMixin,
     GraphSettingsMixin,
-    GlobalGraphSettingsMixin, # <-- ADD NEW MIXIN
+    GlobalGraphSettingsMixin,
     SettingsMixin,
+    PdfNodesMixin, # <-- ADD NEW MIXIN
     UtilityMixin
 ):
     def __init__(self, db_file="reading_tracker.db"):

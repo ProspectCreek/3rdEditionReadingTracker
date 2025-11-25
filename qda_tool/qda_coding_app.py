@@ -1,22 +1,33 @@
+# qda_tool/qda_coding_app.py
 import sys
 import json
+import os
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTableWidget, QTableWidgetItem, QPushButton, QHeaderView, QMenu,
     QInputDialog, QMessageBox, QComboBox, QLabel, QDialog, QListWidget,
     QListWidgetItem, QSplitter, QFrame, QLineEdit, QCheckBox, QTextEdit,
     QPlainTextEdit, QScrollArea, QStyledItemDelegate, QAbstractScrollArea,
-    QColorDialog
+    QColorDialog, QTreeWidget, QTreeWidgetItem, QDialogButtonBox, QFileDialog
 )
-from PySide6.QtCore import Qt, QPoint, QObject, Signal, QEvent
+from PySide6.QtCore import Qt, QPoint, QObject, Signal, QEvent, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut, QTextOption, QCursor, QColor, QBrush
 
 from qda_database_manager import QDAManager
 from qda_row_dialog import RowDetailDialog
 from qda_segments_dialog import SegmentsDialog
 from qda_codebook_dialog import CodeDetailsDialog
-from qda_home_screen import QDAHomeScreen  # Import new launcher
+from qda_home_screen import QDAHomeScreen
 from qda_styles import MODERN_LIGHT_STYLESHEET
+
+# --- Import PdfNodeViewer dynamically ---
+# Since QDA Tool is in a subfolder, we need to add parent dir to path
+sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+try:
+    from tabs.pdf_node_viewer import PdfNodeViewer
+except ImportError:
+    PdfNodeViewer = None
 
 
 # -------------------------------------------------
@@ -57,8 +68,6 @@ class TextTruncateDelegate(QStyledItemDelegate):
         painter.restore()
 
         # 2. Draw standard content (Text, Selection, Focus, CSS Borders)
-        # We rely on the CSS 'background-color: transparent' on QTableWidget::item
-        # so that the standard paint doesn't overwrite our fillRect above.
         super().paint(painter, option, index)
 
 
@@ -68,8 +77,6 @@ class TextTruncateDelegate(QStyledItemDelegate):
 class PanScrollArea(QScrollArea):
     """
     A ScrollArea that allows panning by dragging in empty space.
-    - Middle Click: Pan anywhere.
-    - Left Click: Pan only if clicking 'empty space' (not a cell).
     """
 
     def __init__(self, parent=None):
@@ -168,6 +175,118 @@ class FilterState(QObject):
 
 
 # -------------------------------------------------
+# QDA PDF Link Dialog (Simplified for QDA Context)
+# -------------------------------------------------
+class QDAPdfLinkDialog(QDialog):
+    """
+    Dialog to select a PDF node from the external tracker DB.
+    """
+
+    def __init__(self, db, parent=None):
+        super().__init__(parent)
+        self.db = db  # This is QDAManager, which has access to tracker_db
+        self.selected_node_id = None
+        self.selected_node_label = None
+
+        self.setWindowTitle("Link to PDF Node")
+        self.resize(800, 600)
+
+        main_layout = QVBoxLayout(self)
+        splitter = QSplitter(Qt.Horizontal)
+        main_layout.addWidget(splitter)
+
+        # Left: Project/Reading Tree
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.addWidget(QLabel("<b>Readings</b>"))
+        self.tree = QTreeWidget()
+        self.tree.setHeaderHidden(True)
+        self.tree.itemClicked.connect(self._on_tree_item_clicked)
+        left_layout.addWidget(self.tree)
+        splitter.addWidget(left_widget)
+
+        # Right: Node List
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.addWidget(QLabel("<b>Nodes</b>"))
+        self.node_list = QListWidget()
+        self.node_list.itemDoubleClicked.connect(self._on_node_double_clicked)
+        self.node_list.itemClicked.connect(self._update_buttons)
+        right_layout.addWidget(self.node_list)
+        splitter.addWidget(right_widget)
+
+        splitter.setSizes([300, 500])
+
+        # Buttons
+        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.button_box.button(QDialogButtonBox.Ok).setEnabled(False)
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        main_layout.addWidget(self.button_box)
+
+        self._load_data()
+
+    def _load_data(self):
+        if not self.db.tracker_conn:
+            QMessageBox.warning(self, "No Connection", "Could not connect to Reading Tracker database.")
+            return
+
+        projects = self.db.get_tracker_projects()
+        for proj in projects:
+            p_item = QTreeWidgetItem([proj['name']])
+            p_item.setData(0, Qt.UserRole, "project")
+            self.tree.addTopLevelItem(p_item)
+
+            readings = self.db.get_tracker_readings(proj['id'])
+            for r in readings:
+                r_name = r['nickname'] if r['nickname'] else r['title']
+                r_item = QTreeWidgetItem([r_name])
+                r_item.setData(0, Qt.UserRole, "reading")
+                r_item.setData(0, Qt.UserRole + 1, r['id'])
+                p_item.addChild(r_item)
+
+    def _on_tree_item_clicked(self, item, column):
+        type_ = item.data(0, Qt.UserRole)
+        if type_ == "reading":
+            reading_id = item.data(0, Qt.UserRole + 1)
+            self._load_nodes(reading_id)
+        else:
+            self.node_list.clear()
+
+    def _load_nodes(self, reading_id):
+        self.node_list.clear()
+        nodes = self.db.get_tracker_pdf_nodes(reading_id)
+        for node in nodes:
+            # Format: (Category) Label (Pg X)
+            label = node['label']
+            if node.get('category_name'):
+                label = f"({node['category_name']}) {label}"
+
+            label += f" (Pg {node['page_number'] + 1})"
+
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, node['id'])
+            item.setData(Qt.UserRole + 1, node['label'])  # Just label for the table display if preferred
+            # Or store full display label if you want the table to show category:
+            # item.setData(Qt.UserRole + 1, label)
+
+            self.node_list.addItem(item)
+
+    def _update_buttons(self):
+        self.button_box.button(QDialogButtonBox.Ok).setEnabled(bool(self.node_list.currentItem()))
+
+    def _on_node_double_clicked(self, item):
+        self.accept()
+
+    def accept(self):
+        item = self.node_list.currentItem()
+        if item:
+            self.selected_node_id = item.data(Qt.UserRole)
+            self.selected_node_label = item.text()  # Use the full formatted text for display in the table
+        super().accept()
+
+
+# -------------------------------------------------
 # Main QDA coding window
 # -------------------------------------------------
 class QDAWindow(QMainWindow):
@@ -185,6 +304,9 @@ class QDAWindow(QMainWindow):
         self.current_col_color = None
         self.filter_state = FilterState()
         self.filter_state.filter_changed.connect(self._apply_filter_and_refresh)
+
+        # Store open viewers
+        self.pdf_viewers = []
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -235,14 +357,14 @@ class QDAWindow(QMainWindow):
         form_row2 = QHBoxLayout()
         form_row2.addWidget(QLabel("Type:"))
         self.edit_col_type = QComboBox()
-        self.edit_col_type.addItems(["text", "dropdown", "checkbox"])
+        self.edit_col_type.addItems(["text", "dropdown", "checkbox", "link"])
         self.edit_col_type.currentTextChanged.connect(self._on_type_changed)
         form_row2.addWidget(self.edit_col_type)
         props_layout.addLayout(form_row2)
 
         form_row3 = QHBoxLayout()
         self.btn_col_color = QPushButton("Set Color")
-        self.btn_col_color.setFixedWidth(80)
+        self.btn_col_color.setFixedWidth(100)
         self.lbl_col_color_preview = QLabel()
         self.lbl_col_color_preview.setFixedSize(24, 24)
         self.lbl_col_color_preview.setStyleSheet("border: 1px solid #999; background-color: transparent;")
@@ -278,11 +400,10 @@ class QDAWindow(QMainWindow):
         toolbar = QHBoxLayout()
         self.btn_add_row = QPushButton("+ Add Row")
         self.btn_export = QPushButton("Export CSV")
-        self.btn_reports = QPushButton("Scene Reports…")
+        # Removed "Scene Reports..." button per request
         toolbar.addWidget(self.btn_add_row)
         toolbar.addStretch()
         toolbar.addWidget(self.btn_export)
-        toolbar.addWidget(self.btn_reports)
         right_layout.addLayout(toolbar)
 
         filter_layout = QHBoxLayout()
@@ -326,7 +447,7 @@ class QDAWindow(QMainWindow):
         self.btn_code_details.clicked.connect(self._open_code_details)
         self.btn_add_row.clicked.connect(self._add_new_row)
         self.btn_export.clicked.connect(self._export_csv)
-        self.btn_reports.clicked.connect(self._show_reports)
+        # self.btn_reports.clicked.connect(self._show_reports)  # Removed
         self.btn_apply_filter.clicked.connect(self._on_apply_filter_clicked)
         self.btn_clear_filter.clicked.connect(self._on_clear_filter_clicked)
         self.btn_codebook_report.clicked.connect(self._show_codebook_report)
@@ -518,6 +639,19 @@ class QDAWindow(QMainWindow):
                 col_id = str(col["id"])
                 col_type = col["col_type"]
                 val = data.get(col_id, "")
+
+                # Detect if this is a LINK
+                is_link = False
+                link_target_id = None
+                if val.startswith("LINK|"):
+                    try:
+                        _, target_id, label = val.split("|", 2)
+                        val = label  # Display label
+                        link_target_id = target_id
+                        is_link = True
+                    except:
+                        pass
+
                 col_color = col.get("color")
                 bg_brush = QColor(col_color) if col_color else None
 
@@ -552,9 +686,36 @@ class QDAWindow(QMainWindow):
                     item.setData(Qt.UserRole, row_id)
                     if bg_brush: item.setBackground(bg_brush)
                     self.table.setItem(r_index, offset, item)
+                elif col_type == "link":
+                    # Render link column
+                    display_text = val
+                    item = QTableWidgetItem(display_text)
+                    item.setData(Qt.UserRole, row_id)
+
+                    if is_link:
+                        item.setForeground(QColor("blue"))
+                        font = item.font()
+                        font.setUnderline(True)
+                        item.setFont(font)
+                        item.setData(Qt.UserRole + 1, link_target_id)
+                        item.setToolTip("Double-click to open PDF Node")
+                    else:
+                        item.setToolTip("Double-click to set link")
+
+                    if bg_brush: item.setBackground(bg_brush)
+                    self.table.setItem(r_index, offset, item)
                 else:
                     item = QTableWidgetItem(str(val))
                     item.setData(Qt.UserRole, row_id)
+
+                    if is_link:
+                        item.setForeground(QColor("blue"))
+                        font = item.font()
+                        font.setUnderline(True)
+                        item.setFont(font)
+                        item.setData(Qt.UserRole + 1, link_target_id)  # Store link ID
+                        item.setToolTip("Double-click to open PDF Node")
+
                     if bg_brush: item.setBackground(bg_brush)
                     self.table.setItem(r_index, offset, item)
 
@@ -603,7 +764,14 @@ class QDAWindow(QMainWindow):
                 val = "True" if (it and it.checkState() == Qt.Checked) else "False"
             else:
                 it = self.table.item(row_index, offset)
-                val = it.text() if it else ""
+                # Preserve link data if present
+                link_id = it.data(Qt.UserRole + 1)
+                text = it.text()
+                if link_id and text:
+                    val = f"LINK|{link_id}|{text}"
+                else:
+                    val = text if it else ""
+
             data[col_id] = val
 
         self.db.update_row_data(row_id, data)
@@ -631,7 +799,15 @@ class QDAWindow(QMainWindow):
             self.table.setColumnWidth(off, self.table.columnWidth(off) + 35)
 
     def _open_row_detail(self, row, col):
-        if row < 0: return
+        # If row passed as arg is actually a QModelIndex or int, handle it
+        # But here signature implies row index (int)
+        if isinstance(row, int) and row < 0: return
+
+        # For manual call from context menu, we need row index
+        if not isinstance(row, int):
+            # If called without arguments or wrong types
+            return
+
         vh = self.table.verticalHeaderItem(row)
         if not vh: return
         row_id = vh.data(Qt.UserRole)
@@ -639,6 +815,26 @@ class QDAWindow(QMainWindow):
         if col == 1:
             self._open_segments_dialog(row_id)
             return
+
+        # Check if clicking a LINK
+        item = self.table.item(row, col)
+        if item:
+            # Handle "link" column double click
+            if col >= 2:
+                col_def = self.columns[col - 2]
+                if col_def['col_type'] == 'link':
+                    link_id = item.data(Qt.UserRole + 1)
+                    if link_id:
+                        self._jump_to_pdf_node(link_id)
+                    else:
+                        self._link_cell_to_pdf(row, col)
+                    return
+
+            # Handle manual links in text columns
+            link_id = item.data(Qt.UserRole + 1)
+            if link_id:
+                self._jump_to_pdf_node(link_id)
+                return
 
         rec = self.db.get_row(row_id)
         if not rec: return
@@ -651,23 +847,124 @@ class QDAWindow(QMainWindow):
         dlg = SegmentsDialog(self, self.db, rec, self.columns)
         if dlg.exec() == QDialog.Accepted: self.load_data()
 
+    def _grid_context_menu(self, pos):
+        item = self.table.itemAt(pos)
+        if not item: return
+
+        row = item.row()
+        col = item.column()
+
+        # Calculate col index in self.columns
+        # Columns start at index 2 in table
+        if col < 2: return
+        col_def = self.columns[col - 2]
+
+        menu = QMenu()
+        link_action = menu.addAction("Link to PDF Node...")
+        clear_link_action = menu.addAction("Clear Link")
+
+        action = menu.exec(self.table.viewport().mapToGlobal(pos))
+        if action == link_action:
+            self._link_cell_to_pdf(row, col)
+        elif action == clear_link_action:
+            self.table.item(row, col).setText("")
+            # This triggers cellChanged which triggers save,
+            # clearing the data in _save_row because text is empty
+
+    def _link_cell_to_pdf(self, row, col):
+        # Open Link Dialog
+        dlg = QDAPdfLinkDialog(self.db, parent=self)
+        if dlg.exec() == QDialog.Accepted:
+            node_id = dlg.selected_node_id
+            label = dlg.selected_node_label
+
+            if node_id:
+                # Update the item immediately to show the link
+                item = self.table.item(row, col)
+                self.table.blockSignals(True)  # Prevent premature save
+                item.setText(label)
+                item.setData(Qt.UserRole + 1, node_id)
+
+                # Style it
+                item.setForeground(QColor("blue"))
+                font = item.font()
+                font.setUnderline(True)
+                item.setFont(font)
+                item.setToolTip("Double-click to open PDF Node")
+                self.table.blockSignals(False)
+
+                # Now trigger save manually to persist it properly
+                self._save_row(row)
+
+    def _jump_to_pdf_node(self, node_id):
+        """Launch separate PDF viewer window."""
+        if PdfNodeViewer is None:
+            QMessageBox.warning(self, "Error", "PDF Viewer component missing.")
+            return
+
+        # Get details from tracker DB
+        node = self.db.get_tracker_node_details(node_id)
+        if not node:
+            QMessageBox.warning(self, "Error", "Node not found in Reading Tracker.")
+            return
+
+        # Reconstruct path assuming standard layout
+        tracker_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        att_path = node['file_path']  # Now provided by updated get_tracker_node_details
+        full_path = os.path.join(tracker_root, "Attachments", att_path)
+
+        if not os.path.exists(full_path):
+            QMessageBox.warning(self, "Error", f"PDF file not found at:\n{full_path}")
+            return
+
+        try:
+            # Check existing viewers
+            for v in self.pdf_viewers:
+                if v.attachment_id == node['attachment_id']:
+                    v.show()
+                    v.raise_()
+                    v.activateWindow()
+                    v.jump_to_node(node_id)
+                    return
+
+            # Open new
+            viewer = PdfNodeViewer(self.db, node['reading_id'], node['attachment_id'], full_path, parent=None)
+            viewer.show()
+            self.pdf_viewers.append(viewer)
+
+            # Clean up
+            viewer.finished.connect(lambda: self.pdf_viewers.remove(viewer) if viewer in self.pdf_viewers else None)
+
+            # Jump
+            QTimer.singleShot(100, lambda: viewer.jump_to_node(node_id))
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to launch viewer: {e}")
+
     def _row_menu(self, pos):
         vh = self.table.verticalHeader()
         row = vh.logicalIndexAt(pos)
         if row < 0: return
 
-        # --- FIX IS HERE ---
-        # WRONG: row_id = vh.verticalHeaderItem(row).data(Qt.UserRole)
         # CORRECT: Get item from TABLE, not HEADER VIEW
         item = self.table.verticalHeaderItem(row)
         if not item: return
         row_id = item.data(Qt.UserRole)
 
         menu = QMenu(self)
+
+        # --- NEW: Edit Entry Details ---
+        act_details = menu.addAction("Edit Entry Details")
+
         act_seg = menu.addAction("Edit Segments…")
         act_del = menu.addAction("Delete Row")
+
         res = menu.exec(vh.mapToGlobal(pos))
-        if res == act_seg:
+
+        if res == act_details:
+            # Reuse existing method, pass dummy col=2 (first data col) to trigger logic
+            self._open_row_detail(row, 2)
+        elif res == act_seg:
             self._open_segments_dialog(row_id)
         elif res == act_del:
             if QMessageBox.question(self, "Delete", "Delete Scene?") == QMessageBox.Yes:
@@ -684,20 +981,69 @@ class QDAWindow(QMainWindow):
             self.load_data()
 
     def _show_codebook_report(self):
-        # (Codebook report logic same as before)
-        pass
+        path, _ = QFileDialog.getSaveFileName(self, "Export Codebook Structure", "codebook_structure.txt",
+                                              "Text Files (*.txt)")
+        if not path:
+            return
+
+        try:
+            # Columns are already ordered in self.columns
+            # But we need to reconstruct parent-child relationships for the structure view
+            # QDA columns don't strictly have a 'parent' field in qda_columns table unless
+            # we check meta data or assume a flat list.
+            # Wait, the user mentioned "parents and children".
+            # The qda_database_manager setup_tables has `parent_id` in `qda_columns` (or `qda_codebook_meta`?)
+            # Let's check the schema provided in qda_database_manager.py
+            # qda_columns table has `parent_id INTEGER`.
+
+            # Build tree
+            cols = self.columns  # Already loaded and sorted by display order
+            col_map = {c['id']: c for c in cols}
+            children_map = {c['id']: [] for c in cols}
+            roots = []
+
+            for c in cols:
+                pid = c.get('parent_id')
+                if pid and pid in children_map:
+                    children_map[pid].append(c)
+                else:
+                    roots.append(c)
+
+            lines = []
+            lines.append(f"Codebook Structure for Worksheet: {self.ws_name}")
+            lines.append("=" * 50)
+            lines.append("")
+
+            def print_node(node, depth=0):
+                indent = "    " * depth
+                lines.append(f"{indent}- {node['name']} ({node['col_type']})")
+
+                # --- ADD DROPDOWN OPTIONS TO REPORT ---
+                if node['col_type'] == 'dropdown':
+                    try:
+                        opts = json.loads(node.get('options_json') or "[]")
+                        if opts:
+                            for opt in opts:
+                                lines.append(f"{indent}    * {opt}")
+                    except:
+                        pass
+
+                for child in children_map.get(node['id'], []):
+                    print_node(child, depth + 1)
+
+            for root in roots:
+                print_node(root)
+
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines))
+
+            QMessageBox.information(self, "Success", f"Codebook structure exported to:\n{path}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to export codebook: {e}")
 
     def _show_reports(self):
-        # (Reports logic same as before)
-        pass
-
-    def _run_coding_summary_report(self):
-        # (Summary report same as before)
-        pass
-
-    def _run_full_scene_report(self):
-        # (Full scene report same as before)
-        pass
+        QMessageBox.information(self, "Reports", "Reports not implemented yet.")
 
     # --- EXPORT CSV (FLATTENED) ---
     def _export_csv(self):
@@ -753,6 +1099,7 @@ class QDAWindow(QMainWindow):
             QMessageBox.critical(self, "Export Error", str(e))
 
     def _grid_context_menu(self, pos):
+        # Handled in customContextMenuRequested above
         pass
 
 

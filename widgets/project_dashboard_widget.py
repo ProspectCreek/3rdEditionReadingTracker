@@ -1,3 +1,4 @@
+# widgets/project_dashboard_widget.py
 import sys
 import os
 import subprocess
@@ -12,7 +13,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, Slot, QTimer, QPoint, QUrl, QSize, QRectF
 from PySide6.QtGui import (
     QAction, QIcon, QPixmap, QPainter, QDesktopServices,
-    QTextDocument, QAbstractTextDocumentLayout, QPalette, QColor
+    QTextDocument, QAbstractTextDocumentLayout, QPalette, QColor, QTextCharFormat
 )
 from PySide6.QtSvg import QSvgRenderer
 
@@ -53,6 +54,24 @@ try:
     from dialogs.edit_reading_rules_dialog import EditReadingRulesDialog
 except ImportError:
     EditReadingRulesDialog = None
+
+# --- UPDATED IMPORT BLOCK FOR DEBUGGING ---
+try:
+    from tabs.pdf_node_viewer import PdfNodeViewer
+except ImportError as e:
+    print("-" * 60)
+    print("CRITICAL ERROR: Could not import PdfNodeViewer.")
+    print(f"Error Details: {e}")
+    traceback.print_exc()  # This prints the file and line number
+    print("-" * 60)
+    PdfNodeViewer = None
+# ------------------------------------------
+
+try:
+    from dialogs.pdf_link_dialog import PdfLinkDialog
+except ImportError:
+    print("Error: Could not import PdfLinkDialog")
+    PdfLinkDialog = None
 
 
 # --- Word Wrap Delegate (FIXED FOR COMPACTNESS & COLOR & WRAPPING) ---
@@ -149,6 +168,9 @@ class ProjectDashboardWidget(QWidget):
         self.todo_list_tab = None
         self.assignment_tab = None
         self.mindmaps_tab = None
+
+        # Store open PDF viewers to prevent garbage collection
+        self.pdf_viewers = []  # List of PdfNodeViewer instances
 
         self._programmatic_tab_change = False
 
@@ -314,6 +336,15 @@ class ProjectDashboardWidget(QWidget):
         self.goals_text_editor = RichTextEditorTab("Project Goals", spell_checker_service=self.spell_checker_service)
         il.addWidget(self.goals_text_editor)
 
+        # --- NEW: Connect link to PDF signal ---
+        self.purpose_text_editor.linkPdfNodeTriggered.connect(
+            lambda: self._on_link_pdf_node_triggered(self.purpose_text_editor))
+        self.goals_text_editor.linkPdfNodeTriggered.connect(
+            lambda: self._on_link_pdf_node_triggered(self.goals_text_editor))
+        self.purpose_text_editor.editor.smartAnchorClicked.connect(self._on_editor_link_clicked)
+        self.goals_text_editor.editor.smartAnchorClicked.connect(self._on_editor_link_clicked)
+        # --- END NEW ---
+
         self.top_splitter.addWidget(readings_widget)
         self.top_splitter.addWidget(info_widget)
         self.top_splitter.setStretchFactor(0, 1)
@@ -402,6 +433,14 @@ class ProjectDashboardWidget(QWidget):
             self.assignment_tab = AssignmentTab(self.db, self.project_id,
                                                 spell_checker_service=self.spell_checker_service)
             self.top_tab_widget.addTab(self.assignment_tab, "Assignment")
+            # --- NEW: Connect Assignment Editors ---
+            self.assignment_tab.instructions_editor.linkPdfNodeTriggered.connect(
+                lambda: self._on_link_pdf_node_triggered(self.assignment_tab.instructions_editor))
+            self.assignment_tab.draft_editor.linkPdfNodeTriggered.connect(
+                lambda: self._on_link_pdf_node_triggered(self.assignment_tab.draft_editor))
+            self.assignment_tab.instructions_editor.editor.smartAnchorClicked.connect(self._on_editor_link_clicked)
+            self.assignment_tab.draft_editor.editor.smartAnchorClicked.connect(self._on_editor_link_clicked)
+            # --- END NEW ---
 
         self.mindmaps_tab = MindmapTab(self.db, self.project_id)
         self.top_tab_widget.addTab(self.mindmaps_tab, "Mindmaps")
@@ -411,6 +450,13 @@ class ProjectDashboardWidget(QWidget):
         self.synthesis_tab.openReading.connect(self.open_reading_tab)
         self.synthesis_tab.tagsUpdated.connect(self._on_tags_updated)
         self.top_tab_widget.addTab(self.synthesis_tab, "Synthesis")
+
+        # --- NEW: Connect Synthesis Editors ---
+        if hasattr(self.synthesis_tab, 'notes_editor'):
+            self.synthesis_tab.notes_editor.linkPdfNodeTriggered.connect(
+                lambda: self._on_link_pdf_node_triggered(self.synthesis_tab.notes_editor))
+            self.synthesis_tab.notes_editor.editor.smartAnchorClicked.connect(self._on_editor_link_clicked)
+        # --- END NEW ---
 
         self.graph_view_tab = GraphViewTab(self.db, self.project_id)
         self.graph_view_tab.readingDoubleClicked.connect(self.open_reading_tab)
@@ -438,6 +484,12 @@ class ProjectDashboardWidget(QWidget):
                                           spell_checker_service=self.spell_checker_service)
             self.editor_tab_widget.addTab(editor_tab, tab_title)
             self.bottom_tabs.append(editor_tab)
+
+            # --- NEW: Connect Bottom Tab Editors ---
+            editor_tab.editor.linkPdfNodeTriggered.connect(
+                lambda e=editor_tab.editor: self._on_link_pdf_node_triggered(e))
+            editor_tab.editor.editor.smartAnchorClicked.connect(self._on_editor_link_clicked)
+            # --- END NEW ---
 
         QTimer.singleShot(0, self._enforce_equal_splits)
 
@@ -509,6 +561,22 @@ class ProjectDashboardWidget(QWidget):
 
         tab.readingTitleChanged.connect(self._handle_reading_title_change)
         tab.openSynthesisTab.connect(self.open_tag_from_graph)
+
+        # --- Connect AttachmentsTab PDF signal ---
+        if hasattr(tab, 'attachments_tab'):
+            tab.attachments_tab.openPdfNodesRequested.connect(self.open_pdf_node_viewer)
+
+        # --- NEW: Connect Editors inside Reading Tab (Notes + Bottom Tabs) ---
+        if hasattr(tab, 'notes_editor'):
+            tab.notes_editor.linkPdfNodeTriggered.connect(lambda: self._on_link_pdf_node_triggered(tab.notes_editor))
+            tab.notes_editor.editor.smartAnchorClicked.connect(self._on_editor_link_clicked)
+
+        # Iterate through bottom tabs that have editors and connect them
+        # Note: This relies on ReadingNotesTab exposing them or us iterating them
+        for _, editor in tab.bottom_tabs_with_editors:
+            editor.linkPdfNodeTriggered.connect(lambda e=editor: self._on_link_pdf_node_triggered(e))
+            editor.editor.smartAnchorClicked.connect(self._on_editor_link_clicked)
+        # --- END NEW ---
 
         self.reading_tabs[reading_id] = tab
 
@@ -953,19 +1021,175 @@ class ProjectDashboardWidget(QWidget):
             self.synthesis_tab.select_tag_by_id(tag_id)
             print(f"  Dashboard: Synthesis jump complete.")
 
+    # --- NEW: Open PDF Node Viewer ---
+    @Slot(int, int, str)
+    def open_pdf_node_viewer(self, reading_id, attachment_id, file_path):
+        """Opens a new PDF viewer for the given attachment."""
+        if PdfNodeViewer is None:
+            QMessageBox.critical(self, "Error", "PdfNodeViewer module not loaded.")
+            return
+
+        try:
+            # Check if already open? (Optional optimization)
+            # For now, let's allow multiple windows so user can view different PDFs
+
+            viewer = PdfNodeViewer(self.db, reading_id, attachment_id, file_path, parent=None)  # Parent=None for popout
+            viewer.show()
+
+            # Keep reference to prevent garbage collection
+            self.pdf_viewers.append(viewer)
+
+            # Clean up closed viewers
+            def cleanup():
+                if viewer in self.pdf_viewers:
+                    self.pdf_viewers.remove(viewer)
+
+            viewer.finished.connect(cleanup)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to open PDF viewer: {e}")
+
+    # --- NEW: Handle Link to PDF Node ---
+    @Slot()
+    def _on_link_pdf_node_triggered(self, editor_widget):
+        """
+        Opens the PdfLinkDialog and inserts the link into the editor
+        if selected.
+        """
+        if not PdfLinkDialog:
+            QMessageBox.critical(self, "Error", "PdfLinkDialog not loaded.")
+            return
+
+        cursor = editor_widget.editor.textCursor()
+        if not cursor.hasSelection():
+            return
+
+        dialog = PdfLinkDialog(self.db, self.project_id, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            node_id = dialog.selected_node_id
+            node_label = dialog.selected_node_label
+
+            if node_id:
+                # FIX 2: Use 3 slashes to avoid IP address normalization (0.0.0.1)
+                url_str = f"pdfnode:///{node_id}"
+
+                # FIX 1: Use formatting instead of raw HTML to preserve font
+                # Get current format to preserve font family/size
+                fmt = cursor.charFormat()
+
+                # Apply link style
+                fmt.setAnchor(True)
+                fmt.setAnchorHref(url_str)
+                fmt.setForeground(QColor("#800080"))  # Purple as per user snippet
+                fmt.setFontUnderline(True)
+
+                # Re-insert text with new format
+                # We are replacing the selection with itself, but styled
+                selected_text = cursor.selectedText()
+                cursor.insertText(selected_text, fmt)
+
+    @Slot(QUrl)
+    def _on_editor_link_clicked(self, url):
+        """Handles clicks on pdfnode:// links."""
+        # Fix: Use .scheme() and .path() for robust parsing
+        if url.scheme() == "pdfnode":
+            try:
+                # Try path first (new format: pdfnode:///123 -> path is /123)
+                path = url.path()
+                if path.startswith('/'):
+                    node_id_str = path[1:]
+                else:
+                    node_id_str = path
+
+                if node_id_str and node_id_str.isdigit():
+                    node_id = int(node_id_str)
+                else:
+                    # Fallback to host (old format: pdfnode://123 -> 0.0.0.123 or similar)
+                    host = url.host()
+                    # If it looks like an IP, it's complicated, but if it's a simple int it might work
+                    if host:
+                        node_id = int(host)  # This raises the error the user saw for "0.0.0.1" but catches valid ints
+
+                self._jump_to_pdf_node(node_id)
+
+            except Exception as e:
+                print(f"Error handling pdfnode link: {e}")
+
+    def _jump_to_pdf_node(self, node_id):
+        """Opens the viewer and jumps to the node."""
+        try:
+            # 1. Get node details
+            node = self.db.get_pdf_node_details(node_id)
+            if not node:
+                QMessageBox.warning(self, "Error", "Node not found.")
+                return
+
+            reading_id = node['reading_id']
+            attachment_id = node['attachment_id']
+
+            # 2. Get file path
+            attachment = self.db.get_attachment_details(attachment_id)
+            if not attachment:
+                QMessageBox.warning(self, "Error", "Attachment file not found.")
+                return
+
+            # Construct full path
+            project_root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            attachments_dir = os.path.join(project_root_dir, "Attachments")
+            file_path = os.path.join(attachments_dir, attachment['file_path'])
+
+            if not os.path.exists(file_path):
+                QMessageBox.warning(self, "Error", f"File not found on disk:\n{file_path}")
+                return
+
+            # 3. Open Viewer (or find existing)
+            # Check if viewer for this file is already open
+            target_viewer = None
+            for v in self.pdf_viewers:
+                if v.attachment_id == attachment_id:
+                    target_viewer = v
+                    break
+
+            if not target_viewer:
+                # Open new
+                self.open_pdf_node_viewer(reading_id, attachment_id, file_path)
+                # The new viewer is the last one added
+                if self.pdf_viewers:
+                    target_viewer = self.pdf_viewers[-1]
+
+            if target_viewer:
+                target_viewer.show()
+                target_viewer.raise_()
+                target_viewer.activateWindow()
+
+                # 4. Jump to Node
+                # Use a small timer to allow window to show/load
+                QTimer.singleShot(100, lambda: target_viewer.jump_to_node(node_id))
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Jump failed: {e}")
+
+    # --- END NEW ---
+
     @Slot()
     def return_to_home(self):
         try:
             from dialogs.mindmap_editor_window import MindmapEditorWindow
+            # Close mindmaps
             for widget in QApplication.topLevelWidgets():
                 if isinstance(widget, MindmapEditorWindow):
                     print(f"Saving open mindmap: {widget.mindmap_name}...")
                     widget.save_mindmap(show_message=False)
                     widget.close()
+
+            # Close PDF viewers
+            for viewer in list(self.pdf_viewers):
+                viewer.close()
+
         except ImportError:
             pass
         except Exception as e:
-            print(f"Error closing mindmap windows: {e}")
+            print(f"Error closing windows: {e}")
 
         self.save_all_editors()
         self.returnToHome.emit()
