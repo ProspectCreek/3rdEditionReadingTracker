@@ -27,6 +27,9 @@ class DrivingQuestionTab(QWidget):
     Includes a tree view and buttons for CRUD operations.
     """
 
+    # Signal to open a PDF node in the viewer (handled by Dashboard)
+    requestOpenPdfNode = Signal(int)
+
     def __init__(self, db, reading_id: int, parent=None):
         super().__init__(parent)
         self.db = db
@@ -132,6 +135,7 @@ class DrivingQuestionTab(QWidget):
         nickname = q_data.get("nickname", "")
         question_text = q_data.get("question_text", "No question text")
         is_working = q_data.get("is_working_question", False)
+        pdf_node_id = q_data.get("pdf_node_id")
 
         display_text = ""
         # --- NEW: Star is on the left ---
@@ -142,8 +146,14 @@ class DrivingQuestionTab(QWidget):
             display_text += f"({nickname}) "
         display_text += question_text
 
+        # --- NEW: Append PDF Link text ---
+        if pdf_node_id:
+            display_text += " (Right Click for PDF Link)"
+        # --- END NEW ---
+
         item = QTreeWidgetItem(parent_widget, [display_text])
         item.setData(0, Qt.ItemDataRole.UserRole, q_data["id"])
+        item.setData(0, Qt.ItemDataRole.UserRole + 1, dict(q_data))  # Store full data for context menu
 
         # Set font for working question
         if is_working:
@@ -214,6 +224,17 @@ class DrivingQuestionTab(QWidget):
             add_child_action = QAction("Add Research Question (Child)", self)
             add_child_action.triggered.connect(self._add_child_question)
             menu.addAction(add_child_action)
+
+            # --- PDF Link Action ---
+            dq_data = item.data(0, Qt.ItemDataRole.UserRole + 1)
+            pdf_node_id = dq_data.get('pdf_node_id')
+            if pdf_node_id:
+                menu.addSeparator()
+                view_pdf_action = QAction("View Linked PDF Node", self)
+                view_pdf_action.triggered.connect(lambda: self._trigger_pdf_jump(pdf_node_id))
+                menu.addAction(view_pdf_action)
+            # -----------------------
+
             menu.addSeparator()
 
         # Reorder Action
@@ -233,6 +254,16 @@ class DrivingQuestionTab(QWidget):
             menu.addAction(reorder_action)
 
         menu.exec(self.tree_widget.viewport().mapToGlobal(position))
+
+    def _trigger_pdf_jump(self, pdf_node_id):
+        """Emits signal to jump to PDF."""
+        parent = self.parent()
+        while parent:
+            if parent.metaObject().className() == 'ProjectDashboardWidget':
+                if hasattr(parent, '_jump_to_pdf_node'):
+                    parent._jump_to_pdf_node(pdf_node_id)
+                break
+            parent = parent.parent()
 
     @Slot()
     def _handle_save(self, data, question_id=None):
@@ -294,7 +325,8 @@ class DrivingQuestionTab(QWidget):
                             selected_text=summary_text,
                             comment=f"Linked to Driving Question ID {item_id}",
                             unique_doc_id=f"dq-{item_id}-{tag_data['id']}",  # Make unique doc_id
-                            item_link_id=item_id
+                            item_link_id=item_id,
+                            pdf_node_id=data.get("pdf_node_id")  # Pass PDF node ID if present
                         )
             # --- END VIRTUAL ANCHOR FIX ---
 
@@ -310,15 +342,15 @@ class DrivingQuestionTab(QWidget):
         all_questions = self._get_all_questions_flat()
         outline_items = self._get_outline_items()
 
+        # Correct call:
         dialog = EditDrivingQuestionDialog(
-            all_questions=all_questions,
-            outline_items=outline_items,
-            db_manager=self.db,
-            project_id=self.project_id,
+            db=self.db,
+            dq_data={},  # Empty data for new question
             parent=self
         )
+
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            data = dialog.get_data()
+            data = dialog.result_data  # The dialog stores result in result_data
             self._handle_save(data, question_id=None)
 
     @Slot()
@@ -329,22 +361,17 @@ class DrivingQuestionTab(QWidget):
             return
 
         parent_id = item.data(0, Qt.ItemDataRole.UserRole)
-        all_questions = self._get_all_questions_flat()
-        outline_items = self._get_outline_items()
 
         # Pre-set parent in data
         initial_data = {"parent_id": parent_id}
 
         dialog = EditDrivingQuestionDialog(
-            current_question_data=initial_data,
-            all_questions=all_questions,
-            outline_items=outline_items,
-            db_manager=self.db,
-            project_id=self.project_id,
+            db=self.db,
+            dq_data=initial_data,
             parent=self
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            data = dialog.get_data()
+            data = dialog.result_data
             self._handle_save(data, question_id=None)
 
     @Slot()
@@ -355,25 +382,23 @@ class DrivingQuestionTab(QWidget):
             return
 
         question_id = item.data(0, Qt.ItemDataRole.UserRole)
-        all_questions = self._get_all_questions_flat()
-        outline_items = self._get_outline_items()
+
+        # Get fresh data from DB to be safe
         current_data = self.db.get_driving_question_details(question_id)
 
         if not current_data:
             QMessageBox.critical(self, "Error", "Could not find question details.")
             return
 
+        # Correct call:
         dialog = EditDrivingQuestionDialog(
-            current_question_data=current_data,
-            all_questions=all_questions,
-            outline_items=outline_items,
-            db_manager=self.db,
-            project_id=self.project_id,
+            db=self.db,
+            dq_data=current_data,
             parent=self
         )
+
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            data = dialog.get_data()
-            # self.load_questions() # No longer need to reload here
+            data = dialog.result_data
             self._handle_save(data, question_id=question_id)
 
     @Slot()

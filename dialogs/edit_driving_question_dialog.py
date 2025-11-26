@@ -1,270 +1,498 @@
-# dialogs/edit_driving_question_dialog.py
+# tabs/driving_question_tab.py
 import sys
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QFormLayout, QLineEdit, QTextEdit,
-    QComboBox, QCheckBox, QDialogButtonBox,
-    QWidget, QHBoxLayout, QPushButton, QLabel, QMessageBox
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTreeWidget,
+    QTreeWidgetItem, QMenu, QMessageBox, QDialog, QLabel, QFrame,
+    QHeaderView
 )
-from PySide6.QtCore import Qt, Slot
+from PySide6.QtCore import Qt, Signal, QPoint, Slot
+from PySide6.QtGui import QAction, QFont, QColor
 
-# --- NEW: Import ConnectTagsDialog ---
 try:
-    from dialogs.connect_tags_dialog import ConnectTagsDialog
+    from dialogs.edit_driving_question_dialog import EditDrivingQuestionDialog
 except ImportError:
-    print("Error: Could not import ConnectTagsDialog")
-    ConnectTagsDialog = None
+    print("Error: Could not import EditDrivingQuestionDialog")
+    EditDrivingQuestionDialog = None
+
+try:
+    from dialogs.reorder_dialog import ReorderDialog
+except ImportError:
+    print("Error: Could not import ReorderDialog")
+    ReorderDialog = None
 
 
-# --- END NEW ---
-
-
-class EditDrivingQuestionDialog(QDialog):
+class DrivingQuestionTab(QWidget):
     """
-    Dialog for adding or editing a driving question.
+    Widget for managing "Driving Questions" for a reading.
+    Includes a tree view and buttons for CRUD operations.
     """
 
-    def __init__(self, all_questions, outline_items, db_manager=None, project_id=None, current_question_data=None,
-                 parent=None):
+    # Signal to open a PDF node in the viewer (handled by Dashboard)
+    requestOpenPdfNode = Signal(int)
+
+    def __init__(self, db, reading_id: int, parent=None):
         super().__init__(parent)
+        self.db = db
+        self.reading_id = reading_id
+        # --- NEW: Get project_id from reading_details ---
+        try:
+            reading_details = self.db.get_reading_details(self.reading_id)
+            self.project_id = reading_details['project_id']
+        except Exception as e:
+            print(f"Error getting project_id for DrivingQuestionTab: {e}")
+            self.project_id = -1  # Invalid project ID
+        # --- END NEW ---
 
-        self.current_data = current_question_data if current_question_data else {}
-        self.all_questions = all_questions
-        self.outline_items = outline_items
-        self.db = db_manager  # <-- ADD
-        self.project_id = project_id  # <-- ADD
-
-        self.setWindowTitle("Edit Driving Question")
-        if not self.current_data:
-            self.setWindowTitle("Add Driving Question")
-
+        # Main layout
         main_layout = QVBoxLayout(self)
-        form_layout = QFormLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(4)
 
-        # --- Purpose Label ---
-        purpose_label = QLabel(
-            "Purpose: If the author never wrote this book, what puzzle would remain unsolved? "
-            "That's your driving question."
-        )
-        purpose_label.setWordWrap(True)
-        purpose_label.setStyleSheet("font-style: italic; color: #555;")
-        main_layout.addWidget(purpose_label)
+        # --- NEW: Add Instruction Label ---
+        self.prompt_label = QLabel("")
+        self.prompt_label.setWordWrap(True)
+        self.prompt_label.setStyleSheet("font-style: italic; color: #555; padding: 4px;")  # Add padding
+        self.prompt_label.setVisible(False)  # Hidden by default
+        main_layout.addWidget(self.prompt_label)
+        # --- END NEW ---
 
-        # --- Question Text ---
-        self.question_text_edit = QTextEdit()
-        self.question_text_edit.setMinimumHeight(60)
-        self.question_text_edit.setPlaceholderText("Enter the driving question here...")
-        self.question_text_edit.setText(self.current_data.get("question_text", ""))
-        form_layout.addRow("Driving Question:", self.question_text_edit)
+        # Button bar
+        button_bar = QFrame()
+        button_layout = QHBoxLayout(button_bar)
+        button_layout.setContentsMargins(0, 0, 0, 0)
 
-        # --- Nickname ---
-        self.nickname_edit = QLineEdit()
-        self.nickname_edit.setPlaceholderText("e.g., 'The Gratitude Puzzle'")
-        self.nickname_edit.setText(self.current_data.get("nickname", ""))
-        form_layout.addRow("Nickname:", self.nickname_edit)
+        self.btn_add = QPushButton("Add Driving Question")
+        self.btn_edit = QPushButton("Edit")
+        self.btn_delete = QPushButton("Delete")
+        self.btn_move_up = QPushButton("Move Up")
+        self.btn_move_down = QPushButton("Move Down")
 
-        # --- Type (Stated/Inferred) - CHANGED TO COMBOBOX ---
-        self.type_combo = QComboBox()
-        self.type_combo.addItems(["Stated", "Inferred"])
+        button_layout.addWidget(self.btn_add)
+        button_layout.addWidget(self.btn_edit)
+        button_layout.addWidget(self.btn_delete)
+        button_layout.addStretch()
+        button_layout.addWidget(self.btn_move_up)
+        button_layout.addWidget(self.btn_move_down)
+        main_layout.addWidget(button_bar)
 
-        # Set current value or default to Inferred
-        current_type = self.current_data.get("type", "Inferred")
-        self.type_combo.setCurrentText(current_type)
+        # Tree widget
+        self.tree_widget = QTreeWidget()
+        self.tree_widget.setHeaderLabels(["Question"])
+        self.tree_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        main_layout.addWidget(self.tree_widget)
 
-        form_layout.addRow("Type:", self.type_combo)
+        # --- Connections ---
+        self.btn_add.clicked.connect(self._add_question)
+        self.btn_edit.clicked.connect(self._edit_question)
+        self.btn_delete.clicked.connect(self._delete_question)
+        self.btn_move_up.clicked.connect(self._move_up)
+        self.btn_move_down.clicked.connect(self._move_down)
 
-        # --- Question Category ---
-        self.category_combo = QComboBox()
-        self.category_combo.addItems([
-            "Descriptive (what/which)",
-            "Explanatory (why/how)",
-            "Evaluative (true/good)",
-            "Prescriptive (what should we do)"
-        ])
-        self.category_combo.setCurrentText(self.current_data.get("question_category", "Explanatory (why/how)"))
-        form_layout.addRow("Question Category:", self.category_combo)
+        self.tree_widget.itemDoubleClicked.connect(self._edit_question)
+        self.tree_widget.customContextMenuRequested.connect(self.show_context_menu)
+        self.tree_widget.currentItemChanged.connect(self._update_button_states)
 
-        # --- Scope ---
-        scope_layout = QHBoxLayout()
-        scope_layout.setContentsMargins(0, 0, 0, 0)
-        self.scope_combo = QComboBox()
-        self.scope_combo.addItems([
-            "Global",
-            "Part",
-            "Chapter",
-            "Section"
-        ])
-        self.scope_combo.setCurrentText(self.current_data.get("scope", "Global"))
-        scope_layout.addWidget(self.scope_combo)
-        scope_layout.addStretch()
-        form_layout.addRow("Scope:", scope_layout)
+        self.load_questions()
+        self._update_button_states()
 
-        # --- Parent Question ---
-        self.parent_combo = QComboBox()
-        self._populate_parent_combo(self.all_questions, self.current_data.get("id"))
+    def update_instructions(self, instructions_data, key):
+        """Sets the instruction text for this tab."""
+        text = instructions_data.get(key, "")
+        self.prompt_label.setText(text)
+        self.prompt_label.setVisible(bool(text))
 
-        # Set current parent
-        current_parent_id = self.current_data.get("parent_id")
-        if current_parent_id:
-            idx = self.parent_combo.findData(current_parent_id)
-            if idx != -1:
-                self.parent_combo.setCurrentIndex(idx)
-        form_layout.addRow("Parent:", self.parent_combo)
+    def load_questions(self):
+        """Reloads all questions from the database into the tree."""
+        self.tree_widget.clear()
+        try:
+            root_questions = self.db.get_driving_questions(self.reading_id, parent_id=None)
+            # --- FIX: Add loop protection ---
+            visited_ids = set()
+            # --- END FIX ---
+            for q_data in root_questions:
+                self._add_question_to_tree(self.tree_widget, q_data, visited_ids)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not load driving questions: {e}")
+        self._update_button_states()
 
-        # --- Where in Reading (Outline) ---
-        where_layout = QHBoxLayout()
-        where_layout.setContentsMargins(0, 0, 0, 0)
-        self.where_combo = QComboBox()
-        self._populate_where_combo(self.outline_items)
+    def _add_question_to_tree(self, parent_widget, q_data, visited_ids):
+        """Recursive helper to build the tree. Includes loop protection."""
 
-        # Set current location
-        current_outline_id = self.current_data.get("outline_id")
-        if current_outline_id:
-            idx = self.where_combo.findData(current_outline_id)
-            if idx != -1:
-                self.where_combo.setCurrentIndex(idx)
+        q_id = q_data["id"]
 
-        self.page_edit = QLineEdit()
-        self.page_edit.setPlaceholderText("e.g., 10-12")
-        self.page_edit.setFixedWidth(60)
-        self.page_edit.setText(self.current_data.get("pages", ""))
+        # --- FIX: Loop protection ---
+        if q_id in visited_ids:
+            print(f"Error: Detected recursion loop in driving questions! Question ID: {q_id}")
+            # Add a placeholder item to show the error
+            item = QTreeWidgetItem(parent_widget, [f"Error: Loop detected on item {q_id}"])
+            item.setForeground(0, QColor("red"))
+            return
 
-        where_layout.addWidget(self.where_combo)
-        where_layout.addWidget(QLabel("Page(s):"))
-        where_layout.addWidget(self.page_edit)
-        form_layout.addRow("Where in Reading:", where_layout)
-
-        # --- Why this question ---
-        self.why_edit = QTextEdit()
-        self.why_edit.setMinimumHeight(60)
-        self.why_edit.setPlaceholderText("Why do you think this is the question?")
-        self.why_edit.setText(self.current_data.get("why_question", ""))
-        form_layout.addRow("Why I think this is the question:", self.why_edit)
-
-        # --- Synthesis Tags ---
-        tags_layout = QHBoxLayout()
-        tags_layout.setContentsMargins(0, 0, 0, 0)
-        self.tags_edit = QLineEdit()
-        self.tags_edit.setPlaceholderText("e.g., #gratitude, #leadership")
-        self.tags_edit.setText(self.current_data.get("synthesis_tags", ""))
-        connect_btn = QPushButton("Connect...")
-
-        # --- MODIFICATION ---
-        if self.db and self.project_id is not None and ConnectTagsDialog:
-            connect_btn.setEnabled(True)
-            connect_btn.clicked.connect(self._open_connect_tags_dialog)
-        else:
-            connect_btn.setEnabled(False)
-            connect_btn.setToolTip("Database connection not available or dialog not found")
-        # --- END MODIFICATION ---
-
-        tags_layout.addWidget(self.tags_edit)
-        tags_layout.addWidget(connect_btn)
-        form_layout.addRow("Synthesis Tags:", tags_layout)
-
-        main_layout.addLayout(form_layout)
-
-        # --- Checkboxes ---
-        self.is_working_check = QCheckBox("Mark as Working Question")
-        if self.current_data.get("is_working_question"):
-            self.is_working_check.setChecked(True)
-        main_layout.addWidget(self.is_working_check)
-
-        # --- Standard OK/Cancel buttons ---
-        self.button_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        self.button_box.accepted.connect(self.accept)
-        self.button_box.rejected.connect(self.reject)
-        main_layout.addWidget(self.button_box)
-
-    def _get_all_descendant_ids(self, all_questions, parent_id):
-        """Recursively finds all children and grandchildren IDs."""
-        descendant_ids = set()
-        # Find direct children
-        children = [q for q in all_questions if q.get('parent_id') == parent_id]
-
-        for child in children:
-            child_id = child['id']
-            if child_id not in descendant_ids:
-                descendant_ids.add(child_id)
-                # Recursively find children of this child
-                descendant_ids.update(self._get_all_descendant_ids(all_questions, child_id))
-        return descendant_ids
-
-    def _populate_parent_combo(self, all_questions, current_question_id=None):
-        """Populates the parent dropdown, excluding self and descendants."""
-        self.parent_combo.addItem("[No Parent]", None)
-
-        # --- FIX: Exclude self and all descendants ---
-        ids_to_exclude = set()
-        if current_question_id:
-            ids_to_exclude.add(current_question_id)
-            # Find all children, grandchildren, etc.
-            ids_to_exclude.update(self._get_all_descendant_ids(all_questions, current_question_id))
+        visited_ids.add(q_id)
         # --- END FIX ---
 
-        # For now, we only show root-level questions as potential parents
-        # A more complex hierarchy might be needed later
-        for q in all_questions:
-            if q['id'] not in ids_to_exclude:
-                display_text = q.get('nickname') or q.get('question_text', 'Untitled Question')
-                display_text = display_text[:70] + "..." if len(display_text) > 70 else display_text
-                self.parent_combo.addItem(display_text, q['id'])
+        # Format display text
+        nickname = q_data.get("nickname", "")
+        question_text = q_data.get("question_text", "No question text")
+        is_working = q_data.get("is_working_question", False)
+        pdf_node_id = q_data.get("pdf_node_id")
 
-    def _populate_where_combo(self, outline_items, indent=0):
-        """Recursively populates the 'Where in Reading' dropdown."""
-        if indent == 0:
-            self.where_combo.addItem("[Reading-Level Notes]", None)  # Top-level
+        display_text = ""
+        # --- NEW: Star is on the left ---
+        if is_working:
+            display_text += "★ "  # Add a star for working question
 
-        for item in outline_items:
-            prefix = "  " * indent
-            display_text = f"{prefix} {item['section_title']}"
-            self.where_combo.addItem(display_text, item['id'])
+        if nickname:
+            display_text += f"({nickname}) "
+        display_text += question_text
 
-            if 'children' in item:
-                self._populate_where_combo(item['children'], indent + 1)
+        # --- NEW: Append PDF Link text ---
+        if pdf_node_id:
+            display_text += " (PDF Link)"
+        # --- END NEW ---
 
-    def get_data(self):
-        """Returns all data from the dialog fields in a dictionary."""
-        return {
-            "question_text": self.question_text_edit.toPlainText().strip(),
-            "nickname": self.nickname_edit.text().strip(),
-            "type": self.type_combo.currentText(),  # <-- Changed from radios to combo
-            "question_category": self.category_combo.currentText(),
-            "scope": self.scope_combo.currentText(),
-            "parent_id": self.parent_combo.currentData(),
-            "outline_id": self.where_combo.currentData(),
-            "pages": self.page_edit.text().strip(),
-            "why_question": self.why_edit.toPlainText().strip(),
-            "synthesis_tags": self.tags_edit.text().strip(),
-            "is_working_question": self.is_working_check.isChecked()
-        }
+        item = QTreeWidgetItem(parent_widget, [display_text])
+        item.setData(0, Qt.ItemDataRole.UserRole, q_data["id"])
+        item.setData(0, Qt.ItemDataRole.UserRole + 1, dict(q_data))  # Store full data for context menu
 
-    # --- NEW: Slot to open tag connector ---
+        # Set font for working question
+        if is_working:
+            font = item.font(0)
+            font.setBold(True)
+            item.setFont(0, font)
+            item.setForeground(0, QColor("#0055A4"))  # A blue color
+
+        # Recursively add children
+        child_questions = self.db.get_driving_questions(self.reading_id, parent_id=q_data["id"])
+        for child_data in child_questions:
+            # --- FIX: Pass a copy of the visited set for this branch ---
+            self._add_question_to_tree(item, child_data, visited_ids.copy())
+
+        item.setExpanded(True)
+
+    def _get_all_questions_flat(self):
+        """Fetches all questions for this reading as a flat list for the parent dropdown."""
+        # --- FIX: Use parent_id=True to get ALL questions for loop checking ---
+        return self.db.get_driving_questions(self.reading_id, parent_id=True)
+        # --- END FIX ---
+
+    def _get_outline_items(self, parent_id=None):
+        """Recursively fetches outline items to build a nested list for the dialog."""
+        items = self.db.get_reading_outline(self.reading_id, parent_id=parent_id)
+        for item in items:
+            # item is already a dict
+            children = self._get_outline_items(parent_id=item['id'])
+            if children:
+                item['children'] = children
+        return items
+
+    def _update_button_states(self):
+        """Enables/disables buttons based on selection."""
+        item = self.tree_widget.currentItem()
+        is_item_selected = item is not None
+
+        self.btn_edit.setEnabled(is_item_selected)
+        self.btn_delete.setEnabled(is_item_selected)
+
+        # Move logic
+        can_move_up = False
+        can_move_down = False
+        if is_item_selected:
+            parent = item.parent()
+            if parent:
+                index = parent.indexOfChild(item)
+                can_move_up = index > 0
+                can_move_down = index < parent.childCount() - 1
+            else:  # Root item
+                index = self.tree_widget.indexOfTopLevelItem(item)
+                can_move_up = index > 0
+                can_move_down = index < self.tree_widget.topLevelItemCount() - 1
+
+        self.btn_move_up.setEnabled(can_move_up)
+        self.btn_move_down.setEnabled(can_move_down)
+
+    def show_context_menu(self, position):
+        menu = QMenu(self)
+        item = self.tree_widget.itemAt(position)
+
+        menu.addAction(self.btn_add.text(), self._add_question)
+
+        if item:
+            menu.addAction(self.btn_edit.text(), self._edit_question)
+            menu.addAction(self.btn_delete.text(), self._delete_question)
+            menu.addSeparator()
+            add_child_action = QAction("Add Research Question (Child)", self)
+            add_child_action.triggered.connect(self._add_child_question)
+            menu.addAction(add_child_action)
+
+            # --- PDF Link Action ---
+            dq_data = item.data(0, Qt.ItemDataRole.UserRole + 1)
+            pdf_node_id = dq_data.get('pdf_node_id')
+            if pdf_node_id:
+                menu.addSeparator()
+                view_pdf_action = QAction("View Linked PDF Node", self)
+                view_pdf_action.triggered.connect(lambda: self._trigger_pdf_jump(pdf_node_id))
+                menu.addAction(view_pdf_action)
+            # -----------------------
+
+            menu.addSeparator()
+
+        # Reorder Action
+        has_siblings = False
+        if item:
+            parent = item.parent()
+            if parent:
+                has_siblings = parent.childCount() > 1
+            else:
+                has_siblings = self.tree_widget.topLevelItemCount() > 1
+        elif self.tree_widget.topLevelItemCount() > 1:
+            has_siblings = True
+
+        if has_siblings and ReorderDialog:
+            reorder_action = QAction("Reorder Items...", self)
+            reorder_action.triggered.connect(self._reorder_questions)
+            menu.addAction(reorder_action)
+
+        menu.exec(self.tree_widget.viewport().mapToGlobal(position))
+
+    def _trigger_pdf_jump(self, pdf_node_id):
+        """Emits signal to jump to PDF."""
+        parent = self.parent()
+        while parent:
+            if parent.metaObject().className() == 'ProjectDashboardWidget':
+                if hasattr(parent, '_jump_to_pdf_node'):
+                    parent._jump_to_pdf_node(pdf_node_id)
+                break
+            parent = parent.parent()
+
     @Slot()
-    def _open_connect_tags_dialog(self):
-        if not self.db or self.project_id is None:
-            QMessageBox.warning(self, "Error", "Database connection is not available.")
-            return
-        if not ConnectTagsDialog:
-            QMessageBox.critical(self, "Error", "ConnectTagsDialog could not be loaded.")
-            return
+    def _handle_save(self, data, question_id=None):
+        """Central logic for saving a question (add or edit)."""
+        # --- Working Question Check ---
+        if data.get("is_working_question"):
+            current_working_q = self.db.find_current_working_question(self.reading_id)
+
+            if current_working_q and current_working_q['id'] != question_id:
+                wq_name = current_working_q.get('nickname') or current_working_q.get('question_text',
+                                                                                     'another question')
+                msg = f"This will replace '{wq_name[:50]}...' as the working question. Continue?"
+
+                reply = QMessageBox.question(
+                    self, "Replace Working Question?", msg,
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No
+                )
+                if reply == QMessageBox.StandardButton.No:
+                    data["is_working_question"] = False  # Uncheck it if user cancelled
+
+            if data.get("is_working_question"):  # Check again in case user cancelled
+                # Unset all others
+                self.db.clear_all_working_questions(self.reading_id)
 
         try:
-            # 1. Get all tags for this project
-            all_project_tags = self.db.get_project_tags(self.project_id)
+            item_id = None
+            if question_id:
+                # Update existing
+                self.db.update_driving_question(question_id, data)
+                item_id = question_id
+            else:
+                # Add new
+                item_id = self.db.add_driving_question(self.reading_id, data)
 
-            # 2. Get currently selected tags from the line edit
-            current_tags_text = self.tags_edit.text().strip()
-            selected_tag_names = [tag.strip() for tag in current_tags_text.split(',') if tag.strip()]
+            if not item_id:
+                raise Exception("Failed to get item ID after save/update.")
 
-            # 3. Open the dialog
-            dialog = ConnectTagsDialog(all_project_tags, selected_tag_names, self)
-            if dialog.exec() == QDialog.DialogCode.Accepted:
-                # 4. Update the line edit with the new tag list
-                new_names = dialog.get_selected_tag_names()
-                self.tags_edit.setText(", ".join(new_names))
+            # --- VIRTUAL ANCHOR FIX ---
+            # 1. Clear all existing virtual anchors for this item
+            self.db.delete_anchors_by_item_link_id(item_id)
 
+            # 2. Add new ones based on the tags
+            tags_text = data.get("synthesis_tags", "")
+            if tags_text:
+                tag_names = [tag.strip() for tag in tags_text.split(',') if tag.strip()]
+                q_text = data.get('question_text', '')[:50]
+                nickname = data.get('nickname', '')
+                summary_text = f"Driving Question: {nickname or q_text}..."
+
+                for tag_name in tag_names:
+                    tag_data = self.db.get_or_create_tag(tag_name, self.project_id)
+                    if tag_data:
+                        self.db.create_anchor(
+                            project_id=self.project_id,
+                            reading_id=self.reading_id,
+                            outline_id=data.get("outline_id"),
+                            tag_id=tag_data['id'],
+                            selected_text=summary_text,
+                            comment=f"Linked to Driving Question ID {item_id}",
+                            unique_doc_id=f"dq-{item_id}-{tag_data['id']}",  # Make unique doc_id
+                            item_link_id=item_id,
+                            pdf_node_id=data.get("pdf_node_id")  # Pass PDF node ID if present
+                        )
+            # --- END VIRTUAL ANCHOR FIX ---
+
+            self.load_questions()  # Refresh tree
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Could not open tag connector: {e}")
-    # --- END NEW ---
+            QMessageBox.critical(self, "Error", f"Could not save question: {e}")
+            import traceback
+            traceback.print_exc()
+
+    @Slot()
+    def _add_question(self):
+        """Adds a new root-level question."""
+        all_questions = self._get_all_questions_flat()
+        outline_items = self._get_outline_items()
+
+        # Correct call:
+        dialog = EditDrivingQuestionDialog(
+            db=self.db,
+            dq_data={},  # Empty data for new question
+            parent=self
+        )
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            data = dialog.result_data  # The dialog stores result in result_data
+            self._handle_save(data, question_id=None)
+
+    @Slot()
+    def _add_child_question(self):
+        """Adds a child question to the selected item."""
+        item = self.tree_widget.currentItem()
+        if not item:
+            return
+
+        parent_id = item.data(0, Qt.ItemDataRole.UserRole)
+
+        # Pre-set parent in data
+        initial_data = {"parent_id": parent_id}
+
+        dialog = EditDrivingQuestionDialog(
+            db=self.db,
+            dq_data=initial_data,
+            parent=self
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            data = dialog.result_data
+            self._handle_save(data, question_id=None)
+
+    @Slot()
+    def _edit_question(self):
+        """Edits the selected question."""
+        item = self.tree_widget.currentItem()
+        if not item:
+            return
+
+        question_id = item.data(0, Qt.ItemDataRole.UserRole)
+
+        # Get fresh data from DB to be safe
+        current_data = self.db.get_driving_question_details(question_id)
+
+        if not current_data:
+            QMessageBox.critical(self, "Error", "Could not find question details.")
+            return
+
+        # Correct call:
+        dialog = EditDrivingQuestionDialog(
+            db=self.db,
+            dq_data=current_data,
+            parent=self
+        )
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            data = dialog.result_data
+            self._handle_save(data, question_id=question_id)
+
+    @Slot()
+    def _delete_question(self):
+        """Deletes the selected question and its children."""
+        item = self.tree_widget.currentItem()
+        if not item:
+            return
+
+        question_id = item.data(0, Qt.ItemDataRole.UserRole)
+        reply = QMessageBox.question(
+            self, "Delete Question",
+            "Are you sure you want to delete this question and all its sub-questions?\n\nThis will also delete any linked synthesis tags.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                # Deleting the question will automatically cascade-delete
+                # the linked anchors thanks to the schema.
+                self.db.delete_driving_question(question_id)
+                self.load_questions()
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Could not delete question: {e}")
+
+    @Slot()
+    def _move_up(self):
+        item = self.tree_widget.currentItem()
+        if not item: return
+        self._move_item(item, -1)
+
+    @Slot()
+    def _move_down(self):
+        item = self.tree_widget.currentItem()
+        if not item: return
+        self._move_item(item, 1)
+
+    def _move_item(self, item, direction):
+        """Moves an item up (-1) or down (1) in its list."""
+        parent = item.parent()
+        if parent:
+            index = parent.indexOfChild(item)
+            new_index = index + direction
+            if 0 <= new_index < parent.childCount():
+                parent.takeChild(index)
+                parent.insertChild(new_index, item)
+                self.tree_widget.setCurrentItem(item)
+                self._save_order(parent)
+        else:
+            index = self.tree_widget.indexOfTopLevelItem(item)
+            new_index = index + direction
+            if 0 <= new_index < self.tree_widget.topLevelItemCount():
+                self.tree_widget.takeTopLevelItem(index)
+                self.tree_widget.insertTopLevelItem(new_index, item)
+                self.tree_widget.setCurrentItem(item)
+                self._save_order(None)  # None for root
+
+        self._update_button_states()
+
+    @Slot()
+    def _reorder_questions(self):
+        """Opens the full reorder dialog."""
+        item = self.tree_widget.currentItem()
+        parent_item = item.parent() if item else None
+        parent_id = parent_item.data(0, Qt.ItemDataRole.UserRole) if parent_item else None
+
+        try:
+            siblings = self.db.get_driving_questions(self.reading_id, parent_id=parent_id)
+            if len(siblings) < 2:
+                QMessageBox.information(self, "Reorder", "Not enough items to reorder.")
+                return
+
+            items_to_reorder = [(q.get('nickname') or q.get('question_text', '...'), q['id']) for q in siblings]
+            dialog = ReorderDialog(items_to_reorder, self)
+
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                ordered_ids = dialog.ordered_db_ids
+                self.db.update_driving_question_order(ordered_ids)
+                self.load_questions()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not reorder questions: {e}")
+
+    def _save_order(self, parent_item):
+        """Saves the display order of items under a parent."""
+        ordered_ids = []
+        if parent_item:
+            for i in range(parent_item.childCount()):
+                ordered_ids.append(parent_item.child(i).data(0, Qt.ItemDataRole.UserRole))
+        else:
+            for i in range(self.tree_widget.topLevelItemCount()):
+                ordered_ids.append(self.tree_widget.topLevelItem(i).data(0, Qt.ItemDataRole.UserRole))
+
+        try:
+            self.db.update_driving_question_order(ordered_ids)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not save new order: {e}")
+            self.load_questions()  # Revert on error

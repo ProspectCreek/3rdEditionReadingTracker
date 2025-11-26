@@ -229,6 +229,9 @@ class SchemaSetup:
             FOREIGN KEY (parent_id) REFERENCES reading_driving_questions(id) ON DELETE CASCADE
         )
         """)
+        # --- MODIFIED: Add pdf_node_id to reading_driving_questions ---
+        self._add_column_if_not_exists("reading_driving_questions", "pdf_node_id", "INTEGER", "NULL")
+        # --- END MODIFICATION ---
 
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS reading_outline (
