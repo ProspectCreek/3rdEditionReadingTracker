@@ -1,46 +1,38 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QLabel,
-    QRadioButton, QDialogButtonBox, QWidget, QHBoxLayout
+    QCheckBox, QDialogButtonBox, QWidget, QHBoxLayout
 )
 from PySide6.QtCore import Qt
 
 
-class EditAssignmentDialog(QDialog):
+class EditProjectStatusDialog(QDialog):
     """
-    PySide6 port of the EditAssignmentDialog.
-    Asks to change the 'is_assignment' status.
+    Allows editing both 'is_assignment' and 'is_research' status.
+    Replaces the old radio buttons with checkboxes.
     """
 
-    def __init__(self, current_status, parent=None):
+    def __init__(self, current_assignment_status, current_research_status, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Edit Assignment Status")
+        self.setWindowTitle("Edit Assignment/Research Status")
 
-        # This will store the result
-        self.new_status = current_status
+        # Results
+        self.new_assignment_status = current_assignment_status
+        self.new_research_status = current_research_status
 
         main_layout = QVBoxLayout(self)
 
-        label = QLabel("Is this project for an assignment?")
+        label = QLabel("Project Type Configuration:")
         main_layout.addWidget(label)
 
-        # Radio Button Widget/Layout
-        radio_widget = QWidget()
-        radio_layout = QHBoxLayout(radio_widget)
-        radio_layout.setContentsMargins(0, 0, 0, 0)
+        # Checkbox Widget
+        self.assignment_check = QCheckBox("For Assignment")
+        self.assignment_check.setChecked(bool(current_assignment_status))
 
-        self.yes_radio = QRadioButton("Yes")
-        self.no_radio = QRadioButton("No")
+        self.research_check = QCheckBox("Research Project")
+        self.research_check.setChecked(bool(current_research_status))
 
-        if current_status == 1:
-            self.yes_radio.setChecked(True)
-        else:
-            self.no_radio.setChecked(True)
-
-        radio_layout.addWidget(self.yes_radio)
-        radio_layout.addWidget(self.no_radio)
-        radio_layout.addStretch()
-
-        main_layout.addWidget(radio_widget)
+        main_layout.addWidget(self.assignment_check)
+        main_layout.addWidget(self.research_check)
 
         # Standard OK/Cancel buttons
         self.button_box = QDialogButtonBox(
@@ -54,5 +46,6 @@ class EditAssignmentDialog(QDialog):
 
     def accept(self):
         """Called when OK is clicked. Saves the data."""
-        self.new_status = 1 if self.yes_radio.isChecked() else 0
+        self.new_assignment_status = 1 if self.assignment_check.isChecked() else 0
+        self.new_research_status = 1 if self.research_check.isChecked() else 0
         super().accept()

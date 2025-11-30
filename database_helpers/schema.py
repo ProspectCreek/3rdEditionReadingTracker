@@ -37,6 +37,7 @@ class SchemaSetup:
             name TEXT NOT NULL,
             display_order INTEGER,
             is_assignment INTEGER DEFAULT 0,
+            is_research INTEGER DEFAULT 0,
             project_purpose_text TEXT,
             project_goals_text TEXT,
             key_questions_text TEXT,
@@ -49,6 +50,8 @@ class SchemaSetup:
             FOREIGN KEY (parent_id) REFERENCES items(id) ON DELETE CASCADE
         )
         """)
+
+        self._add_column_if_not_exists("items", "is_research", "INTEGER", "0")
 
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS synthesis_tags (
@@ -151,6 +154,74 @@ class SchemaSetup:
         )
         """)
 
+        # --- Research Tab Tables ---
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS research_nodes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            parent_id INTEGER,
+            type TEXT NOT NULL, 
+            title TEXT,
+            display_order INTEGER,
+
+            problem_statement TEXT,
+            scope TEXT,
+            frameworks TEXT,
+            key_terms TEXT,
+            working_thesis TEXT,
+            open_issues TEXT,
+            common_questions TEXT,
+            agreements TEXT,
+            disagreements TEXT,
+            synthesis TEXT,
+
+            role TEXT,
+            evidence TEXT,
+            contradictions TEXT,
+            preliminary_conclusion TEXT,
+
+            section_purpose TEXT,
+            section_notes TEXT,
+
+            pdf_node_id INTEGER,
+
+            FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE,
+            FOREIGN KEY (parent_id) REFERENCES research_nodes(id) ON DELETE CASCADE
+        )
+        """)
+        self._add_column_if_not_exists("research_nodes", "pdf_node_id", "INTEGER", "NULL")
+
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS research_node_pdf_links (
+            research_node_id INTEGER NOT NULL,
+            pdf_node_id INTEGER NOT NULL,
+            PRIMARY KEY (research_node_id, pdf_node_id),
+            FOREIGN KEY (research_node_id) REFERENCES research_nodes(id) ON DELETE CASCADE,
+            FOREIGN KEY (pdf_node_id) REFERENCES pdf_nodes(id) ON DELETE CASCADE
+        )
+        """)
+
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS research_node_terms (
+            research_node_id INTEGER NOT NULL,
+            terminology_id INTEGER NOT NULL,
+            PRIMARY KEY (research_node_id, terminology_id),
+            FOREIGN KEY (research_node_id) REFERENCES research_nodes(id) ON DELETE CASCADE,
+            FOREIGN KEY (terminology_id) REFERENCES project_terminology(id) ON DELETE CASCADE
+        )
+        """)
+
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS research_memos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            node_id INTEGER NOT NULL,
+            title TEXT,
+            content TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (node_id) REFERENCES research_nodes(id) ON DELETE CASCADE
+        )
+        """)
+
         # --- User Settings Table ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS user_settings (
@@ -198,9 +269,7 @@ class SchemaSetup:
         )
         """)
         self._add_column_if_not_exists("readings", "zotero_item_key", "TEXT", "NULL")
-        # --- FIX: Add the missing column for Elevator Abstract ---
         self._add_column_if_not_exists("readings", "elevator_abstract_html", "TEXT", "NULL")
-        # --- END FIX ---
 
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS project_tag_links (
@@ -235,9 +304,7 @@ class SchemaSetup:
             FOREIGN KEY (parent_id) REFERENCES reading_driving_questions(id) ON DELETE CASCADE
         )
         """)
-        # --- MODIFIED: Add pdf_node_id to reading_driving_questions ---
         self._add_column_if_not_exists("reading_driving_questions", "pdf_node_id", "INTEGER", "NULL")
-        # --- END MODIFICATION ---
 
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS reading_outline (
@@ -302,7 +369,6 @@ class SchemaSetup:
             FOREIGN KEY (category_id) REFERENCES pdf_node_categories(id) ON DELETE SET NULL
         )
         """)
-        # Migration for existing pdf_nodes table
         self._add_column_if_not_exists("pdf_nodes", "category_id", "INTEGER", "NULL")
 
         self.cursor.execute("""
@@ -320,9 +386,7 @@ class SchemaSetup:
             FOREIGN KEY (driving_question_id) REFERENCES reading_driving_questions(id) ON DELETE SET NULL
         )
         """)
-        # --- NEW: Add pdf_node_id to arguments ---
         self._add_column_if_not_exists("reading_arguments", "pdf_node_id", "INTEGER", "NULL")
-        # --- END NEW ---
 
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS mindmap_nodes (
@@ -406,9 +470,7 @@ class SchemaSetup:
             FOREIGN KEY (item_link_id) REFERENCES reading_driving_questions(id) ON DELETE CASCADE
         )
         """)
-        # --- MODIFIED: Add pdf_node_id column to synthesis_anchors ---
         self._add_column_if_not_exists("synthesis_anchors", "pdf_node_id", "INTEGER", "NULL")
-        # --- END MODIFICATION ---
 
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS reading_argument_evidence (
@@ -436,9 +498,22 @@ class SchemaSetup:
             page_number TEXT,
             author_address TEXT,
             notes TEXT,
+            pdf_node_id INTEGER DEFAULT NULL,
             FOREIGN KEY (terminology_id) REFERENCES project_terminology(id) ON DELETE CASCADE,
             FOREIGN KEY (reading_id) REFERENCES readings(id) ON DELETE CASCADE,
             FOREIGN KEY (outline_id) REFERENCES reading_outline(id) ON DELETE SET NULL
+        )
+        """)
+        self._add_column_if_not_exists("terminology_references", "pdf_node_id", "INTEGER", "NULL")
+
+        # --- NEW TABLE: Multiple PDF links for a single Terminology Reference ---
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS terminology_reference_pdf_links (
+            reference_id INTEGER NOT NULL,
+            pdf_node_id INTEGER NOT NULL,
+            PRIMARY KEY (reference_id, pdf_node_id),
+            FOREIGN KEY (reference_id) REFERENCES terminology_references(id) ON DELETE CASCADE,
+            FOREIGN KEY (pdf_node_id) REFERENCES pdf_nodes(id) ON DELETE CASCADE
         )
         """)
 
@@ -454,6 +529,17 @@ class SchemaSetup:
             FOREIGN KEY (proposition_id) REFERENCES project_propositions(id) ON DELETE CASCADE,
             FOREIGN KEY (reading_id) REFERENCES readings(id) ON DELETE CASCADE,
             FOREIGN KEY (outline_id) REFERENCES reading_outline(id) ON DELETE SET NULL
+        )
+        """)
+
+        # --- NEW TABLE: Multiple PDF links for a single Proposition Reference ---
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS proposition_reference_pdf_links (
+            reference_id INTEGER NOT NULL,
+            pdf_node_id INTEGER NOT NULL,
+            PRIMARY KEY (reference_id, pdf_node_id),
+            FOREIGN KEY (reference_id) REFERENCES proposition_references(id) ON DELETE CASCADE,
+            FOREIGN KEY (pdf_node_id) REFERENCES pdf_nodes(id) ON DELETE CASCADE
         )
         """)
 

@@ -1,3 +1,5 @@
+# database_helpers/terminology_mixin.py
+
 class TerminologyMixin:
     # ----------------------- NEW: Terminology Functions -----------------------
 
@@ -78,27 +80,33 @@ class TerminologyMixin:
                 """, status_data)
 
             # 4. Insert all new references
-            references_data = []
-            # Get the set of readings marked as "not in reading"
             not_in_reading_ids = {s['reading_id'] for s in data.get("statuses", []) if s['not_in_reading'] == 1}
 
             for ref in data.get("references", []):
                 if ref.get('reading_id') not in not_in_reading_ids:
-                    references_data.append((
+                    # Insert reference
+                    self.cursor.execute("""
+                        INSERT INTO terminology_references 
+                        (terminology_id, reading_id, outline_id, page_number, author_address, notes)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (
                         terminology_id,
                         ref.get('reading_id'),
                         ref.get('outline_id'),
-                        ref.get('page_number'),
+                        ref.get('page_number', ''),
                         ref.get('author_address'),
                         ref.get('notes')
                     ))
+                    new_ref_id = self.cursor.lastrowid
 
-            if references_data:
-                self.cursor.executemany("""
-                    INSERT INTO terminology_references 
-                    (terminology_id, reading_id, outline_id, page_number, author_address, notes)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, references_data)
+                    # Insert PDF links for this reference
+                    pdf_links = ref.get('pdf_node_ids', [])
+                    if pdf_links:
+                        pdf_data = [(new_ref_id, pid) for pid in pdf_links]
+                        self.cursor.executemany("""
+                            INSERT INTO terminology_reference_pdf_links (reference_id, pdf_node_id)
+                            VALUES (?, ?)
+                        """, pdf_data)
 
             # 5. Commit transaction
             self.conn.commit()
@@ -122,7 +130,7 @@ class TerminologyMixin:
 
     def get_terminology_details(self, terminology_id):
         """
-        Gets the full details for a single term, including its references.
+        Gets the full details for a single term, including its references and their PDF links.
         """
         # 1. Get the main term data
         self.cursor.execute("SELECT * FROM project_terminology WHERE id = ?", (terminology_id,))
@@ -131,19 +139,32 @@ class TerminologyMixin:
         if not term_data:
             return None
 
-        # 2. Get all associated references, joining to get outline title
+        # 2. Get all associated references
         self.cursor.execute("""
             SELECT 
                 tr.*, 
-                ro.section_title 
+                ro.section_title
             FROM terminology_references tr
             LEFT JOIN reading_outline ro ON tr.outline_id = ro.id
             WHERE tr.terminology_id = ?
         """, (terminology_id,))
         references = self._map_rows(self.cursor.fetchall())
+
+        # 3. Fetch PDF links for each reference
+        for ref in references:
+            self.cursor.execute("""
+                SELECT n.id, n.label, n.page_number
+                FROM pdf_nodes n
+                JOIN terminology_reference_pdf_links l ON n.id = l.pdf_node_id
+                WHERE l.reference_id = ?
+            """, (ref['id'],))
+            ref['pdf_nodes'] = self._map_rows(self.cursor.fetchall())
+            # Also store list of IDs for the dialog
+            ref['pdf_node_ids'] = [n['id'] for n in ref['pdf_nodes']]
+
         term_data['references'] = references
 
-        # 3. Get all reading link statuses
+        # 4. Get all reading link statuses
         self.cursor.execute("""
             SELECT reading_id, not_in_reading
             FROM terminology_reading_links

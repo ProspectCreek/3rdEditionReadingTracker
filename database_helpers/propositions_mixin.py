@@ -4,12 +4,10 @@ import sqlite3
 
 class PropositionsMixin:
     # ----------------------- PROJECT Proposition Functions (Complex) -----------------------
-    # (These functions for the 'My Propositions' tab in Synthesis are correct)
 
     def save_proposition_entry(self, project_id, proposition_id, data):
         """
-        Saves a single project-level proposition entry, including its text, and
-        all associated references. This is a transactional operation.
+        Saves a single project-level proposition entry.
         """
         try:
             # 1. Add or Update the main proposition
@@ -57,26 +55,32 @@ class PropositionsMixin:
                 """, status_data)
 
             # 4. Insert all new references
-            references_data = []
             not_in_reading_ids = {s['reading_id'] for s in data.get("statuses", []) if s['not_in_reading'] == 1}
 
             for ref in data.get("references", []):
                 if ref.get('reading_id') not in not_in_reading_ids:
-                    references_data.append((
+                    self.cursor.execute("""
+                        INSERT INTO proposition_references 
+                        (proposition_id, reading_id, outline_id, page_number, how_addressed, notes)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (
                         proposition_id,
                         ref.get('reading_id'),
                         ref.get('outline_id'),
-                        ref.get('page_number'),
+                        ref.get('page_number', ''),
                         ref.get('how_addressed'),
                         ref.get('notes')
                     ))
+                    new_ref_id = self.cursor.lastrowid
 
-            if references_data:
-                self.cursor.executemany("""
-                    INSERT INTO proposition_references 
-                    (proposition_id, reading_id, outline_id, page_number, how_addressed, notes)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, references_data)
+                    # Insert PDF links
+                    pdf_links = ref.get('pdf_node_ids', [])
+                    if pdf_links:
+                        pdf_data = [(new_ref_id, pid) for pid in pdf_links]
+                        self.cursor.executemany("""
+                            INSERT INTO proposition_reference_pdf_links (reference_id, pdf_node_id)
+                            VALUES (?, ?)
+                        """, pdf_data)
 
             # 5. Commit transaction
             self.conn.commit()
@@ -117,6 +121,18 @@ class PropositionsMixin:
             WHERE pr.proposition_id = ?
         """, (proposition_id,))
         references = self._map_rows(self.cursor.fetchall())
+
+        # Fetch PDF links for each reference
+        for ref in references:
+            self.cursor.execute("""
+                SELECT n.id, n.label, n.page_number
+                FROM pdf_nodes n
+                JOIN proposition_reference_pdf_links l ON n.id = l.pdf_node_id
+                WHERE l.reference_id = ?
+            """, (ref['id'],))
+            ref['pdf_nodes'] = self._map_rows(self.cursor.fetchall())
+            ref['pdf_node_ids'] = [n['id'] for n in ref['pdf_nodes']]
+
         prop_data['references'] = references
 
         self.cursor.execute("""
@@ -149,7 +165,8 @@ class PropositionsMixin:
 
     # ----------------- READING Proposition Functions (Simple) -----------------
 
-    # --- START: Copied Helper Functions ---
+    # ... (Rest of file unchanged) ...
+    # Retaining existing reading-level methods
     def _get_project_id_for_reading(self, reading_id):
         self.cursor.execute("SELECT project_id FROM readings WHERE id = ?", (reading_id,))
         proj_data = self.cursor.fetchone()
@@ -170,12 +187,9 @@ class PropositionsMixin:
                 self.cursor.execute("DELETE FROM synthesis_anchors WHERE id = ?", (anchor_row['id'],))
             return
 
-        # --- THIS IS THE FIX for the "..." ---
-        # Prioritize nickname, then fall back to main text. NO TRUNCATION.
         nickname = data.get("nickname", "")
         main_text = data.get(summary_field_name, f'{item_type.capitalize()} Item')
         summary_text = f"{item_type.capitalize()}: {nickname if nickname else main_text}"
-        # --- END FIX ---
 
         if not anchor_row:
             self.cursor.execute("""
@@ -188,13 +202,11 @@ class PropositionsMixin:
             anchor_id = self.cursor.lastrowid
         else:
             anchor_id = anchor_row['id']
-            # --- FIX: Update summary text ---
             self.cursor.execute("""
                 UPDATE synthesis_anchors 
                 SET selected_text = ?, pdf_node_id = ?
                 WHERE id = ?
             """, (summary_text, pdf_node_id, anchor_id))
-            # --- END FIX ---
 
         self.cursor.execute("DELETE FROM anchor_tag_links WHERE anchor_id = ?", (anchor_id,))
 
@@ -206,8 +218,6 @@ class PropositionsMixin:
                     VALUES (?, ?)
                 """, (anchor_id, tag['id']))
 
-    # --- END: Copied Helper Functions ---
-
     def _get_next_reading_proposition_order(self, reading_id):
         self.cursor.execute(
             """SELECT COALESCE(MAX(display_order), -1) 
@@ -218,7 +228,6 @@ class PropositionsMixin:
         return (self.cursor.fetchone()[0] or -1) + 1
 
     def add_reading_proposition(self, reading_id, data):
-        """Adds a simple, reading-level proposition."""
         try:
             project_id = self._get_project_id_for_reading(reading_id)
             new_order = self._get_next_reading_proposition_order(reading_id)
@@ -240,10 +249,8 @@ class PropositionsMixin:
             ))
 
             new_item_id = self.cursor.lastrowid
-
             self._handle_virtual_anchor_tags(project_id, reading_id, new_item_id, 'proposition', data,
                                              'proposition_text')
-
             self.conn.commit()
             return new_item_id
         except Exception as e:
@@ -252,7 +259,6 @@ class PropositionsMixin:
             raise
 
     def update_reading_proposition(self, proposition_id, data):
-        """Updates a simple, reading-level proposition."""
         try:
             self.cursor.execute("SELECT reading_id FROM reading_driving_questions WHERE id = ?", (proposition_id,))
             reading_id = self.cursor.fetchone()['reading_id']
@@ -276,7 +282,6 @@ class PropositionsMixin:
 
             self._handle_virtual_anchor_tags(project_id, reading_id, proposition_id, 'proposition', data,
                                              'proposition_text')
-
             self.conn.commit()
         except Exception as e:
             print(f"Error in update_reading_proposition: {e}")
@@ -284,21 +289,17 @@ class PropositionsMixin:
             raise
 
     def get_reading_propositions_simple(self, reading_id):
-        """Gets all simple, reading-level propositions."""
         self.cursor.execute("""
             SELECT id, question_text as proposition_text, nickname, pdf_node_id
             FROM reading_driving_questions
             WHERE reading_id = ? AND type = 'proposition'
             ORDER BY display_order, id
         """, (reading_id,))
-
         return self._map_rows(self.cursor.fetchall())
 
-    # ALIAS
     get_reading_propositions = get_reading_propositions_simple
 
     def get_reading_proposition_details(self, proposition_id):
-        """Gets details for a single reading-level proposition."""
         self.cursor.execute("""
             SELECT 
                 dq.id, 
@@ -315,8 +316,7 @@ class PropositionsMixin:
         """, (proposition_id,))
 
         details = self._rowdict(self.cursor.fetchone())
-        if not details:
-            return None
+        if not details: return None
 
         self.cursor.execute("SELECT sa.id FROM synthesis_anchors sa WHERE sa.item_link_id = ?", (proposition_id,))
         anchor_row = self.cursor.fetchone()
@@ -337,7 +337,6 @@ class PropositionsMixin:
         return details
 
     def delete_reading_proposition(self, proposition_id):
-        """Deletes a simple, reading-level proposition."""
         self.cursor.execute(
             "DELETE FROM reading_driving_questions WHERE id = ? AND type = 'proposition'",
             (proposition_id,)
@@ -345,7 +344,6 @@ class PropositionsMixin:
         self.conn.commit()
 
     def update_reading_proposition_order(self, ordered_ids):
-        """Updates the display_order for reading-level propositions."""
         for order, prop_id in enumerate(ordered_ids):
             self.cursor.execute(
                 "UPDATE reading_driving_questions SET display_order = ? WHERE id = ? AND type = 'proposition'",

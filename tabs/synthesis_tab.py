@@ -1,5 +1,6 @@
-# prospectcreek/3rdeditionreadingtracker/tabs/synthesis_tab.py
+# tabs/synthesis_tab.py
 import sys
+import sqlite3
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel,
     QListWidget, QListWidgetItem, QFrame, QTextEdit, QCheckBox,
@@ -8,76 +9,57 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, Slot, QUrl, QPoint
 from PySide6.QtGui import QColor, QFont, QAction
-import sqlite3
 
+# --- Imports ---
 try:
     from tabs.rich_text_editor_tab import RichTextEditorTab
 except ImportError:
-    print("Error: Could not import RichTextEditorTab")
     RichTextEditorTab = None
 
 try:
     from tabs.terminology_tab import TerminologyTab
 except ImportError:
-    print("Error: Could not import TerminologyTab")
     TerminologyTab = None
 
 try:
     from tabs.propositions_tab import PropositionsTab
 except ImportError:
-    print("Error: Could not import PropositionsTab")
     PropositionsTab = None
 
 try:
     from dialogs.edit_tag_dialog import EditTagDialog
 except ImportError:
-    print("Error: Could not import EditTagDialog")
     EditTagDialog = None
 
 try:
     from dialogs.manage_anchors_dialog import ManageAnchorsDialog
 except ImportError:
-    print("Error: Could not import ManageAnchorsDialog")
     ManageAnchorsDialog = None
 
 try:
     from dialogs.add_citation_dialog import AddCitationDialog
 except ImportError:
-    print("Error: Could not import AddCitationDialog for SynthesisTab")
     AddCitationDialog = None
 
 try:
     from dialogs.view_syntopic_rules_dialog import ViewSyntopicRulesDialog
 except ImportError:
-    print("Error: Could not import ViewSyntopicRulesDialog")
     ViewSyntopicRulesDialog = None
 
-
+# --- Constants ---
 DEFAULT_SYNTOPIC_RULES_HTML = """
-<p><b>I. Surveying the Field Preparatory to Syntopical Reading</b></p>
-<ol>
-<li>Create a tentative bibliography of your subject by recourse to library catalogues, advisors, and bibliographies in books.</li>
-<li>Inspect all of the books on the tentative bibliography to ascertain which are germane to your subject, and also to acquire a clearer idea of the subject.</li>
-</ol>
-<p><i>Note: These two steps are not, strictly speaking, chronologically distinct; that is, the two steps have an effect on each other, with the second, in particular, serving to modify the first.</i></p>
-<p>&nbsp;</p>
-<p><b>II. Syntopical Reading of the Bibliography Amassed in Stage I</b></p>
-<ol>
-<li>Inspect the books already identified as relevant to your subject in Stage I in order to find the most relevant passages.</li>
-<li>Bring the authors to terms by constructing a neutral terminology of the subject that all, or the great majority, of the authors can be interpreted as employing, whether they actually employ the words or not.</li>
-<li>Establish a set of neutral propositions for all of the authors by framing a set of questions to which all or most of the authors can be interpreted as giving answers, whether they actually treat the questions explicitly or not.</li>
-<li>Define the issues, both major and minor ones, by ranging the opposing answers of authors to the various questions on one side of an issue or another. You should remember that an issue does not always exist explicitly between or among authors, but that it sometimes has to be constructed by interpretation of the authors' views on matters that may not have been their primary concern.</li>
-<li>Analyze the discussion by ordering the questions and issues in such a way as to throw maximum light on the subject. More general issues should precede less general ones, and relations among issues should be clearly indicated.</li>
-</ol>
-<p><i>Note: Dialectical detachment or objectivity should, ideally, be maintained throughout. One way to insure this is always to accompany an interpretation of an author's views on an issue with an actual quotation from his text.</i></p>
+<h3>Syntopical Reading Guidelines</h3>
+<ul>
+    <li><b>Step 1: Inspect</b> - Inspect the books to find the most relevant passages.</li>
+    <li><b>Step 2: Assimilate</b> - Bring the author to your terms. Construct a neutral terminology.</li>
+    <li><b>Step 3: Questions</b> - Frame a set of questions that all authors should answer.</li>
+    <li><b>Step 4: Issues</b> - Define the issues by mapping opposing answers.</li>
+    <li><b>Step 5: Analyze</b> - Order the discussion to throw light on the subject.</li>
+</ul>
 """
 
 
 class SynthesisTab(QWidget):
-    """
-    A widget for synthesizing information.
-    Shows a master list of tags and a detail view of anchors.
-    """
     openReading = Signal(int, int, int, int, str)
     tagsUpdated = Signal()
     openPdfNodeRequested = Signal(int)
@@ -93,6 +75,7 @@ class SynthesisTab(QWidget):
         self.main_splitter = QSplitter(Qt.Orientation.Vertical)
         main_layout.addWidget(self.main_splitter)
 
+        # --- Top Section: Tags & Anchors ---
         top_widget = QFrame()
         top_widget.setFrameShape(QFrame.Shape.StyledPanel)
         top_layout = QHBoxLayout(top_widget)
@@ -101,20 +84,17 @@ class SynthesisTab(QWidget):
         top_splitter = QSplitter(Qt.Orientation.Horizontal)
         top_layout.addWidget(top_splitter)
 
+        # Left: Tags
         left_panel = QFrame()
-        left_panel.setFrameShape(QFrame.Shape.NoFrame)
         left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(4, 4, 4, 4)
         left_layout.addWidget(QLabel("Synthesis Tags"))
         self.tag_list = QListWidget()
         left_layout.addWidget(self.tag_list)
 
-        # Button layout
         button_layout = QHBoxLayout()
         button_layout.addStretch()
         self.btn_syntopic_rules = QPushButton("Syntopic Reading Guidelines")
         button_layout.addWidget(self.btn_syntopic_rules)
-
         left_layout.addLayout(button_layout)
 
         if ViewSyntopicRulesDialog:
@@ -124,10 +104,9 @@ class SynthesisTab(QWidget):
 
         left_panel.setLayout(left_layout)
 
+        # Right: Anchors
         right_panel = QFrame()
-        right_panel.setFrameShape(QFrame.Shape.NoFrame)
         right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(4, 4, 4, 4)
         right_layout.addWidget(QLabel("Connected Anchors"))
         self.anchor_display = QTextBrowser()
         self.anchor_display.setOpenExternalLinks(False)
@@ -139,6 +118,7 @@ class SynthesisTab(QWidget):
         top_splitter.addWidget(right_panel)
         top_splitter.setSizes([250, 600])
 
+        # --- Bottom Section: Sub-Tabs ---
         bottom_panel = QFrame()
         bottom_panel.setFrameShape(QFrame.Shape.StyledPanel)
         bottom_layout = QVBoxLayout(bottom_panel)
@@ -148,40 +128,40 @@ class SynthesisTab(QWidget):
 
         if TerminologyTab:
             self.terminology_tab = TerminologyTab(self.db, self.project_id)
+            # Connect inner signal to outer signal
+            self.terminology_tab.requestOpenPdfNode.connect(self.openPdfNodeRequested)
             self.bottom_tab_widget.addTab(self.terminology_tab, "My Terminology")
         else:
             self.bottom_tab_widget.addTab(QLabel("TerminologyTab failed to load."), "My Terminology")
 
         if PropositionsTab:
             self.propositions_tab = PropositionsTab(self.db, self.project_id)
+            # Connect inner signal
+            self.propositions_tab.requestOpenPdfNode.connect(self.openPdfNodeRequested)
             self.bottom_tab_widget.addTab(self.propositions_tab, "My Propositions")
         else:
-            self.propositions_tab = QLabel("PropositionsTab failed to load.")
-            self.propositions_tab.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.bottom_tab_widget.addTab(self.propositions_tab, "My Propositions")
+            self.bottom_tab_widget.addTab(QLabel("PropositionsTab failed to load."), "My Propositions")
 
+        # Notes Tab
         notes_container = QWidget()
         notes_layout = QVBoxLayout(notes_container)
-        notes_layout.setContentsMargins(4, 4, 4, 4)
-        notes_layout.setSpacing(4)
-
         self.notes_prompt_label = QLabel("")
         self.notes_prompt_label.setWordWrap(True)
-        self.notes_prompt_label.setStyleSheet("font-style: italic; color: #555;")
         self.notes_prompt_label.setVisible(False)
         notes_layout.addWidget(self.notes_prompt_label)
         self.instruction_labels["synthesis_notes_instr"] = self.notes_prompt_label
 
         if RichTextEditorTab:
-            self.notes_editor = RichTextEditorTab("Notes",
-                                                  spell_checker_service=self.spell_checker_service)
+            self.notes_editor = RichTextEditorTab("Notes", spell_checker_service=self.spell_checker_service)
             notes_layout.addWidget(self.notes_editor, 1)
+
             notes_btn_layout = QHBoxLayout()
             notes_btn_layout.addStretch(1)
             self.notes_citation_btn = QPushButton("Add Citation")
             self.notes_citation_btn.clicked.connect(self.open_notes_citation_dialog)
             notes_btn_layout.addWidget(self.notes_citation_btn)
             notes_layout.addLayout(notes_btn_layout)
+
             self.bottom_tab_widget.addTab(notes_container, "Notes")
         else:
             self.bottom_tab_widget.addTab(QLabel("Editor failed to load."), "Notes")
@@ -198,10 +178,13 @@ class SynthesisTab(QWidget):
     def load_tab_data(self, project_details):
         self.load_tags_list()
         self.anchor_display.clear()
+
         if TerminologyTab and hasattr(self, 'terminology_tab'):
             self.terminology_tab.load_terminology()
+
         if PropositionsTab and hasattr(self, 'propositions_tab'):
             self.propositions_tab.load_items()
+
         if RichTextEditorTab and hasattr(self, 'notes_editor'):
             self.notes_editor.set_html(project_details.get('synthesis_notes_html', ''))
 
@@ -213,6 +196,7 @@ class SynthesisTab(QWidget):
             self.terminology_tab.update_instructions(instructions_data, "synthesis_terminology_instr")
         if hasattr(self, 'propositions_tab') and hasattr(self.propositions_tab, 'update_instructions'):
             self.propositions_tab.update_instructions(instructions_data, "synthesis_propositions_instr")
+
         if "synthesis_notes_instr" in self.instruction_labels:
             label = self.instruction_labels["synthesis_notes_instr"]
             text = instructions_data.get("synthesis_notes_instr", "")
@@ -264,7 +248,6 @@ class SynthesisTab(QWidget):
                 self.anchor_display.setHtml("<i>No anchors found for this tag.</i>")
                 return
 
-            # --- MODIFIED: Updated CSS for teal link ---
             html = """
             <style>
                 h3 { margin-top: 15px; margin-bottom: 5px; font-size: 1.2em; }
@@ -286,11 +269,9 @@ class SynthesisTab(QWidget):
                     font-size: 0.9em; 
                     font-weight: bold;
                 }
-                /* Changed to teal */
                 .pdf-link a { color: #008080; }
             </style>
             """
-            # --- END MODIFICATION ---
 
             current_reading = None
             for anchor in anchors:
@@ -310,7 +291,6 @@ class SynthesisTab(QWidget):
                     f"{item_link_id or 0}:{item_type}"
                 )
 
-                # --- MODIFIED: Removed parenthesis and moved PDF link ---
                 if context_parts:
                     location_text = f"{', '.join(context_parts)}"
                 else:
@@ -318,10 +298,8 @@ class SynthesisTab(QWidget):
 
                 html += f"<p><i><a href='{jumpto_link}'>{location_text}</a></i></p>"
 
-                # Add PDF Node Link immediately below (no indent)
                 if anchor.get('pdf_node_id'):
                     html += f"<div class='pdf-link'><a href='pdfnode:///{anchor['pdf_node_id']}'>View Connected PDF Node</a></div>"
-                # --- END MODIFICATION ---
 
                 html += "<blockquote>"
 
@@ -364,46 +342,24 @@ class SynthesisTab(QWidget):
 
         except Exception as e:
             self.anchor_display.setHtml(f"<p><b>Error loading details:</b><br>{e}</p>")
-            import traceback
-            traceback.print_exc()
+            # import traceback; traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Could not load anchors: {e}")
 
     @Slot(QUrl)
     def on_anchor_link_clicked(self, url):
         url_str = url.toString()
-
-        # --- NEW: Robust Parsing for PDF Nodes ---
         if url.scheme() == "pdfnode":
             try:
-                # 1. Try simple path parsing (pdfnode:///123 -> path is /123)
                 path = url.path()
                 if path.startswith('/'):
                     node_id_str = path[1:]
                 else:
                     node_id_str = path
-
                 if node_id_str and node_id_str.isdigit():
                     self.openPdfNodeRequested.emit(int(node_id_str))
-                    return
-
-                # 2. Try host parsing (pdfnode://123 -> host is 0.0.0.123 or just 123)
-                host = url.host()
-                if host.isdigit():
-                    self.openPdfNodeRequested.emit(int(host))
-                    return
-
-                # 3. Handle IP Normalization (0.0.0.X)
-                parts = host.split('.')
-                if len(parts) == 4 and all(p.isdigit() for p in parts):
-                    # Take the last octet as the ID if it matches our pattern
-                    # Note: This is a fallback assumption
-                    self.openPdfNodeRequested.emit(int(parts[-1]))
-                    return
-
             except Exception as e:
                 print(f"Error parsing PDF node ID from: {url_str} - {e}")
             return
-        # --- END NEW ---
 
         if url_str.startswith("jumpto:"):
             try:
@@ -547,3 +503,10 @@ class SynthesisTab(QWidget):
             html = DEFAULT_SYNTOPIC_RULES_HTML
         dialog = ViewSyntopicRulesDialog(html, self)
         dialog.exec()
+
+    @Slot(int)
+    def select_term(self, term_id):
+        """Switches to the Terminology tab and selects the specified term."""
+        if hasattr(self, 'terminology_tab') and self.terminology_tab:
+            self.bottom_tab_widget.setCurrentWidget(self.terminology_tab)
+            self.terminology_tab.select_term_by_id(term_id)

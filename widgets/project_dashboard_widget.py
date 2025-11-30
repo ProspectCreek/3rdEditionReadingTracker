@@ -26,6 +26,7 @@ from tabs.reading_notes_tab import ReadingNotesTab, DEFAULT_READING_RULES_HTML
 from tabs.synthesis_tab import SynthesisTab, DEFAULT_SYNTOPIC_RULES_HTML
 from tabs.graph_view_tab import GraphViewTab
 from tabs.todo_list_tab import TodoListTab
+from tabs.research_tab import ResearchTab  # <-- IMPORT NEW TAB
 
 # --- Dialog Imports ---
 try:
@@ -164,7 +165,16 @@ class ProjectDashboardWidget(QWidget):
         self.graph_view_tab = None
         self.todo_list_tab = None
         self.assignment_tab = None
+        self.research_tab = None  # <-- NEW
         self.mindmaps_tab = None
+
+        # --- NEW: Readings Container ---
+        self.readings_container = QWidget()
+        self.readings_layout = QVBoxLayout(self.readings_container)
+        self.readings_layout.setContentsMargins(0, 0, 0, 0)
+        self.readings_tab_widget = QTabWidget()
+        self.readings_layout.addWidget(self.readings_tab_widget)
+        # -------------------------------
 
         # Store open PDF viewers
         self.pdf_viewers = []
@@ -221,6 +231,10 @@ class ProjectDashboardWidget(QWidget):
         self._build_dashboard_tab()
 
         self.top_tab_widget.currentChanged.connect(self.on_top_tab_changed)
+
+        # --- NEW: Auto-save when switching between readings ---
+        self.readings_tab_widget.currentChanged.connect(self.save_all_editors)
+
         QTimer.singleShot(0, self._enforce_equal_splits)
 
     @Slot()
@@ -370,6 +384,7 @@ class ProjectDashboardWidget(QWidget):
         self.project_id = self.project_details['id']
 
         self.top_tab_widget.clear()
+        self.readings_tab_widget.clear()  # Clear the nested reading tabs
         self.editor_tab_widget.clear()
         self.menu_bar.clear()
         self.bottom_tabs.clear()
@@ -378,6 +393,7 @@ class ProjectDashboardWidget(QWidget):
         self.graph_view_tab = None
         self.todo_list_tab = None
         self.assignment_tab = None
+        self.research_tab = None  # Reset
         self.mindmaps_tab = None
 
         # --- MENUS ---
@@ -424,6 +440,7 @@ class ProjectDashboardWidget(QWidget):
         # --- TABS ---
         self.top_tab_widget.addTab(self.dashboard_tab, "Project Dashboard")
 
+        # 1. Assignment Tab (if enabled)
         if self.project_details.get('is_assignment', 0) == 1:
             self.assignment_tab = AssignmentTab(self.db, self.project_id,
                                                 spell_checker_service=self.spell_checker_service)
@@ -437,6 +454,21 @@ class ProjectDashboardWidget(QWidget):
             self.assignment_tab.instructions_editor.editor.smartAnchorClicked.connect(self._on_editor_link_clicked)
             self.assignment_tab.draft_editor.editor.smartAnchorClicked.connect(self._on_editor_link_clicked)
 
+        # 2. Research Tab (if enabled)
+        if self.project_details.get('is_research', 0) == 1:
+            self.research_tab = ResearchTab(self.db, self.project_id,
+                                            spell_checker_service=self.spell_checker_service)
+            self.top_tab_widget.addTab(self.research_tab, "Research")
+
+            # Connect PDF linking signal for Research Tab editors
+            self.research_tab.linkPdfNodeRequested.connect(
+                lambda editor: self._on_link_pdf_node_triggered(editor))
+            self.research_tab.linkUrlClicked.connect(self._on_editor_link_clicked)
+
+            # Connect Term Jump Signal
+            self.research_tab.openTermRequested.connect(self._open_term_in_synthesis)
+
+        # 3. Standard Tabs
         self.mindmaps_tab = MindmapTab(self.db, self.project_id)
         self.top_tab_widget.addTab(self.mindmaps_tab, "Mindmaps")
 
@@ -463,6 +495,10 @@ class ProjectDashboardWidget(QWidget):
 
         self.todo_list_tab = TodoListTab(self.db, self.project_id)
         self.top_tab_widget.addTab(self.todo_list_tab, "To-Do List")
+
+        # --- NEW: Add "Readings" Workspace ---
+        self.top_tab_widget.addTab(self.readings_container, self.book_icon, "Readings")
+        # --- END NEW ---
 
         self.load_readings()
 
@@ -517,6 +553,10 @@ class ProjectDashboardWidget(QWidget):
             for tab in self.reading_tabs.values():
                 tab.load_data()
 
+            # Load Research Tab if present
+            if self.research_tab:
+                self.research_tab.load_tree()
+
         except Exception as e:
             QMessageBox.critical(self, "Error Loading Content", f"Error: {e}")
             import traceback
@@ -544,15 +584,18 @@ class ProjectDashboardWidget(QWidget):
 
         if reading_id in self.reading_tabs:
             tab = self.reading_tabs[reading_id]
-            idx = self.top_tab_widget.indexOf(tab)
+            # --- MODIFIED: Look in readings_tab_widget ---
+            idx = self.readings_tab_widget.indexOf(tab)
             if set_current:
-                self.top_tab_widget.setCurrentIndex(idx)
+                self.readings_tab_widget.setCurrentIndex(idx)
             return tab
 
         tab = ReadingNotesTab(self.db, self.project_id, reading_id,
                               spell_checker_service=self.spell_checker_service)
 
-        idx = self.top_tab_widget.addTab(tab, self.book_icon, f" {tab_title}")
+        # --- MODIFIED: Add to readings_tab_widget instead of top_tab_widget ---
+        idx = self.readings_tab_widget.addTab(tab, self.book_icon, f" {tab_title}")
+        # ----------------------------------------------------------------------
 
         tab.readingTitleChanged.connect(self._handle_reading_title_change)
         tab.openSynthesisTab.connect(self.open_tag_from_graph)
@@ -571,7 +614,7 @@ class ProjectDashboardWidget(QWidget):
         self.reading_tabs[reading_id] = tab
 
         if set_current:
-            self.top_tab_widget.setCurrentIndex(idx)
+            self.readings_tab_widget.setCurrentIndex(idx)
 
         return tab
 
@@ -585,10 +628,12 @@ class ProjectDashboardWidget(QWidget):
         new_text = nickname if nickname else title
         author = (details.get('author') or "").strip()
 
-        i = self.top_tab_widget.indexOf(tab_widget)
+        # --- MODIFIED: Look in readings_tab_widget ---
+        i = self.readings_tab_widget.indexOf(tab_widget)
         if i != -1:
-            self.top_tab_widget.setTabText(i, f" {new_text}")
-            self.top_tab_widget.setTabIcon(i, self.book_icon)
+            self.readings_tab_widget.setTabText(i, f" {new_text}")
+            self.readings_tab_widget.setTabIcon(i, self.book_icon)
+        # --- END MODIFIED ---
 
         for j in range(self.readings_tree.topLevelItemCount()):
             item = self.readings_tree.topLevelItem(j)
@@ -624,6 +669,10 @@ class ProjectDashboardWidget(QWidget):
                 if reading_row:
                     new_tab = self._create_and_add_reading_tab(reading_row, set_current=True)
                     new_tab.load_data()
+
+                    # --- NEW: Auto-switch to Readings Workspace ---
+                    self.top_tab_widget.setCurrentWidget(self.readings_container)
+                    # -----------------------------------------------
                 else:
                     print(f"Error: Could not find new reading with id {new_id}")
             finally:
@@ -906,7 +955,9 @@ class ProjectDashboardWidget(QWidget):
                 self.db.delete_reading(reading_id)
                 tab_widget = self.reading_tabs.pop(reading_id, None)
                 if tab_widget:
-                    self.top_tab_widget.removeTab(self.top_tab_widget.indexOf(tab_widget))
+                    # --- MODIFIED: Remove from readings_tab_widget ---
+                    self.readings_tab_widget.removeTab(self.readings_tab_widget.indexOf(tab_widget))
+                    # --- END MODIFIED ---
                 self.readings_tree.takeTopLevelItem(self.readings_tree.indexOfTopLevelItem(item))
                 del item
 
@@ -971,9 +1022,12 @@ class ProjectDashboardWidget(QWidget):
             self._programmatic_tab_change = False
             tab_widget.load_data()
         else:
+            # --- MODIFIED: Switch to Readings Container first ---
             self._programmatic_tab_change = True
-            self.top_tab_widget.setCurrentWidget(tab_widget)
+            self.top_tab_widget.setCurrentWidget(self.readings_container)
+            self.readings_tab_widget.setCurrentWidget(tab_widget)
             self._programmatic_tab_change = False
+            # --- END MODIFIED ---
 
         if hasattr(tab_widget, 'set_outline_selection'):
             print(f"  Dashboard: Queuing set_outline_selection with 50ms timer...")
@@ -1150,7 +1204,14 @@ class ProjectDashboardWidget(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Jump failed: {e}")
 
-    # --- END NEW ---
+    # --- NEW: Method to Open Term in Synthesis ---
+    @Slot(int)
+    def _open_term_in_synthesis(self, term_id):
+        """Switch to Synthesis/Terminology and select the term."""
+        if self.synthesis_tab:
+            self.top_tab_widget.setCurrentWidget(self.synthesis_tab)
+            # SynthesisTab will switch its bottom tab to Terminology
+            self.synthesis_tab.select_term(term_id)
 
     @Slot()
     def return_to_home(self):

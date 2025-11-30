@@ -1,4 +1,4 @@
-# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-d0eaa6c33c524aa054deaa3e5b81207eb93ba7d2/database_manager.py
+# prospectcreek/3rdeditionreadingtracker/database_manager.py
 
 import sqlite3
 import shutil
@@ -27,7 +27,8 @@ from database_helpers.utility_mixin import UtilityMixin
 from database_helpers.graph_settings_mixin import GraphSettingsMixin
 from database_helpers.global_graph_settings_mixin import GlobalGraphSettingsMixin
 from database_helpers.settings_mixin import SettingsMixin
-from database_helpers.pdf_nodes_mixin import PdfNodesMixin # <-- IMPORT NEW MIXIN
+from database_helpers.pdf_nodes_mixin import PdfNodesMixin
+from database_helpers.research_mixin import ResearchMixin  # <-- NEW IMPORT
 
 class DatabaseManager(
     SchemaSetup,
@@ -50,19 +51,16 @@ class DatabaseManager(
     GraphSettingsMixin,
     GlobalGraphSettingsMixin,
     SettingsMixin,
-    PdfNodesMixin, # <-- ADD NEW MIXIN
+    PdfNodesMixin,
+    ResearchMixin,  # <-- ADD NEW MIXIN
     UtilityMixin
 ):
     def __init__(self, db_file="reading_tracker.db"):
         """Initialize and connect to the SQLite database."""
         self.conn = sqlite3.connect(db_file)
-        # We still use Row; public getters coerce to dicts where needed.
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.cursor = self.conn.cursor()
 
         # This method is inherited from SchemaSetup
         self.setup_database()
-
-    # The __del__ method is now inherited from UtilityMixin
-    # All other methods are inherited from their respective Mixins

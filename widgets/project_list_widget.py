@@ -11,10 +11,11 @@ from PySide6.QtGui import QAction
 
 from database_manager import DatabaseManager
 
-# --- NEW: Import all our new dialogs ---
+# --- Import dialogs ---
 try:
     from dialogs.create_item_dialog import CreateItemDialog
-    from dialogs.edit_assignment_dialog import EditAssignmentDialog
+    # Changed import to the refactored dialog class
+    from dialogs.edit_assignment_dialog import EditProjectStatusDialog
     from dialogs.move_project_dialog import MoveProjectDialog
     from dialogs.reorder_dialog import ReorderDialog
 except ImportError as e:
@@ -23,14 +24,9 @@ except ImportError as e:
     sys.exit(1)
 
 
-# --- END NEW ---
-
-
 class ProjectListWidget(QWidget):
     """
     This widget replaces your 'HomeScreen' frame.
-    It contains the project tree and buttons, porting
-    the logic from home_screen.py.
     """
 
     projectSelected = Signal(dict)
@@ -38,7 +34,7 @@ class ProjectListWidget(QWidget):
     def __init__(self, db_manager, parent=None):
         super().__init__(parent)
         self.db = db_manager
-        self.selected_tree_item = None  # This will be the QTreeWidgetItem
+        self.selected_tree_item = None
 
         self.create_widgets()
         self.load_data_to_tree()
@@ -62,30 +58,20 @@ class ProjectListWidget(QWidget):
         button_layout.addWidget(btn_add_class)
         main_layout.addLayout(button_layout)
 
-        # --- MODIFIED: Button now launches QDA Tool ---
         btn_qda = QPushButton("Launch QDA Tool")
         main_layout.addWidget(btn_qda)
 
-        # --- Bindings (PySide6 uses signals/slots and policies) ---
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self.show_context_menu)
         self.tree.itemDoubleClicked.connect(self.on_double_click)
 
-        # --- Connect button clicks ---
         btn_add_project.clicked.connect(lambda: self.handle_create_item('project', from_button=True))
         btn_add_class.clicked.connect(lambda: self.handle_create_item('class', from_button=True))
-
-        # --- MODIFIED: Connect to launcher method ---
         btn_qda.clicked.connect(self.launch_qda_tool)
 
     def load_data_to_tree(self):
-        """
-        Clear and reload all items from the database into the tree.
-        (Ported from home_screen.py)
-        """
         expanded_ids = set()
         if self.tree.topLevelItemCount() > 0:
-            # Use an iterator to find all items
             it = QTreeWidgetItemIterator(self.tree)
             while it.value():
                 item = it.value()
@@ -98,7 +84,6 @@ class ProjectListWidget(QWidget):
         self.tree.clear()
         self._load_children(parent_widget_item=self.tree, parent_db_id=None)
 
-        # Restore expanded state
         it = QTreeWidgetItemIterator(self.tree)
         while it.value():
             item = it.value()
@@ -108,10 +93,6 @@ class ProjectListWidget(QWidget):
             it += 1
 
     def _load_children(self, parent_widget_item, parent_db_id):
-        """
-        Recursive helper function to load items.
-        (Ported from _load_children in home_screen.py)
-        """
         items = self.db.get_items(parent_db_id)
         for item in items:
             tree_item = QTreeWidgetItem(parent_widget_item)
@@ -127,25 +108,21 @@ class ProjectListWidget(QWidget):
                 )
 
     def show_context_menu(self, position):
-        """
-        Display the right-click context menu.
-        (Fully updated based on user request)
-        """
         self.selected_tree_item = self.tree.itemAt(position)
         menu = QMenu()
 
         if self.selected_tree_item:
-            # Right-clicked on an item
             db_id = self.selected_tree_item.data(0, Qt.ItemDataRole.UserRole)
             item_type = self.selected_tree_item.data(0, Qt.ItemDataRole.UserRole + 1)
 
             if not db_id: return
 
             if item_type == 'project':
-                menu.addAction("Edit Project", self.rename_item)
+                menu.addAction("Edit Project Name", self.rename_item)
                 menu.addAction("Copy Project", self.duplicate_item)
                 menu.addAction("Move Project", self.move_project)
-                menu.addAction("Edit Assignment Status", self.edit_assignment_status)
+                # Changed menu text
+                menu.addAction("Edit Assignment/Research Status", self.edit_project_status)
 
             elif item_type == 'class':
                 menu.addAction("Edit Class", self.rename_item)
@@ -157,7 +134,6 @@ class ProjectListWidget(QWidget):
             menu.addAction("Delete", self.delete_item)
 
         else:
-            # Right-clicked on empty space
             menu.addAction("Add New Project (Standalone)",
                            lambda: self.handle_create_item('project', from_button=True))
             menu.addAction("Add New Class",
@@ -168,9 +144,6 @@ class ProjectListWidget(QWidget):
         menu.exec(self.tree.viewport().mapToGlobal(position))
 
     def on_double_click(self, item, column):
-        """
-        Handle double-click event to open a project.
-        """
         item_type = item.data(0, Qt.ItemDataRole.UserRole + 1)
 
         if 'project' in item_type:
@@ -181,34 +154,27 @@ class ProjectListWidget(QWidget):
             else:
                 QMessageBox.critical(self, "Error", f"Could not load project with ID {db_id}")
 
-    # --- NEW/UPDATED ACTION HANDLERS ---
-
     def handle_create_item(self, item_type, from_button=False):
-        """
-        Central handler for creating a new project or class.
-        (Ported from home_screen.py and uses new dialog)
-        """
         parent_db_id = None
         if not from_button and self.selected_tree_item:
-            # Check if selected item is a class
             item_type_selected = self.selected_tree_item.data(0, Qt.ItemDataRole.UserRole + 1)
             if item_type_selected == 'class':
                 parent_db_id = self.selected_tree_item.data(0, Qt.ItemDataRole.UserRole)
 
         dialog = CreateItemDialog(item_type, self)
 
-        # .exec() shows the dialog modally and returns True if Ok was clicked
         if dialog.exec() == QDialog.DialogCode.Accepted:
             name = dialog.name
             is_assignment = dialog.is_assignment
+            # Get research flag
+            is_research = getattr(dialog, 'is_research', 0)
 
-            # --- MODIFICATION: Capture new ID and open project ---
             try:
-                new_id = self.db.create_item(name, item_type, parent_db_id, is_assignment)
-                self.load_data_to_tree()  # Reload tree first
+                # Pass is_research
+                new_id = self.db.create_item(name, item_type, parent_db_id, is_assignment, is_research)
+                self.load_data_to_tree()
 
                 if item_type == 'project':
-                    # This is the new behavior
                     project_details = self.db.get_item_details(new_id)
                     if project_details:
                         self.projectSelected.emit(dict(project_details))
@@ -216,14 +182,9 @@ class ProjectListWidget(QWidget):
                         QMessageBox.critical(self, "Error", f"Could not find newly created project with ID {new_id}")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not create item: {e}")
-                self.load_data_to_tree()  # Reload even on error
-            # --- END MODIFICATION ---
+                self.load_data_to_tree()
 
     def rename_item(self):
-        """
-        Rename the selected item using QInputDialog.
-        (Ported from home_screen.py)
-        """
         if not self.selected_tree_item: return
         db_id = self.selected_tree_item.data(0, Qt.ItemDataRole.UserRole)
         old_name = self.selected_tree_item.text(0)
@@ -235,10 +196,6 @@ class ProjectListWidget(QWidget):
             self.load_data_to_tree()
 
     def delete_item(self):
-        """
-        Delete the selected item with confirmation.
-        (Ported from home_screen.py)
-        """
         if not self.selected_tree_item: return
         db_id = self.selected_tree_item.data(0, Qt.ItemDataRole.UserRole)
         item_type = self.selected_tree_item.data(0, Qt.ItemDataRole.UserRole + 1)
@@ -261,20 +218,12 @@ class ProjectListWidget(QWidget):
             self.load_data_to_tree()
 
     def duplicate_item(self):
-        """
-        Duplicates the selected item.
-        (Ported from home_screen.py)
-        """
         if not self.selected_tree_item: return
         db_id = self.selected_tree_item.data(0, Qt.ItemDataRole.UserRole)
         self.db.duplicate_item(db_id)
         self.load_data_to_tree()
 
     def move_project(self):
-        """
-        Move the selected project to a new parent (or root).
-        (Ported from home_screen.py and uses new dialog)
-        """
         if not self.selected_tree_item: return
         db_id = self.selected_tree_item.data(0, Qt.ItemDataRole.UserRole)
         current_parent_id = self.selected_tree_item.data(0, Qt.ItemDataRole.UserRole + 2)
@@ -288,57 +237,53 @@ class ProjectListWidget(QWidget):
                 self.db.move_item(db_id, new_parent_id)
                 self.load_data_to_tree()
 
-    def edit_assignment_status(self):
+    def edit_project_status(self):
         """
-        Open the dialog to edit the 'is_assignment' status of a project.
-        (Ported from home_screen.py and uses new dialog)
+        Replaces edit_assignment_status to handle both flags using EditProjectStatusDialog.
         """
         if not self.selected_tree_item: return
         db_id = self.selected_tree_item.data(0, Qt.ItemDataRole.UserRole)
         item_details = self.db.get_item_details(db_id)
         if not item_details: return
 
-        current_status = item_details['is_assignment'] if item_details['is_assignment'] is not None else 1
+        current_assign = item_details.get('is_assignment', 0)
+        current_research = item_details.get('is_research', 0)
 
-        dialog = EditAssignmentDialog(current_status, self)
+        dialog = EditProjectStatusDialog(current_assign, current_research, self)
 
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            new_status_val = dialog.new_status
-            if new_status_val != current_status:
-                if current_status == 1 and new_status_val == 0:
+            new_assign = dialog.new_assignment_status
+            new_research = dialog.new_research_status
+
+            if new_assign != current_assign or new_research != current_research:
+                # Warning only if turning OFF assignment (data loss risk)
+                if current_assign == 1 and new_assign == 0:
                     reply = QMessageBox.question(self, "Warning",
-                                                 "This will permanently delete existing assignment data for this project.\nAre you sure you want to continue?",
+                                                 "Unchecking 'Assignment' will delete associated rubric/instruction data.\nContinue?",
                                                  QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                                                  QMessageBox.StandardButton.No)
                     if reply == QMessageBox.StandardButton.No:
                         return
 
-                # --- MODIFIED (Step 5.1) ---
-                self.db.update_assignment_status(db_id, new_status_val)
+                self.db.update_project_status(db_id, new_assign, new_research)
                 self.load_data_to_tree()
-                # --- END MODIFIED ---
+
+    # Alias for backward compatibility if needed, though context menu calls edit_project_status directly now
+    edit_assignment_status = edit_project_status
 
     def reorder_items(self):
-        """
-        Opens the reorder dialog for the selected item's siblings.
-        (New function, handles request for root and child reordering)
-        """
         items_to_reorder = []
 
         if self.selected_tree_item:
-            # Reordering children of a class or items at root
             parent_item = self.selected_tree_item.parent()
             if parent_item:
-                # Reordering children of a class
                 parent_db_id = parent_item.data(0, Qt.ItemDataRole.UserRole)
                 db_items = self.db.get_items(parent_db_id)
                 items_to_reorder = [(item['name'], item['id']) for item in db_items]
             else:
-                # Reordering items at root
                 db_items = self.db.get_items(parent_id=None)
                 items_to_reorder = [(item['name'], item['id']) for item in db_items]
         else:
-            # Right-clicked empty space, reordering root
             db_items = self.db.get_items(parent_id=None)
             items_to_reorder = [(item['name'], item['id']) for item in db_items]
 
@@ -354,12 +299,7 @@ class ProjectListWidget(QWidget):
             self.load_data_to_tree()
 
     def launch_qda_tool(self):
-        """
-        Launches the separate QDA Coding App via subprocess.
-        Sets the CWD to the qda_tool directory so it finds its logo and DB.
-        """
         try:
-            # Calculate path:  root/widgets/project_list_widget.py -> root/qda_tool/qda_coding_app.py
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             qda_dir = os.path.join(base_dir, 'qda_tool')
             script_name = "qda_coding_app.py"
@@ -369,12 +309,10 @@ class ProjectListWidget(QWidget):
                 QMessageBox.critical(self, "Error", f"Could not find QDA Tool at:\n{script_path}")
                 return
 
-            # Launch as a separate process
             subprocess.Popen([sys.executable, script_name], cwd=qda_dir)
 
         except Exception as e:
             QMessageBox.critical(self, "Launch Error", f"Failed to launch QDA Tool:\n{e}")
 
     def open_connections_window(self):
-        """Placeholder (now unused, kept for compatibility if referenced elsewhere)."""
         QMessageBox.information(self, "Connections", "Please use the 'Launch QDA Tool' button instead.")

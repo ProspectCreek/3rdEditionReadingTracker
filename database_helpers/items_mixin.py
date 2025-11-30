@@ -1,4 +1,4 @@
-#fileName: prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-47bfcd72f7141086e803a1dc9d0219052235aec5/database_helpers/items_mixin.py
+# database_helpers/items_mixin.py
 
 import sqlite3
 
@@ -23,13 +23,13 @@ class ItemsMixin:
         self.conn.commit()
         return self.cursor.lastrowid
 
-    def create_item(self, name, item_type, parent_db_id=None, is_assignment=0):
+    def create_item(self, name, item_type, parent_db_id=None, is_assignment=0, is_research=0):
         """UI-facing creator (signature used by ProjectListWidget)."""
         new_order = self._next_item_order(parent_db_id)
         self.cursor.execute("""
-            INSERT INTO items (parent_id, type, name, display_order, is_assignment)
-            VALUES (?, ?, ?, ?, ?)
-        """, (parent_db_id, item_type, name, new_order, int(is_assignment)))
+            INSERT INTO items (parent_id, type, name, display_order, is_assignment, is_research)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (parent_db_id, item_type, name, new_order, int(is_assignment), int(is_research)))
         self.conn.commit()
         return self.cursor.lastrowid
 
@@ -81,19 +81,29 @@ class ItemsMixin:
             )
         self.conn.commit()
 
-    def update_assignment_status(self, project_id, new_status_val):
-        """Updates the is_assignment flag and clears data if set to 0."""
+    def update_project_status(self, project_id, is_assignment, is_research):
+        """Updates the is_assignment and is_research flags."""
         self.cursor.execute(
-            "UPDATE items SET is_assignment = ? WHERE id = ?",
-            (int(new_status_val), project_id)
+            "UPDATE items SET is_assignment = ?, is_research = ? WHERE id = ?",
+            (int(bool(is_assignment)), int(bool(is_research)), project_id)
         )
-        if int(new_status_val) == 0:
+        # Clear assignment data if no longer an assignment
+        if not is_assignment:
             self.cursor.execute("DELETE FROM rubric_components WHERE project_id = ?", (project_id,))
             self.cursor.execute(
                 "UPDATE items SET assignment_instructions_text = NULL, assignment_draft_text = NULL WHERE id = ?",
                 (project_id,)
             )
+        # Note: No 'clear research data' logic yet as it's a blank tab
         self.conn.commit()
+
+    def update_assignment_status(self, project_id, new_status_val):
+        """Legacy alias for update_project_status, kept for safety if called elsewhere."""
+        # We assume existing research status is preserved or default 0 if we use this old method
+        # But to be safe, let's fetch current status first
+        curr = self.get_item_details(project_id)
+        is_research = curr.get('is_research', 0)
+        self.update_project_status(project_id, new_status_val, is_research)
 
     def duplicate_item(self, item_id):
         """Duplicates an item (project) and its children (readings, etc.)."""
@@ -102,11 +112,16 @@ class ItemsMixin:
             return
 
         new_name = f"{original_project['name']} (Copy)"
+
+        # Handle potential missing 'is_research' in old records by defaulting to 0
+        is_research = original_project.get('is_research', 0)
+
         new_project_id = self.create_item(
             new_name,
             original_project['type'],
             original_project['parent_id'],
-            original_project['is_assignment']
+            original_project['is_assignment'],
+            is_research
         )
 
         fields_to_copy = [
@@ -143,9 +158,7 @@ class ItemsMixin:
 
         original_instr = self.get_or_create_instructions(item_id)
         if original_instr:
-            # --- MODIFIED: Pass all instructions as a dict ---
             self.update_instructions(new_project_id, original_instr)
-            # --- END MODIFIED ---
 
         self.conn.commit()
 
@@ -178,8 +191,6 @@ class ItemsMixin:
         self.cursor.execute(f"UPDATE items SET {field_name} = ? WHERE id = ?", (html_text, project_id))
         self.conn.commit()
 
-    # --- START OF MODIFICATIONS ---
-
     # List of all 18 instruction columns
     INSTRUCTION_COLUMNS = [
         "key_questions_instr", "thesis_instr", "insights_instr", "unresolved_instr",
@@ -188,7 +199,7 @@ class ItemsMixin:
         "reading_parts_instr", "reading_key_terms_instr", "reading_arguments_instr",
         "reading_gaps_instr", "reading_theories_instr", "reading_dialogue_instr",
         "reading_rules_html",
-        "syntopic_rules_html"  # --- NEW ---
+        "syntopic_rules_html"
     ]
 
     # ------------------------- instructions -------------------------
@@ -201,22 +212,17 @@ class ItemsMixin:
         self.cursor.execute("SELECT * FROM instructions WHERE project_id = ?", (project_id,))
         row = self.cursor.fetchone()
         if row:
-            # Convert to dict to ensure all keys exist, even if they are NULL in DB
-            # (which they shouldn't be, but this is safer)
             row_dict = self._rowdict(row)
             all_data = {}
             for col in self.INSTRUCTION_COLUMNS:
                 all_data[col] = row_dict.get(col, '')
             return all_data
 
-        # Row not found, check again with count to be safe (prevents race conditions)
         self.cursor.execute("SELECT COUNT(*) FROM instructions WHERE project_id = ?", (project_id,))
         count = self.cursor.fetchone()[0]
         if count == 0:
             try:
-                # Create a new row with all columns explicitly set to ''
                 all_cols = ", ".join(self.INSTRUCTION_COLUMNS)
-                # Create a string of placeholders ('')
                 all_placeholders = ", ".join(["''" for _ in self.INSTRUCTION_COLUMNS])
 
                 self.cursor.execute(f"""
@@ -225,16 +231,14 @@ class ItemsMixin:
                 """, (project_id,))
                 self.conn.commit()
             except sqlite3.IntegrityError:
-                pass  # Race condition, another process inserted it.
+                pass
             except Exception as e:
                 print(f"Error creating default instructions: {e}")
-                return {col: '' for col in self.INSTRUCTION_COLUMNS}  # Return empty dict on failure
+                return {col: '' for col in self.INSTRUCTION_COLUMNS}
 
-        # Fetch the newly created (or just-found) row
         self.cursor.execute("SELECT * FROM instructions WHERE project_id = ?", (project_id,))
         row = self.cursor.fetchone()
 
-        # Convert to dict and fill in any missing keys
         row_dict = self._rowdict(row) if row else {}
         all_data = {}
         for col in self.INSTRUCTION_COLUMNS:
@@ -245,15 +249,8 @@ class ItemsMixin:
         """
         Updates all instruction fields from a data dictionary.
         """
-
-        # Build the SET clause
         set_clause = ", ".join([f"{col} = ?" for col in self.INSTRUCTION_COLUMNS])
-
-        # Build the parameters tuple in the correct order
-        # Use .get() to safely handle missing keys, defaulting to empty string
         params = [instructions_data.get(col, '') for col in self.INSTRUCTION_COLUMNS]
-
-        # Add the project_id for the WHERE clause
         params.append(project_id)
 
         try:
@@ -266,5 +263,3 @@ class ItemsMixin:
         except Exception as e:
             print(f"Error updating instructions: {e}")
             self.conn.rollback()
-
-    # --- END OF MODIFICATIONS ---
