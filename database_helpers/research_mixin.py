@@ -102,7 +102,7 @@ class ResearchMixin:
         """, (research_node_id,))
         return self._map_rows(self.cursor.fetchall())
 
-    # --- NEW: Terminology Linking (Many-to-Many) ---
+    # --- Terminology Linking (Many-to-Many) ---
     def add_research_term_link(self, research_node_id, terminology_id):
         """Links a term to a research node."""
         try:
@@ -165,4 +165,47 @@ class ResearchMixin:
     def delete_research_memo(self, memo_id):
         """Deletes a memo."""
         self.cursor.execute("DELETE FROM research_memos WHERE id = ?", (memo_id,))
+        self.conn.commit()
+
+    # --- Research Plan CRUD ---
+
+    def get_research_plans(self, project_id):
+        """Gets all research plans for a project."""
+        self.cursor.execute("""
+            SELECT * FROM research_plans
+            WHERE project_id = ?
+            ORDER BY display_order, id
+        """, (project_id,))
+        return self._map_rows(self.cursor.fetchall())
+
+    def add_research_plan(self, project_id, title):
+        """Adds a new research plan."""
+        # Get next display order
+        self.cursor.execute("SELECT COALESCE(MAX(display_order), -1) FROM research_plans WHERE project_id = ?", (project_id,))
+        new_order = (self.cursor.fetchone()[0] or -1) + 1
+
+        self.cursor.execute("""
+            INSERT INTO research_plans (project_id, title, display_order)
+            VALUES (?, ?, ?)
+        """, (project_id, title, new_order))
+        self.conn.commit()
+        return self.cursor.lastrowid
+
+    def update_research_plan_field(self, plan_id, field, value):
+        """Updates a specific field for a research plan."""
+        allowed = [
+            'title', 'status', 'research_question_id', 'methodological_approach',
+            'units_of_analysis', 'data_sources', 'sampling_strategy',
+            'coding_scheme', 'validity_limitations'
+        ]
+        if field not in allowed:
+            print(f"Error: Invalid field '{field}' for research_plans.")
+            return
+
+        self.cursor.execute(f"UPDATE research_plans SET {field} = ? WHERE id = ?", (value, plan_id))
+        self.conn.commit()
+
+    def delete_research_plan(self, plan_id):
+        """Deletes a research plan."""
+        self.cursor.execute("DELETE FROM research_plans WHERE id = ?", (plan_id,))
         self.conn.commit()

@@ -239,6 +239,25 @@ class SchemaSetup:
         )
         """)
 
+        # --- NEW: Research Plans Table ---
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS research_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            title TEXT,
+            status TEXT DEFAULT 'Not Started',
+            research_question_id INTEGER, 
+            methodological_approach TEXT,
+            units_of_analysis TEXT,
+            data_sources TEXT,
+            sampling_strategy TEXT,
+            coding_scheme TEXT,
+            validity_limitations TEXT,
+            display_order INTEGER,
+            FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE
+        )
+        """)
+
         # --- User Settings Table ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS user_settings (

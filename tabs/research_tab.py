@@ -34,7 +34,7 @@ class LargeTextEntryDialog(QDialog):
     A dialog with a large QTextEdit for entering comprehensive questions/titles.
     """
 
-    def __init__(self, title, label_text, parent=None):
+    def __init__(self, title, label_text, parent=None, default_text=""):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setMinimumWidth(600)  # Wider
@@ -46,6 +46,8 @@ class LargeTextEntryDialog(QDialog):
 
         self.text_edit = QTextEdit()
         self.text_edit.setPlaceholderText("Type text here...")
+        if default_text:
+            self.text_edit.setPlainText(default_text)
         layout.addWidget(self.text_edit)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -104,6 +106,7 @@ class ResearchTab(QWidget):
     """
     The Research tab allowing hierarchical organization of Research Questions,
     Sub-questions, and Outline Sections, with detailed fields and memos.
+    Includes a bottom pane for Research Plans.
     """
 
     # Signal to request PDF linking dialog (passes the editor widget)
@@ -120,40 +123,79 @@ class ResearchTab(QWidget):
         self.spell_checker_service = spell_checker_service
 
         self._current_node_id = None
+        self._current_plan_id = None
         self._ignore_changes = False
 
         self._setup_ui()
         self.load_tree()
+        self.load_plans()
 
     def _setup_ui(self):
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
 
-        self.splitter = QSplitter(Qt.Orientation.Horizontal)
-        main_layout.addWidget(self.splitter)
+        self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        main_layout.addWidget(self.main_splitter)
 
-        # --- Left Panel: Tree ---
-        left_panel = QWidget()
-        left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(4, 4, 4, 4)
+        # --- Left Panel (Split Vertically) ---
+        self.left_splitter = QSplitter(Qt.Orientation.Vertical)
 
-        left_label = QLabel("Research Structure")
-        left_label.setStyleSheet("font-weight: bold; font-size: 14px; color: #555;")
-        left_layout.addWidget(left_label)
+        # 1. Top Left: Research Structure
+        structure_widget = QWidget()
+        structure_layout = QVBoxLayout(structure_widget)
+        structure_layout.setContentsMargins(4, 4, 4, 4)
+
+        struct_label = QLabel("Research Structure")
+        struct_label.setStyleSheet("font-weight: bold; font-size: 14px; color: #555;")
+        structure_layout.addWidget(struct_label)
 
         self.tree = QTreeWidget()
         self.tree.setHeaderHidden(True)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._show_context_menu)
         self.tree.currentItemChanged.connect(self._on_tree_selection_changed)
-        left_layout.addWidget(self.tree)
+        structure_layout.addWidget(self.tree)
 
-        # Add Button Bar
         btn_layout = QHBoxLayout()
         self.btn_add_root = QPushButton("Add Question")
         self.btn_add_root.clicked.connect(self._add_root_question)
         btn_layout.addWidget(self.btn_add_root)
-        left_layout.addLayout(btn_layout)
+        structure_layout.addLayout(btn_layout)
+
+        self.left_splitter.addWidget(structure_widget)
+
+        # 2. Bottom Left: Research Plans
+        plans_widget = QWidget()
+        plans_layout = QVBoxLayout(plans_widget)
+        plans_layout.setContentsMargins(4, 4, 4, 4)
+
+        plans_label = QLabel("Research Plans")
+        plans_label.setStyleSheet("font-weight: bold; font-size: 14px; color: #555;")
+        plans_layout.addWidget(plans_label)
+
+        self.plan_list = QListWidget()
+        self.plan_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.plan_list.customContextMenuRequested.connect(self._show_plan_context_menu)
+        self.plan_list.currentItemChanged.connect(self._on_plan_selection_changed)
+        plans_layout.addWidget(self.plan_list)
+
+        plans_btn_layout = QHBoxLayout()
+        btn_add_plan = QPushButton("Add Plan")
+        btn_add_plan.clicked.connect(self._add_plan)
+        btn_del_plan = QPushButton("Delete")
+        btn_del_plan.clicked.connect(self._delete_plan)
+        btn_ren_plan = QPushButton("Rename")
+        btn_ren_plan.clicked.connect(self._rename_plan)
+
+        plans_btn_layout.addWidget(btn_add_plan)
+        plans_btn_layout.addWidget(btn_del_plan)
+        plans_btn_layout.addWidget(btn_ren_plan)
+        plans_layout.addLayout(plans_btn_layout)
+
+        self.left_splitter.addWidget(plans_widget)
+        self.left_splitter.setSizes([400, 400])  # 50/50 split
+
+        self.main_splitter.addWidget(self.left_splitter)
 
         # --- Right Panel: Detail Forms ---
         right_panel = QWidget()
@@ -180,11 +222,16 @@ class ResearchTab(QWidget):
         self.page_outline = self._create_outline_page()
         self.detail_stack.addWidget(self.page_outline)
 
+        # 4: Research Plan Editor
+        self.page_plan_editor = self._create_plan_page()
+        self.detail_stack.addWidget(self.page_plan_editor)
+
         right_layout.addWidget(self.detail_stack)
 
-        self.splitter.addWidget(left_panel)
-        self.splitter.addWidget(right_panel)
-        self.splitter.setSizes([300, 700])
+        self.main_splitter.addWidget(right_panel)
+        self.main_splitter.setSizes([300, 700])
+
+    # --- Page Creation ---
 
     def _create_question_page(self):
         """Creates the UI page for a Research Question (Parent)."""
@@ -196,19 +243,18 @@ class ResearchTab(QWidget):
         content = QWidget()
         form = QFormLayout(content)
 
-        # --- 1. Title (Wider) ---
+        # Title
         self.q_title = QTextEdit()
-        self.q_title.setMinimumHeight(100)  # Increased height
+        self.q_title.setMinimumHeight(100)
         self.q_title.setPlaceholderText("Research Question...")
         self.q_title.textChanged.connect(lambda: self._save_field_debounced('title', self.q_title))
         form.addRow("Question:", self.q_title)
 
-        # --- 2. PDF Links (Multi) ---
+        # PDF Links
         pdf_group = QGroupBox("Linked PDF Nodes")
         pdf_layout = QVBoxLayout(pdf_group)
-
         self.q_pdf_list = QListWidget()
-        self.q_pdf_list.setMinimumHeight(150)  # Taller viewer
+        self.q_pdf_list.setMinimumHeight(150)
         self.q_pdf_list.itemDoubleClicked.connect(self._on_pdf_list_item_clicked)
         self.q_pdf_list.setToolTip("Double-click to jump to PDF")
         pdf_layout.addWidget(self.q_pdf_list)
@@ -216,18 +262,15 @@ class ResearchTab(QWidget):
         pdf_btn_layout = QHBoxLayout()
         self.btn_q_add_pdf = QPushButton("Add Node")
         self.btn_q_add_pdf.clicked.connect(lambda: self._add_pdf_link(self.q_pdf_list))
-
         self.btn_q_remove_pdf = QPushButton("Remove Selected")
         self.btn_q_remove_pdf.clicked.connect(lambda: self._remove_pdf_link(self.q_pdf_list))
-
         pdf_btn_layout.addWidget(self.btn_q_add_pdf)
         pdf_btn_layout.addWidget(self.btn_q_remove_pdf)
         pdf_btn_layout.addStretch()
-
         pdf_layout.addLayout(pdf_btn_layout)
         form.addRow(pdf_group)
 
-        # --- 3. Standard Fields ---
+        # Standard Fields
         self.q_problem = QTextEdit()
         self.q_problem.setMaximumHeight(80)
         self.q_problem.textChanged.connect(lambda: self._save_field_debounced('problem_statement', self.q_problem))
@@ -243,16 +286,14 @@ class ResearchTab(QWidget):
         self.q_frameworks.textChanged.connect(lambda: self._save_field_debounced('frameworks', self.q_frameworks))
         form.addRow("Theoretical Frameworks:", self.q_frameworks)
 
-        # --- 4. Key Terms (List instead of Textbox) ---
+        # Key Terms
         terms_group = QGroupBox("Key Terms (from Synthesis)")
         terms_layout = QVBoxLayout(terms_group)
-
         self.q_term_list = QListWidget()
         self.q_term_list.setMaximumHeight(120)
         self.q_term_list.setAlternatingRowColors(True)
         self.q_term_list.itemDoubleClicked.connect(self._on_term_double_clicked)
         self.q_term_list.setToolTip("Double-click to open term in Synthesis tab")
-
         terms_layout.addWidget(self.q_term_list)
 
         terms_btn_layout = QHBoxLayout()
@@ -261,7 +302,6 @@ class ResearchTab(QWidget):
         terms_btn_layout.addWidget(btn_link_terms)
         terms_btn_layout.addStretch()
         terms_layout.addLayout(terms_btn_layout)
-
         form.addRow(terms_group)
 
         self.q_thesis = QTextEdit()
@@ -274,10 +314,9 @@ class ResearchTab(QWidget):
         self.q_issues.textChanged.connect(lambda: self._save_field_debounced('open_issues', self.q_issues))
         form.addRow("Open Issues:", self.q_issues)
 
-        # --- 5. Syntopical Group ---
+        # Syntopical Group
         syn_group = QGroupBox("Syntopical / Comparative Support")
         syn_layout = QFormLayout(syn_group)
-
         self.q_common = QTextEdit()
         self.q_common.setMaximumHeight(60)
         self.q_common.textChanged.connect(lambda: self._save_field_debounced('common_questions', self.q_common))
@@ -293,21 +332,18 @@ class ResearchTab(QWidget):
         self.q_disagree.textChanged.connect(lambda: self._save_field_debounced('disagreements', self.q_disagree))
         syn_layout.addRow("Points of Disagreement:", self.q_disagree)
 
-        # Rich Text for Synthesis
         if RichTextEditorTab:
             self.q_synthesis = RichTextEditorTab("Synthesis", spell_checker_service=self.spell_checker_service)
             self.q_synthesis.setMinimumHeight(200)
         else:
             self.q_synthesis = QTextEdit()
             self.q_synthesis.setMinimumHeight(100)
-
         syn_layout.addRow("My Synthesis:", self.q_synthesis)
         form.addRow(syn_group)
 
-        # --- 6. Memos Section ---
+        # Memos Section
         memo_group = QGroupBox("Research Memos")
         memo_layout = QVBoxLayout(memo_group)
-
         self.memo_list = QListWidget()
         self.memo_list.setMinimumHeight(100)
         self.memo_list.itemClicked.connect(self._load_memo)
@@ -330,18 +366,16 @@ class ResearchTab(QWidget):
 
         if RichTextEditorTab:
             self.memo_content = RichTextEditorTab("Memo Content", spell_checker_service=self.spell_checker_service)
-            self.memo_content.setMinimumHeight(300)  # Taller body
+            self.memo_content.setMinimumHeight(300)
         else:
             self.memo_content = QTextEdit()
             self.memo_content.setMinimumHeight(200)
         memo_layout.addWidget(self.memo_content)
-
         form.addRow(memo_group)
 
         scroll.setWidget(content)
         layout.addWidget(scroll)
 
-        # Add save button for rich text fields
         btn_save = QPushButton("Save Changes")
         btn_save.clicked.connect(self._manual_save_question)
         layout.addWidget(btn_save)
@@ -358,19 +392,16 @@ class ResearchTab(QWidget):
         content = QWidget()
         form = QFormLayout(content)
 
-        # --- 1. Title (Wider) ---
         self.sub_text = QTextEdit()
-        self.sub_text.setMinimumHeight(100)  # Increased height
+        self.sub_text.setMinimumHeight(100)
         self.sub_text.setPlaceholderText("Sub-question text...")
         self.sub_text.textChanged.connect(lambda: self._save_field_debounced('title', self.sub_text))
         form.addRow("Sub-question:", self.sub_text)
 
-        # --- 2. PDF Links (Multi) ---
+        # PDF Links
         pdf_group = QGroupBox("Linked PDF Nodes")
         pdf_layout = QVBoxLayout(pdf_group)
-
         self.sub_pdf_list = QListWidget()
-        # Requirement: Taller node viewer
         self.sub_pdf_list.setMinimumHeight(150)
         self.sub_pdf_list.itemDoubleClicked.connect(self._on_pdf_list_item_clicked)
         self.sub_pdf_list.setToolTip("Double-click to jump to PDF")
@@ -379,34 +410,27 @@ class ResearchTab(QWidget):
         pdf_btn_layout = QHBoxLayout()
         self.btn_sub_add_pdf = QPushButton("Add Node")
         self.btn_sub_add_pdf.clicked.connect(lambda: self._add_pdf_link(self.sub_pdf_list))
-
         self.btn_sub_remove_pdf = QPushButton("Remove Selected")
         self.btn_sub_remove_pdf.clicked.connect(lambda: self._remove_pdf_link(self.sub_pdf_list))
-
         pdf_btn_layout.addWidget(self.btn_sub_add_pdf)
         pdf_btn_layout.addWidget(self.btn_sub_remove_pdf)
         pdf_btn_layout.addStretch()
-
         pdf_layout.addLayout(pdf_btn_layout)
         form.addRow(pdf_group)
 
-        # --- 3. Standard Fields ---
         self.sub_role = QComboBox()
         self.sub_role.setEditable(True)
         self.sub_role.addItems(["Mechanism", "Context", "Case Study", "Comparison", "Evidence", "Counter-argument"])
         self.sub_role.currentTextChanged.connect(lambda t: self._save_field('role', t))
         form.addRow("Role:", self.sub_role)
 
-        # Rich Text for Evidence (supports PDF linking)
         if RichTextEditorTab:
             self.sub_evidence = RichTextEditorTab("Key Evidence", spell_checker_service=self.spell_checker_service)
             self.sub_evidence.setMinimumHeight(200)
-            # Forward signal to dashboard
             self.sub_evidence.linkPdfNodeTriggered.connect(lambda: self.linkPdfNodeRequested.emit(self.sub_evidence))
             self.sub_evidence.editor.smartAnchorClicked.connect(self.linkUrlClicked.emit)
         else:
             self.sub_evidence = QTextEdit()
-
         form.addRow("Key Evidence:", self.sub_evidence)
 
         self.sub_contra = QTextEdit()
@@ -456,6 +480,76 @@ class ResearchTab(QWidget):
         layout.addWidget(scroll)
         return page
 
+    def _create_plan_page(self):
+        """Creates the UI page for Research Plan Editor."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+
+        label = QLabel("Research Plan Editor")
+        label.setStyleSheet("font-weight: bold; font-size: 16px; margin-bottom: 5px;")
+        layout.addWidget(label)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        form = QFormLayout(content)
+
+        # A. Research Question (Dropdown)
+        self.plan_question = QComboBox()
+        self.plan_question.currentIndexChanged.connect(self._save_plan_question)
+        form.addRow("Research Question:", self.plan_question)
+
+        # B. Methodological Approach (Dropdown with Other)
+        self.plan_method = QComboBox()
+        self.plan_method.setEditable(True)
+        self.plan_method.addItems([
+            "Case Study", "Thematic Analysis", "Comparative Analysis",
+            "Qualitative", "Quantitative", "Mixed Methods",
+            "Interpretive Analysis", "Grounded Theory"
+        ])
+        self.plan_method.currentTextChanged.connect(lambda t: self._save_plan_field('methodological_approach', t))
+        form.addRow("Methodological Approach:", self.plan_method)
+
+        # C. Units of Analysis
+        self.plan_units = QTextEdit()
+        self.plan_units.setMaximumHeight(80)
+        self.plan_units.textChanged.connect(
+            lambda: self._save_plan_field_debounced('units_of_analysis', self.plan_units))
+        form.addRow("Units of Analysis:", self.plan_units)
+
+        # D. Data Sources
+        self.plan_sources = QTextEdit()
+        self.plan_sources.setMaximumHeight(80)
+        self.plan_sources.textChanged.connect(
+            lambda: self._save_plan_field_debounced('data_sources', self.plan_sources))
+        form.addRow("Data Sources:", self.plan_sources)
+
+        # E. Sampling Strategy
+        self.plan_sampling = QTextEdit()
+        self.plan_sampling.setMaximumHeight(80)
+        self.plan_sampling.textChanged.connect(
+            lambda: self._save_plan_field_debounced('sampling_strategy', self.plan_sampling))
+        form.addRow("Sampling Strategy:", self.plan_sampling)
+
+        # F. Coding Scheme
+        self.plan_coding = QTextEdit()
+        self.plan_coding.setMaximumHeight(80)
+        self.plan_coding.textChanged.connect(lambda: self._save_plan_field_debounced('coding_scheme', self.plan_coding))
+        form.addRow("Coding Scheme Summary:", self.plan_coding)
+
+        # G. Validity / Limitations
+        self.plan_validity = QTextEdit()
+        self.plan_validity.setMinimumHeight(100)
+        self.plan_validity.textChanged.connect(
+            lambda: self._save_plan_field_debounced('validity_limitations', self.plan_validity))
+        form.addRow("Validity / Reliability / Limitations:", self.plan_validity)
+
+        scroll.setWidget(content)
+        layout.addWidget(scroll)
+        return page
+
+    # --- Tree Management ---
+
     def load_tree(self):
         """Loads the research nodes from DB into the tree."""
         self.tree.clear()
@@ -498,9 +592,19 @@ class ResearchTab(QWidget):
 
     def _on_tree_selection_changed(self, current, previous):
         if not current:
+            # Only switch if plan list is also not selected?
+            # Let's enforce that selecting tree clears plan selection
+            if self.plan_list.currentItem():
+                return
             self.detail_stack.setCurrentIndex(0)
             self._current_node_id = None
             return
+
+        # If a tree item is selected, clear plan selection so we switch view
+        self.plan_list.blockSignals(True)
+        self.plan_list.clearSelection()
+        self.plan_list.blockSignals(False)
+        self._current_plan_id = None
 
         node_id = current.data(0, Qt.ItemDataRole.UserRole)
         node_type = current.data(0, Qt.ItemDataRole.UserRole + 1)
@@ -553,6 +657,190 @@ class ResearchTab(QWidget):
             self.out_notes.setPlainText(data['section_notes'] or "")
 
         self._ignore_changes = False
+
+    # --- Plan Management ---
+
+    def load_plans(self):
+        """Loads research plans into the bottom-left list."""
+        self.plan_list.clear()
+        plans = self.db.get_research_plans(self.project_id)
+
+        for p in plans:
+            display = f"{p['title']} ({p.get('status', 'Not Started')})"
+            item = QListWidgetItem(display)
+            item.setData(Qt.UserRole, p['id'])
+            self.plan_list.addItem(item)
+
+    def _show_plan_context_menu(self, pos):
+        """Right-click context menu for Research Plans."""
+        item = self.plan_list.itemAt(pos)
+        menu = QMenu()
+
+        menu.addAction("Add New Plan", self._add_plan)
+
+        if item:
+            menu.addSeparator()
+            menu.addAction("Rename Plan", self._rename_plan)
+            menu.addAction("Delete Plan", self._delete_plan)
+
+            # Reorder if ReorderDialog exists
+            if ReorderDialog:
+                menu.addSeparator()
+                menu.addAction("Reorder Plans...", self._reorder_plans)
+
+        menu.exec(self.plan_list.viewport().mapToGlobal(pos))
+
+    def _add_plan(self):
+        # Use LargeTextEntryDialog for a wider/larger input field
+        dialog = LargeTextEntryDialog("New Research Plan", "Enter Plan Title:", self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            title = dialog.get_text()
+            if title:
+                self.db.add_research_plan(self.project_id, title)
+                self.load_plans()
+
+    def _delete_plan(self):
+        item = self.plan_list.currentItem()
+        if not item: return
+        plan_id = item.data(Qt.UserRole)
+
+        if QMessageBox.question(self, "Delete", "Delete this plan?") == QMessageBox.StandardButton.Yes:
+            self.db.delete_research_plan(plan_id)
+            self.load_plans()
+            if self._current_plan_id == plan_id:
+                self.detail_stack.setCurrentIndex(0)
+                self._current_plan_id = None
+
+    def _rename_plan(self):
+        item = self.plan_list.currentItem()
+        if not item: return
+        plan_id = item.data(Qt.UserRole)
+
+        # Extract title from "Title (Status)"
+        current_text = item.text().rsplit(" (", 1)[0]
+
+        # Use LargeTextEntryDialog for rename too, pre-filled
+        dialog = LargeTextEntryDialog("Rename Plan", "New Title:", self, default_text=current_text)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            new_title = dialog.get_text()
+            if new_title:
+                self.db.update_research_plan_field(plan_id, 'title', new_title)
+                self.load_plans()
+
+    def _reorder_plans(self):
+        """Allows reordering of plans via ReorderDialog."""
+        if not ReorderDialog: return
+
+        # Collect plans: (Display Name, ID)
+        # Note: ReorderDialog typically expects (Name, ID) tuples
+        # We can fetch fresh from DB or use list items
+        plans = []
+        for i in range(self.plan_list.count()):
+            item = self.plan_list.item(i)
+            plans.append((item.text(), item.data(Qt.UserRole)))
+
+        if len(plans) < 2: return
+
+        dialog = ReorderDialog(plans, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # We need a method in DB to update plan order.
+            # Assuming db.update_research_plan_order exists or we can add it.
+            # If it doesn't exist, we might need to add it to mixin.
+            # I'll add a helper loop here if needed or assume mixin update.
+            # Let's check mixin... Ah, I need to add update_research_plan_order to mixin?
+            # Or just do manual loop here for now to be safe if mixin isn't updated in this turn.
+            # Actually, I can just execute SQL directly via self.db.cursor if mixin method missing,
+            # but best practice is mixin. Let's assume user accepts I might need to add to mixin
+            # or I can do it right here using self.db.conn/cursor if public.
+
+            # Since I can't edit mixin in this response easily without user prompt,
+            # I will implement the update loop here using the DB connection directly if possible,
+            # or try to use a generic update method.
+            # However, looking at mixin, it likely doesn't have it.
+            # I will assume `update_research_plan_order` might not exist yet.
+            # I will implement it manually here for safety.
+
+            try:
+                for i, plan_id in enumerate(dialog.ordered_db_ids):
+                    self.db.cursor.execute("UPDATE research_plans SET display_order = ? WHERE id = ?", (i, plan_id))
+                self.db.conn.commit()
+                self.load_plans()
+            except Exception as e:
+                print(f"Error reordering plans: {e}")
+
+    def _on_plan_selection_changed(self, current, previous):
+        if not current:
+            # If nothing selected here, check tree
+            if self.tree.currentItem():
+                return
+            self.detail_stack.setCurrentIndex(0)
+            self._current_plan_id = None
+            return
+
+        # Clear tree selection
+        self.tree.blockSignals(True)
+        self.tree.clearSelection()
+        self.tree.blockSignals(False)
+        self._current_node_id = None
+
+        plan_id = current.data(Qt.UserRole)
+        self._current_plan_id = plan_id
+
+        # Load Plan Data
+        # We need to fetch the single plan row. Using existing mixin?
+        # get_research_plans returns list. We can filter or add get_research_plan_details.
+        # For simplicity, let's just find it in the list for now or add a helper.
+        # I'll rely on reloading.
+        plans = self.db.get_research_plans(self.project_id)
+        plan_data = next((p for p in plans if p['id'] == plan_id), None)
+
+        if plan_data:
+            self._load_plan_details(plan_data)
+
+    def _load_plan_details(self, data):
+        self._ignore_changes = True
+        self.detail_stack.setCurrentWidget(self.page_plan_editor)
+
+        # Populate Question Dropdown
+        self.plan_question.clear()
+        self.plan_question.addItem("No Question Selected", None)
+
+        # Fetch actual questions
+        nodes = self.db.get_research_nodes(self.project_id)
+        questions = [n for n in nodes if n['type'] == 'question']
+
+        current_q_id = data.get('research_question_id')
+
+        for q in questions:
+            self.plan_question.addItem(q['title'], q['id'])
+            if q['id'] == current_q_id:
+                self.plan_question.setCurrentIndex(self.plan_question.count() - 1)
+
+        # Other fields
+        self.plan_method.setCurrentText(data.get('methodological_approach') or "")
+        self.plan_units.setPlainText(data.get('units_of_analysis') or "")
+        self.plan_sources.setPlainText(data.get('data_sources') or "")
+        self.plan_sampling.setPlainText(data.get('sampling_strategy') or "")
+        self.plan_coding.setPlainText(data.get('coding_scheme') or "")
+        self.plan_validity.setPlainText(data.get('validity_limitations') or "")
+
+        self._ignore_changes = False
+
+    def _save_plan_field(self, field, value):
+        if self._ignore_changes or not self._current_plan_id: return
+        self.db.update_research_plan_field(self._current_plan_id, field, value)
+
+    def _save_plan_field_debounced(self, field, widget):
+        if self._ignore_changes: return
+        val = widget.toPlainText() if hasattr(widget, 'toPlainText') else widget.text()
+        self._save_plan_field(field, val)
+
+    def _save_plan_question(self, index):
+        if self._ignore_changes or not self._current_plan_id: return
+        q_id = self.plan_question.currentData()
+        self.db.update_research_plan_field(self._current_plan_id, 'research_question_id', q_id)
+
+    # --- Node Saving ---
 
     def _save_field(self, field, value):
         if self._ignore_changes or not self._current_node_id: return
