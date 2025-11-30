@@ -1,3 +1,4 @@
+# prospectcreek/3rdeditionreadingtracker/database_helpers/readings_mixin.py
 class ReadingsMixin:
     # --------------------------- readings ---------------------------
 
@@ -83,7 +84,10 @@ class ReadingsMixin:
         allowed_fields = [
             'propositions_html', 'unity_html', 'key_terms_html',
             'arguments_html', 'gaps_html', 'theories_html',
-            'personal_dialogue_html'
+            'personal_dialogue_html',
+            # --- FIX: Add the new column to the whitelist ---
+            'elevator_abstract_html'
+            # --- END FIX ---
         ]
         if field_name not in allowed_fields:
             print(f"Error: Attempt to update invalid field {field_name}")

@@ -1,12 +1,10 @@
-# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-0eada8809e03f78f9e304f58f06c5f5a03a32c4f/database_helpers/key_terms_mixin.py
+# database_helpers/key_terms_mixin.py
 import sqlite3
 
 
 class KeyTermsMixin:
     """
     Mixin for managing reading-specific Key Terms.
-    This re-purposes the 'reading_driving_questions' table
-    by storing items with type = 'term'.
     """
 
     # --- START: Copied Helper Functions ---
@@ -20,11 +18,13 @@ class KeyTermsMixin:
     def _handle_virtual_anchor_tags(self, project_id, reading_id, item_id, item_type, data, summary_field_name):
         tags_text = data.get("synthesis_tags", "")
         tag_names = [tag.strip() for tag in tags_text.split(',') if tag.strip()]
+        pdf_node_id = data.get("pdf_node_id")
 
         self.cursor.execute("SELECT id FROM synthesis_anchors WHERE item_link_id = ?", (item_id,))
         anchor_row = self.cursor.fetchone()
 
-        if not tag_names:
+        # If no tags and no PDF link, remove anchor
+        if not tag_names and not pdf_node_id:
             if anchor_row:
                 self.cursor.execute("DELETE FROM synthesis_anchors WHERE id = ?", (anchor_row['id'],))
             return
@@ -35,19 +35,25 @@ class KeyTermsMixin:
 
         if not anchor_row:
             self.cursor.execute("""
-                INSERT INTO synthesis_anchors (project_id, reading_id, item_link_id, unique_doc_id, selected_text, item_type) 
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (project_id, reading_id, item_id, f"{item_type}_{item_id}", summary_text, item_type))
+                INSERT INTO synthesis_anchors (
+                    project_id, reading_id, item_link_id, unique_doc_id, 
+                    selected_text, item_type, pdf_node_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (project_id, reading_id, item_id, f"{item_type}_{item_id}",
+                  summary_text, item_type, pdf_node_id))
             anchor_id = self.cursor.lastrowid
         else:
             anchor_id = anchor_row['id']
-            self.cursor.execute("UPDATE synthesis_anchors SET selected_text = ? WHERE id = ?",
-                                (summary_text, anchor_id))
+            self.cursor.execute("""
+                UPDATE synthesis_anchors 
+                SET selected_text = ?, pdf_node_id = ? 
+                WHERE id = ?
+            """, (summary_text, pdf_node_id, anchor_id))
 
         self.cursor.execute("DELETE FROM anchor_tag_links WHERE anchor_id = ?", (anchor_id,))
 
         for tag_name in tag_names:
-            tag = self.get_or_create_tag(tag_name, project_id)  # get_or_create_tag is in SynthesisMixin
+            tag = self.get_or_create_tag(tag_name, project_id)
             if tag:
                 self.cursor.execute("""
                     INSERT OR IGNORE INTO anchor_tag_links (anchor_id, tag_id) 
@@ -79,8 +85,8 @@ class KeyTermsMixin:
                     question_text, question_category, nickname, 
                     scope, outline_id, pages, 
                     why_question, synthesis_tags, 
-                    type
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'term')
+                    type, pdf_node_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'term', ?)
             """, (
                 reading_id, None, new_order,
                 data.get("term"),
@@ -89,7 +95,8 @@ class KeyTermsMixin:
                 data.get("quote"),
                 data.get("outline_id"),
                 data.get("pages"),
-                data.get("notes")
+                data.get("notes"),
+                data.get("pdf_node_id")
             ))
 
             new_item_id = self.cursor.lastrowid
@@ -115,7 +122,8 @@ class KeyTermsMixin:
                 UPDATE reading_driving_questions SET
                     question_text = ?, question_category = ?, nickname = ?, 
                     scope = ?, outline_id = ?, pages = ?, 
-                    why_question = ?, synthesis_tags = NULL
+                    why_question = ?, synthesis_tags = NULL,
+                    pdf_node_id = ?
                 WHERE id = ? AND type = 'term'
             """, (
                 data.get("term"),
@@ -125,6 +133,7 @@ class KeyTermsMixin:
                 data.get("outline_id"),
                 data.get("pages"),
                 data.get("notes"),
+                data.get("pdf_node_id"),
                 term_id
             ))
 
@@ -144,7 +153,8 @@ class KeyTermsMixin:
                 id, 
                 question_text as term, 
                 question_category as definition, 
-                nickname as role
+                nickname as role,
+                pdf_node_id
             FROM reading_driving_questions
             WHERE reading_id = ? AND type = 'term'
             ORDER BY display_order, id
@@ -180,7 +190,8 @@ class KeyTermsMixin:
                 dq.scope as quote,
                 dq.outline_id,
                 dq.pages,
-                dq.why_question as notes
+                dq.why_question as notes,
+                dq.pdf_node_id
             FROM reading_driving_questions dq
             WHERE dq.id = ? AND dq.type = 'term'
         """, (term_id,))

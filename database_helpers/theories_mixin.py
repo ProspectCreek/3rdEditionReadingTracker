@@ -1,4 +1,4 @@
-# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-0eada8809e03f78f9e304f58f06c5f5a03a32c4f/database_helpers/theories_mixin.py
+# database_helpers/theories_mixin.py
 import sqlite3
 
 
@@ -18,11 +18,12 @@ class TheoriesMixin:
     def _handle_virtual_anchor_tags(self, project_id, reading_id, item_id, item_type, data, summary_field_name):
         tags_text = data.get("synthesis_tags", "")
         tag_names = [tag.strip() for tag in tags_text.split(',') if tag.strip()]
+        pdf_node_id = data.get("pdf_node_id")
 
         self.cursor.execute("SELECT id FROM synthesis_anchors WHERE item_link_id = ?", (item_id,))
         anchor_row = self.cursor.fetchone()
 
-        if not tag_names:
+        if not tag_names and not pdf_node_id:
             if anchor_row:
                 self.cursor.execute("DELETE FROM synthesis_anchors WHERE id = ?", (anchor_row['id'],))
             return
@@ -33,14 +34,20 @@ class TheoriesMixin:
 
         if not anchor_row:
             self.cursor.execute("""
-                INSERT INTO synthesis_anchors (project_id, reading_id, item_link_id, unique_doc_id, selected_text, item_type) 
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (project_id, reading_id, item_id, f"{item_type}_{item_id}", summary_text, item_type))
+                INSERT INTO synthesis_anchors (
+                    project_id, reading_id, item_link_id, unique_doc_id, 
+                    selected_text, item_type, pdf_node_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (project_id, reading_id, item_id, f"{item_type}_{item_id}",
+                  summary_text, item_type, pdf_node_id))
             anchor_id = self.cursor.lastrowid
         else:
             anchor_id = anchor_row['id']
-            self.cursor.execute("UPDATE synthesis_anchors SET selected_text = ? WHERE id = ?",
-                                (summary_text, anchor_id))
+            self.cursor.execute("""
+                UPDATE synthesis_anchors 
+                SET selected_text = ?, pdf_node_id = ? 
+                WHERE id = ?
+            """, (summary_text, pdf_node_id, anchor_id))
 
         self.cursor.execute("DELETE FROM anchor_tag_links WHERE anchor_id = ?", (anchor_id,))
 
@@ -78,8 +85,8 @@ class TheoriesMixin:
                     question_text, nickname, scope, 
                     outline_id, pages, question_category, 
                     why_question, synthesis_tags, extra_notes_text,
-                    type
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 'theory')
+                    type, pdf_node_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 'theory', ?)
             """, (
                 reading_id, None, new_order,
                 data.get("theory_name"),
@@ -89,7 +96,8 @@ class TheoriesMixin:
                 data.get("pages"),
                 data.get("description"),
                 data.get("purpose"),
-                data.get("notes")
+                data.get("notes"),
+                data.get("pdf_node_id")
             ))
 
             new_item_id = self.cursor.lastrowid
@@ -115,7 +123,8 @@ class TheoriesMixin:
                 UPDATE reading_driving_questions SET
                     question_text = ?, nickname = ?, scope = ?,
                     outline_id = ?, pages = ?, question_category = ?,
-                    why_question = ?, synthesis_tags = NULL, extra_notes_text = ?
+                    why_question = ?, synthesis_tags = NULL, extra_notes_text = ?,
+                    pdf_node_id = ?
                 WHERE id = ? AND type = 'theory'
             """, (
                 data.get("theory_name"),
@@ -126,6 +135,7 @@ class TheoriesMixin:
                 data.get("description"),
                 data.get("purpose"),
                 data.get("notes"),
+                data.get("pdf_node_id"),
                 theory_id
             ))
 
@@ -145,7 +155,8 @@ class TheoriesMixin:
                 id, 
                 question_text as theory_name, 
                 nickname as theory_author, 
-                why_question as purpose
+                why_question as purpose,
+                pdf_node_id
             FROM reading_driving_questions
             WHERE reading_id = ? AND type = 'theory'
             ORDER BY display_order, id
@@ -182,7 +193,8 @@ class TheoriesMixin:
                 dq.pages,
                 dq.question_category as description,
                 dq.why_question as purpose,
-                dq.extra_notes_text as notes
+                dq.extra_notes_text as notes,
+                dq.pdf_node_id
             FROM reading_driving_questions dq
             WHERE dq.id = ? AND dq.type = 'theory'
         """, (theory_id,))

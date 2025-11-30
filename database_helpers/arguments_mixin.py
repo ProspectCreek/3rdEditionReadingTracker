@@ -1,4 +1,4 @@
-# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-0eada8809e03f78f9e304f58f06c5f5a03a32c4f/database_helpers/arguments_mixin.py
+# database_helpers/arguments_mixin.py
 import sqlite3
 
 
@@ -18,11 +18,12 @@ class ArgumentsMixin:
     def _handle_virtual_anchor_tags(self, project_id, reading_id, item_id, item_type, data, summary_field_name):
         tags_text = data.get("synthesis_tags", "")
         tag_names = [tag.strip() for tag in tags_text.split(',') if tag.strip()]
+        pdf_node_id = data.get("pdf_node_id")
 
         self.cursor.execute("SELECT id FROM synthesis_anchors WHERE item_link_id = ?", (item_id,))
         anchor_row = self.cursor.fetchone()
 
-        if not tag_names:
+        if not tag_names and not pdf_node_id:
             if anchor_row:
                 self.cursor.execute("DELETE FROM synthesis_anchors WHERE id = ?", (anchor_row['id'],))
             return
@@ -33,14 +34,20 @@ class ArgumentsMixin:
 
         if not anchor_row:
             self.cursor.execute("""
-                INSERT INTO synthesis_anchors (project_id, reading_id, item_link_id, unique_doc_id, selected_text, item_type) 
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (project_id, reading_id, item_id, f"{item_type}_{item_id}", summary_text, item_type))
+                INSERT INTO synthesis_anchors (
+                    project_id, reading_id, item_link_id, unique_doc_id, 
+                    selected_text, item_type, pdf_node_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (project_id, reading_id, item_id, f"{item_type}_{item_id}",
+                  summary_text, item_type, pdf_node_id))
             anchor_id = self.cursor.lastrowid
         else:
             anchor_id = anchor_row['id']
-            self.cursor.execute("UPDATE synthesis_anchors SET selected_text = ? WHERE id = ?",
-                                (summary_text, anchor_id))
+            self.cursor.execute("""
+                UPDATE synthesis_anchors 
+                SET selected_text = ?, pdf_node_id = ? 
+                WHERE id = ?
+            """, (summary_text, pdf_node_id, anchor_id))
 
         self.cursor.execute("DELETE FROM anchor_tag_links WHERE anchor_id = ?", (anchor_id,))
 
@@ -80,14 +87,15 @@ class ArgumentsMixin:
                 self.cursor.execute("""
                     INSERT INTO reading_arguments (
                         reading_id, display_order, claim_text, because_text,
-                        driving_question_id, is_insight, synthesis_tags
-                    ) VALUES (?, ?, ?, ?, ?, ?, NULL)
+                        driving_question_id, is_insight, synthesis_tags, pdf_node_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)
                 """, (
                     reading_id, new_order,
                     data.get("claim_text"),
                     data.get("because_text"),
                     data.get("driving_question_id"),
-                    1 if data.get("is_insight") else 0
+                    1 if data.get("is_insight") else 0,
+                    data.get("pdf_node_id")
                 ))
                 argument_id = self.cursor.lastrowid
             else:
@@ -96,13 +104,14 @@ class ArgumentsMixin:
                     UPDATE reading_arguments SET
                         claim_text = ?, because_text = ?,
                         driving_question_id = ?, is_insight = ?,
-                        synthesis_tags = NULL
+                        synthesis_tags = NULL, pdf_node_id = ?
                     WHERE id = ? AND reading_id = ?
                 """, (
                     data.get("claim_text"),
                     data.get("because_text"),
                     data.get("driving_question_id"),
                     1 if data.get("is_insight") else 0,
+                    data.get("pdf_node_id"),
                     argument_id,
                     reading_id
                 ))
@@ -168,6 +177,7 @@ class ArgumentsMixin:
                 ra.claim_text, 
                 ra.because_text, 
                 ra.is_insight,
+                ra.pdf_node_id,
                 GROUP_CONCAT(rae.argument_text, '; ') as details
             FROM reading_arguments ra
             LEFT JOIN reading_argument_evidence rae ON ra.id = rae.argument_id

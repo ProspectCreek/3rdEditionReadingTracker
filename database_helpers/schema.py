@@ -190,12 +190,17 @@ class SchemaSetup:
             gaps_html TEXT,
             theories_html TEXT,
             personal_dialogue_html TEXT,
+            elevator_abstract_html TEXT,
             unity_kind_of_work TEXT,
             unity_driving_question_id INTEGER,
+            zotero_item_key TEXT,
             FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE
         )
         """)
         self._add_column_if_not_exists("readings", "zotero_item_key", "TEXT", "NULL")
+        # --- FIX: Add the missing column for Elevator Abstract ---
+        self._add_column_if_not_exists("readings", "elevator_abstract_html", "TEXT", "NULL")
+        # --- END FIX ---
 
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS project_tag_links (
@@ -225,6 +230,7 @@ class SchemaSetup:
             synthesis_tags TEXT,
             is_working_question INTEGER,
             extra_notes_text TEXT,
+            pdf_node_id INTEGER,
             FOREIGN KEY (reading_id) REFERENCES readings(id) ON DELETE CASCADE,
             FOREIGN KEY (parent_id) REFERENCES reading_driving_questions(id) ON DELETE CASCADE
         )
@@ -309,10 +315,14 @@ class SchemaSetup:
             driving_question_id INTEGER,
             is_insight INTEGER DEFAULT 0,
             synthesis_tags TEXT,
+            pdf_node_id INTEGER,
             FOREIGN KEY (reading_id) REFERENCES readings(id) ON DELETE CASCADE,
             FOREIGN KEY (driving_question_id) REFERENCES reading_driving_questions(id) ON DELETE SET NULL
         )
         """)
+        # --- NEW: Add pdf_node_id to arguments ---
+        self._add_column_if_not_exists("reading_arguments", "pdf_node_id", "INTEGER", "NULL")
+        # --- END NEW ---
 
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS mindmap_nodes (
@@ -388,6 +398,7 @@ class SchemaSetup:
             comment TEXT,
             item_link_id INTEGER,
             item_type TEXT,
+            pdf_node_id INTEGER,
             FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE,
             FOREIGN KEY (reading_id) REFERENCES readings(id) ON DELETE CASCADE,
             FOREIGN KEY (outline_id) REFERENCES reading_outline(id) ON DELETE CASCADE,

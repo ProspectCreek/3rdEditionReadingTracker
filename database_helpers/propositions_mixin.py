@@ -1,4 +1,4 @@
-# prospectcreek/3rdeditionreadingtracker/database_helpers/propositions_mixin.py
+# database_helpers/propositions_mixin.py
 import sqlite3
 
 
@@ -160,11 +160,12 @@ class PropositionsMixin:
     def _handle_virtual_anchor_tags(self, project_id, reading_id, item_id, item_type, data, summary_field_name):
         tags_text = data.get("synthesis_tags", "")
         tag_names = [tag.strip() for tag in tags_text.split(',') if tag.strip()]
+        pdf_node_id = data.get("pdf_node_id")
 
         self.cursor.execute("SELECT id FROM synthesis_anchors WHERE item_link_id = ?", (item_id,))
         anchor_row = self.cursor.fetchone()
 
-        if not tag_names:
+        if not tag_names and not pdf_node_id:
             if anchor_row:
                 self.cursor.execute("DELETE FROM synthesis_anchors WHERE id = ?", (anchor_row['id'],))
             return
@@ -178,15 +179,21 @@ class PropositionsMixin:
 
         if not anchor_row:
             self.cursor.execute("""
-                INSERT INTO synthesis_anchors (project_id, reading_id, item_link_id, unique_doc_id, selected_text, item_type) 
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (project_id, reading_id, item_id, f"{item_type}_{item_id}", summary_text, item_type))
+                INSERT INTO synthesis_anchors (
+                    project_id, reading_id, item_link_id, unique_doc_id, 
+                    selected_text, item_type, pdf_node_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (project_id, reading_id, item_id, f"{item_type}_{item_id}",
+                  summary_text, item_type, pdf_node_id))
             anchor_id = self.cursor.lastrowid
         else:
             anchor_id = anchor_row['id']
             # --- FIX: Update summary text ---
-            self.cursor.execute("UPDATE synthesis_anchors SET selected_text = ? WHERE id = ?",
-                                (summary_text, anchor_id))
+            self.cursor.execute("""
+                UPDATE synthesis_anchors 
+                SET selected_text = ?, pdf_node_id = ?
+                WHERE id = ?
+            """, (summary_text, pdf_node_id, anchor_id))
             # --- END FIX ---
 
         self.cursor.execute("DELETE FROM anchor_tag_links WHERE anchor_id = ?", (anchor_id,))
@@ -220,15 +227,16 @@ class PropositionsMixin:
                 INSERT INTO reading_driving_questions (
                     reading_id, parent_id, display_order, question_text, 
                     outline_id, pages, why_question, synthesis_tags, type,
-                    nickname 
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'proposition', ?)
+                    nickname, pdf_node_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'proposition', ?, ?)
             """, (
                 reading_id, None, new_order,
                 data.get("proposition_text"),
                 data.get("outline_id"),
                 data.get("pages"),
                 data.get("why_important"),
-                data.get("nickname")  # <-- ADDED NICKNAME
+                data.get("nickname"),
+                data.get("pdf_node_id")
             ))
 
             new_item_id = self.cursor.lastrowid
@@ -254,14 +262,15 @@ class PropositionsMixin:
                 UPDATE reading_driving_questions SET
                     question_text = ?, outline_id = ?, pages = ?, 
                     why_question = ?, synthesis_tags = NULL,
-                    nickname = ?
+                    nickname = ?, pdf_node_id = ?
                 WHERE id = ? AND type = 'proposition'
             """, (
                 data.get("proposition_text"),
                 data.get("outline_id"),
                 data.get("pages"),
                 data.get("why_important"),
-                data.get("nickname"),  # <-- ADDED NICKNAME
+                data.get("nickname"),
+                data.get("pdf_node_id"),
                 proposition_id
             ))
 
@@ -277,7 +286,7 @@ class PropositionsMixin:
     def get_reading_propositions_simple(self, reading_id):
         """Gets all simple, reading-level propositions."""
         self.cursor.execute("""
-            SELECT id, question_text as proposition_text, nickname
+            SELECT id, question_text as proposition_text, nickname, pdf_node_id
             FROM reading_driving_questions
             WHERE reading_id = ? AND type = 'proposition'
             ORDER BY display_order, id
@@ -298,6 +307,7 @@ class PropositionsMixin:
                 dq.outline_id,
                 dq.pages,
                 dq.why_question as why_important,
+                dq.pdf_node_id,
                 ro.section_title as outline_title
             FROM reading_driving_questions dq
             LEFT JOIN reading_outline ro ON dq.outline_id = ro.id

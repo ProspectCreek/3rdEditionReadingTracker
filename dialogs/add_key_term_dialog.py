@@ -1,5 +1,4 @@
-# prospectcreek/3rdeditionreadingtracker/3rdEditionReadingTracker-d0eaa6c33c524aa054deaa3e5b81207eb93ba7d2/dialogs/add_key_term_dialog.py
-
+# dialogs/add_key_term_dialog.py
 import sys
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit, QTextEdit,
@@ -11,73 +10,73 @@ from PySide6.QtCore import Qt, Slot
 try:
     from dialogs.connect_tags_dialog import ConnectTagsDialog
 except ImportError:
-    print("Error: Could not import ConnectTagsDialog")
     ConnectTagsDialog = None
+
+try:
+    from dialogs.pdf_link_dialog import PdfLinkDialog
+except ImportError:
+    PdfLinkDialog = None
 
 
 class AddKeyTermDialog(QDialog):
     """
-    Dialog for adding or editing a 'Key Term'
-    that is specific to a single reading.
+    Dialog for adding or editing a 'Key Term'.
     """
 
     def __init__(self, db_manager, project_id, reading_id, outline_items, current_data=None, parent=None):
         super().__init__(parent)
-
         self.db = db_manager
         self.project_id = project_id
         self.reading_id = reading_id
         self.outline_items = outline_items
         self.current_data = current_data if current_data else {}
+        self.selected_pdf_node_id = self.current_data.get('pdf_node_id')
 
         self.setWindowTitle("Edit Key Term" if current_data else "Add Key Term")
         self.setMinimumWidth(550)
 
+        self.setup_ui()
+
+        # Load initial PDF label if ID exists
+        if self.selected_pdf_node_id:
+            self._update_pdf_label_from_id(self.selected_pdf_node_id)
+
+    def setup_ui(self):
         main_layout = QVBoxLayout(self)
         form_layout = QFormLayout()
 
-        # --- Term ---
         self.term_edit = QLineEdit()
         self.term_edit.setPlaceholderText("Enter the key term...")
         self.term_edit.setText(self.current_data.get("term", ""))
         form_layout.addRow("Term:", self.term_edit)
 
-        # --- My Definition ---
         self.definition_edit = QTextEdit()
         self.definition_edit.setMinimumHeight(80)
-        self.definition_edit.setPlaceholderText("Enter your definition of the term...")
+        self.definition_edit.setPlaceholderText("Enter definition...")
         self.definition_edit.setText(self.current_data.get("definition", ""))
         form_layout.addRow("My Definition:", self.definition_edit)
 
-        # --- Author's Wording / Citation ---
-        quote_label = QLabel("Author's Wording / Citation (Optional)")
-        quote_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
-        main_layout.addLayout(form_layout)
-        main_layout.addWidget(quote_label)
-
+        # --- Location & Context ---
         citation_form_layout = QFormLayout()
 
         self.quote_edit = QTextEdit()
         self.quote_edit.setPlaceholderText("Enter a direct quote...")
-        self.quote_edit.setMinimumHeight(60)  # Allow for multiple lines
+        self.quote_edit.setMinimumHeight(60)
         self.quote_edit.setPlainText(self.current_data.get("quote", ""))
         citation_form_layout.addRow("Quote:", self.quote_edit)
 
-        # --- Location (Outline) ---
         where_layout = QHBoxLayout()
-        where_layout.setContentsMargins(0, 0, 0, 0)
         self.where_combo = QComboBox()
         self._populate_where_combo(self.outline_items)
 
         current_outline_id = self.current_data.get("outline_id")
         if current_outline_id:
             idx = self.where_combo.findData(current_outline_id)
-            if idx != -1:
-                self.where_combo.setCurrentIndex(idx)
+            if idx != -1: self.where_combo.setCurrentIndex(idx)
 
         self.page_edit = QLineEdit()
         self.page_edit.setPlaceholderText("e.g., 10-12")
-        self.page_edit.setFixedWidth(60)
+        self.page_edit.setFixedWidth(80)
         self.page_edit.setText(self.current_data.get("pages", ""))
 
         where_layout.addWidget(self.where_combo)
@@ -85,47 +84,49 @@ class AddKeyTermDialog(QDialog):
         where_layout.addWidget(self.page_edit)
         citation_form_layout.addRow("Location:", where_layout)
 
-        main_layout.addLayout(citation_form_layout)
-
-        # --- Role in Argument (CHANGED TO COMBOBOX) ---
-        role_label = QLabel("Role in Argument")
-        role_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
-        main_layout.addWidget(role_label)
-
         self.role_combo = QComboBox()
         self.role_combo.addItems([
-            "Defines Scope",
-            "Names Mechanism",
-            "Criterion/Test",
-            "Assumption",
-            "Contrast/Foil",
-            "Key Variable"
+            "Defines Scope", "Names Mechanism", "Criterion/Test",
+            "Assumption", "Contrast/Foil", "Key Variable"
         ])
-        current_role = self.current_data.get("role", "Defines Scope")
-        self.role_combo.setCurrentText(current_role)
+        self.role_combo.setCurrentText(self.current_data.get("role", "Defines Scope"))
+        citation_form_layout.addRow("Role:", self.role_combo)
 
-        main_layout.addWidget(self.role_combo)
+        main_layout.addLayout(citation_form_layout)
 
-        # --- Synthesis Tags & Notes ---
+        # --- Tags & PDF ---
         other_form_layout = QFormLayout()
 
         tags_layout = QHBoxLayout()
-        tags_layout.setContentsMargins(0, 0, 0, 0)
         self.tags_edit = QLineEdit()
-        self.tags_edit.setPlaceholderText("e.g., #gratitude, #leadership")
+        self.tags_edit.setPlaceholderText("e.g., #concept")
         self.tags_edit.setText(self.current_data.get("synthesis_tags", ""))
         connect_btn = QPushButton("Connect...")
-
-        if self.db and self.project_id is not None and ConnectTagsDialog:
-            connect_btn.setEnabled(True)
+        if ConnectTagsDialog:
             connect_btn.clicked.connect(self._open_connect_tags_dialog)
         else:
             connect_btn.setEnabled(False)
-            connect_btn.setToolTip("Database connection not available or dialog not found")
-
         tags_layout.addWidget(self.tags_edit)
         tags_layout.addWidget(connect_btn)
         other_form_layout.addRow("Synthesis Tags:", tags_layout)
+
+        # PDF Link
+        pdf_layout = QHBoxLayout()
+        self.pdf_label = QLabel("No PDF Node connected")
+        self.pdf_label.setStyleSheet("font-style: italic; color: #555;")
+        self.btn_pdf = QPushButton("Add/Change Node")
+        if PdfLinkDialog:
+            self.btn_pdf.clicked.connect(self._open_pdf_link_dialog)
+        else:
+            self.btn_pdf.setEnabled(False)
+        self.btn_clear_pdf = QPushButton("Clear")
+        self.btn_clear_pdf.clicked.connect(self._clear_pdf_link)
+
+        pdf_layout.addWidget(self.pdf_label)
+        pdf_layout.addStretch()
+        pdf_layout.addWidget(self.btn_pdf)
+        pdf_layout.addWidget(self.btn_clear_pdf)
+        other_form_layout.addRow("PDF Link:", pdf_layout)
 
         self.notes_edit = QTextEdit()
         self.notes_edit.setMinimumHeight(60)
@@ -135,58 +136,66 @@ class AddKeyTermDialog(QDialog):
 
         main_layout.addLayout(other_form_layout)
 
-        # --- Standard OK/Cancel buttons ---
-        self.button_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
+        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
         main_layout.addWidget(self.button_box)
 
     def _populate_where_combo(self, outline_items, indent=0):
-        """Recursively populates the 'Where in Reading' dropdown."""
         if indent == 0:
-            self.where_combo.addItem("[Reading-Level Notes]", None)  # Top-level
-
+            self.where_combo.addItem("[Reading-Level Notes]", None)
         for item in outline_items:
             prefix = "  " * indent
-            display_text = f"{prefix} {item['section_title']}"
-            self.where_combo.addItem(display_text, item['id'])
-
+            self.where_combo.addItem(f"{prefix} {item['section_title']}", item['id'])
             if 'children' in item:
                 self._populate_where_combo(item['children'], indent + 1)
 
+    @Slot()
+    def _open_connect_tags_dialog(self):
+        if not ConnectTagsDialog: return
+        try:
+            all_tags = self.db.get_project_tags(self.project_id)
+            current = [t.strip() for t in self.tags_edit.text().split(',') if t.strip()]
+            dialog = ConnectTagsDialog(all_tags, current, self)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.tags_edit.setText(", ".join(dialog.get_selected_tag_names()))
+        except Exception as e:
+            print(f"Error opening tags: {e}")
+
+    @Slot()
+    def _open_pdf_link_dialog(self):
+        if not PdfLinkDialog: return
+        dialog = PdfLinkDialog(self.db, self.project_id, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            if dialog.selected_node_id:
+                self.selected_pdf_node_id = dialog.selected_node_id
+                self._update_pdf_label_from_id(self.selected_pdf_node_id)
+
+    def _update_pdf_label_from_id(self, node_id):
+        node = self.db.get_pdf_node_details(node_id)
+        if node:
+            lbl = node.get('label', 'Node')
+            pg = node.get('page_number', 0) + 1
+            self.pdf_label.setText(f"{lbl} (Pg {pg})")
+            self.pdf_label.setStyleSheet("font-weight: bold; color: #2563EB;")
+        else:
+            self.pdf_label.setText(f"Node ID: {node_id}")
+
+    @Slot()
+    def _clear_pdf_link(self):
+        self.selected_pdf_node_id = None
+        self.pdf_label.setText("No PDF Node connected")
+        self.pdf_label.setStyleSheet("font-style: italic; color: #555;")
+
     def get_data(self):
-        """Returns all data from the dialog fields in a dictionary."""
         return {
             "term": self.term_edit.text().strip(),
             "definition": self.definition_edit.toPlainText().strip(),
             "quote": self.quote_edit.toPlainText().strip(),
             "outline_id": self.where_combo.currentData(),
             "pages": self.page_edit.text().strip(),
-            "role": self.role_combo.currentText(),  # <-- Read from Combo
+            "role": self.role_combo.currentText(),
             "synthesis_tags": self.tags_edit.text().strip(),
             "notes": self.notes_edit.toPlainText().strip(),
+            "pdf_node_id": self.selected_pdf_node_id
         }
-
-    @Slot()
-    def _open_connect_tags_dialog(self):
-        if not self.db or self.project_id is None:
-            QMessageBox.warning(self, "Error", "Database connection is not available.")
-            return
-        if not ConnectTagsDialog:
-            QMessageBox.critical(self, "Error", "ConnectTagsDialog could not be loaded.")
-            return
-
-        try:
-            all_project_tags = self.db.get_project_tags(self.project_id)
-            current_tags_text = self.tags_edit.text().strip()
-            selected_tag_names = [tag.strip() for tag in current_tags_text.split(',') if tag.strip()]
-
-            dialog = ConnectTagsDialog(all_project_tags, selected_tag_names, self)
-            if dialog.exec() == QDialog.DialogCode.Accepted:
-                new_names = dialog.get_selected_tag_names()
-                self.tags_edit.setText(", ".join(new_names))
-
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Could not open tag connector: {e}")

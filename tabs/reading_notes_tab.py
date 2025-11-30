@@ -1,3 +1,4 @@
+# tabs/reading_notes_tab.py
 import sys
 import uuid
 from PySide6.QtWidgets import (
@@ -465,11 +466,12 @@ class ReadingNotesTab(QWidget):
             self.elevator_abstract_tab = ElevatorAbstractTab(
                 spell_checker_service=self.spell_checker_service)  # <-- PASS SERVICE
             self.bottom_right_tabs.addTab(self.elevator_abstract_tab, "Elevator Abstract")
-            # This tab's editor saves to 'personal_dialogue_html' in the DB
-            self.bottom_tabs_with_editors.append(("personal_dialogue_html", self.elevator_abstract_tab.editor))
+            # --- FIX: This tab's editor saves to 'elevator_abstract_html' in the DB ---
+            self.bottom_tabs_with_editors.append(("elevator_abstract_html", self.elevator_abstract_tab.editor))
+            # --- END FIX ---
         else:
             create_editor_tab("Elevator Abstract", "Instructions for Elevator Abstract go here.",
-                              "personal_dialogue_html", "reading_elevator_instr")
+                              "elevator_abstract_html", "reading_elevator_instr")
 
         if PartsOrderRelationTab:
             self.parts_order_relation_tab = PartsOrderRelationTab(
@@ -636,11 +638,14 @@ class ReadingNotesTab(QWidget):
                 continue
 
             # --- MODIFIED: Use new simple tab logic ---
-            if field_name == 'personal_dialogue_html' and ElevatorAbstractTab and hasattr(self,
+            # --- FIX: Check for elevator abstract field name ---
+            if field_name == 'elevator_abstract_html' and ElevatorAbstractTab and hasattr(self,
                                                                                           'elevator_abstract_tab') and editor.editor_title == "Elevator Abstract":
                 html = self._get_detail(field_name, default="")
                 editor.set_html(html)
                 continue
+            # --- END FIX ---
+
             if field_name == 'gaps_html' and GapsTab and hasattr(self, 'gaps_tab') and editor.editor_title == "Gaps":
                 html = self._get_detail(field_name, default="")
                 editor.set_html(html)
@@ -683,7 +688,8 @@ class ReadingNotesTab(QWidget):
                 continue
 
             # --- MODIFIED: Use new simple tab logic ---
-            if field_name == 'personal_dialogue_html' and ElevatorAbstractTab and hasattr(self,
+            # --- FIX: Save to elevator_abstract_html ---
+            if field_name == 'elevator_abstract_html' and ElevatorAbstractTab and hasattr(self,
                                                                                           'elevator_abstract_tab') and editor.editor_title == "Elevator Abstract":
                 def create_callback(fname):
                     return lambda html: self.db.update_reading_field(
@@ -692,6 +698,8 @@ class ReadingNotesTab(QWidget):
 
                 editor.get_html(create_callback(field_name))
                 continue
+            # --- END FIX ---
+
             if field_name == 'gaps_html' and GapsTab and hasattr(self, 'gaps_tab') and editor.editor_title == "Gaps":
                 def create_callback(fname):
                     return lambda html: self.db.update_reading_field(

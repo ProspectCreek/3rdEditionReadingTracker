@@ -187,8 +187,26 @@ class PdfNodeViewer(QDialog):
         left_layout.setContentsMargins(8, 8, 8, 8)
         left_layout.setSpacing(8)
 
-        # --- Page Controls (Top) ---
-        page_ctrl_layout = QHBoxLayout()
+        # --- Page & Zoom Controls (Top) ---
+        controls_layout = QHBoxLayout()
+
+        # Zoom Controls
+        self.btn_zoom_out = QPushButton("-")
+        self.btn_zoom_out.setFixedWidth(30)
+        self.btn_zoom_out.setToolTip("Zoom Out")
+        self.btn_zoom_out.clicked.connect(self.zoom_out)
+
+        self.lbl_zoom = QLabel("150%")
+        self.lbl_zoom.setAlignment(Qt.AlignCenter)
+        self.lbl_zoom.setFixedWidth(45)
+        self.lbl_zoom.setStyleSheet("font-weight: bold; color: #555;")
+
+        self.btn_zoom_in = QPushButton("+")
+        self.btn_zoom_in.setFixedWidth(30)
+        self.btn_zoom_in.setToolTip("Zoom In")
+        self.btn_zoom_in.clicked.connect(self.zoom_in)
+
+        # Page Navigation
         self.btn_prev = QPushButton("←")
         self.btn_prev.setFixedWidth(40)
         self.btn_next = QPushButton("→")
@@ -200,10 +218,15 @@ class PdfNodeViewer(QDialog):
         self.btn_prev.clicked.connect(lambda: self.change_page(-1))
         self.btn_next.clicked.connect(lambda: self.change_page(1))
 
-        page_ctrl_layout.addWidget(self.btn_prev)
-        page_ctrl_layout.addWidget(self.lbl_page, 1)
-        page_ctrl_layout.addWidget(self.btn_next)
-        left_layout.addLayout(page_ctrl_layout)
+        controls_layout.addWidget(self.btn_zoom_out)
+        controls_layout.addWidget(self.lbl_zoom)
+        controls_layout.addWidget(self.btn_zoom_in)
+        controls_layout.addSpacing(15)
+        controls_layout.addWidget(self.btn_prev)
+        controls_layout.addWidget(self.lbl_page, 1)
+        controls_layout.addWidget(self.btn_next)
+
+        left_layout.addLayout(controls_layout)
 
         # --- Tab Widget for Categories / Nodes ---
         self.tabs = QTabWidget()
@@ -211,15 +234,23 @@ class PdfNodeViewer(QDialog):
 
         # Tab 1: Current Page & Categories
         page_tab = QWidget()
+        # Use 0 margin so the splitter fits nicely
         page_layout = QVBoxLayout(page_tab)
-        page_layout.setContentsMargins(6, 6, 6, 6)
-        page_layout.setSpacing(6)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.setSpacing(0)
 
-        # Categories Area
+        # --- Splitter for Categories vs Nodes ---
+        left_vertical_splitter = QSplitter(Qt.Orientation.Vertical)
+
+        # 1. Categories Widget
+        cat_widget = QWidget()
+        cat_layout = QVBoxLayout(cat_widget)
+        cat_layout.setContentsMargins(6, 6, 6, 6)
+        cat_layout.setSpacing(6)
+
         cat_header = QHBoxLayout()
         cat_header.addWidget(QLabel("CATEGORIES"))
         cat_header.addStretch()
-        # Restore the + button properly
         btn_add_cat = QPushButton("+")
         btn_add_cat.setFixedSize(24, 24)
         btn_add_cat.setStyleSheet("padding: 0; font-size: 16px; font-weight: bold;")
@@ -227,20 +258,34 @@ class PdfNodeViewer(QDialog):
         btn_add_cat.clicked.connect(self._add_category)
         cat_header.addWidget(btn_add_cat)
 
-        page_layout.addLayout(cat_header)
+        cat_layout.addLayout(cat_header)
 
         self.cat_list = QListWidget()
-        self.cat_list.setFixedHeight(100)  # Keep compact
+        # Removed setFixedHeight to allow resizing
         self.cat_list.itemDoubleClicked.connect(self._edit_category)
         self.cat_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.cat_list.customContextMenuRequested.connect(self._show_category_context_menu)
-        page_layout.addWidget(self.cat_list)
+        cat_layout.addWidget(self.cat_list)
 
-        # Nodes on THIS Page
-        page_layout.addWidget(QLabel("NODES (CURRENT PAGE)", objectName="Header"))
+        left_vertical_splitter.addWidget(cat_widget)
+
+        # 2. Nodes Widget
+        nodes_widget = QWidget()
+        nodes_layout = QVBoxLayout(nodes_widget)
+        nodes_layout.setContentsMargins(6, 6, 6, 6)
+        nodes_layout.setSpacing(6)
+
+        nodes_layout.addWidget(QLabel("NODES (CURRENT PAGE)", objectName="Header"))
         self.node_list = QListWidget()
         self.node_list.itemClicked.connect(self.on_node_list_clicked)
-        page_layout.addWidget(self.node_list, 1)  # Give this stretch
+        nodes_layout.addWidget(self.node_list)
+
+        left_vertical_splitter.addWidget(nodes_widget)
+
+        # Set initial split (approx 50/50)
+        left_vertical_splitter.setSizes([300, 300])
+
+        page_layout.addWidget(left_vertical_splitter)
 
         self.tabs.addTab(page_tab, "Current")
 
@@ -281,11 +326,27 @@ class PdfNodeViewer(QDialog):
 
         self.splitter.addWidget(left_container)
         self.splitter.addWidget(self.view)
-        self.splitter.setSizes([280, 1000])  # Tighter left panel
+        self.splitter.setSizes([350, 1000])  # Slightly wider left panel
 
         # Initial Loads
         self.refresh_categories()
         self._load_all_nodes()
+        self._update_zoom_label()
+
+    # --- Zoom Functions ---
+    def zoom_in(self):
+        self.zoom_level += 0.25
+        self._update_zoom_label()
+        self.render_current_page()
+
+    def zoom_out(self):
+        if self.zoom_level > 0.5:
+            self.zoom_level -= 0.25
+            self._update_zoom_label()
+            self.render_current_page()
+
+    def _update_zoom_label(self):
+        self.lbl_zoom.setText(f"{int(self.zoom_level * 100)}%")
 
     # --- Category Management ---
     def refresh_categories(self):
