@@ -14,7 +14,6 @@ from database_manager import DatabaseManager
 # --- Import dialogs ---
 try:
     from dialogs.create_item_dialog import CreateItemDialog
-    # Changed import to the refactored dialog class
     from dialogs.edit_assignment_dialog import EditProjectStatusDialog
     from dialogs.move_project_dialog import MoveProjectDialog
     from dialogs.reorder_dialog import ReorderDialog
@@ -122,7 +121,7 @@ class ProjectListWidget(QWidget):
                 menu.addAction("Copy Project", self.duplicate_item)
                 menu.addAction("Move Project", self.move_project)
                 # Changed menu text
-                menu.addAction("Edit Assignment/Research Status", self.edit_project_status)
+                menu.addAction("Edit Project Configuration", self.edit_project_status)
 
             elif item_type == 'class':
                 menu.addAction("Edit Class", self.rename_item)
@@ -166,12 +165,12 @@ class ProjectListWidget(QWidget):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             name = dialog.name
             is_assignment = dialog.is_assignment
-            # Get research flag
             is_research = getattr(dialog, 'is_research', 0)
+            is_annotated_bib = getattr(dialog, 'is_annotated_bib', 0)
 
             try:
-                # Pass is_research
-                new_id = self.db.create_item(name, item_type, parent_db_id, is_assignment, is_research)
+                new_id = self.db.create_item(name, item_type, parent_db_id, is_assignment, is_research,
+                                             is_annotated_bib)
                 self.load_data_to_tree()
 
                 if item_type == 'project':
@@ -239,7 +238,7 @@ class ProjectListWidget(QWidget):
 
     def edit_project_status(self):
         """
-        Replaces edit_assignment_status to handle both flags using EditProjectStatusDialog.
+        Replaces edit_assignment_status to handle all project flags using EditProjectStatusDialog.
         """
         if not self.selected_tree_item: return
         db_id = self.selected_tree_item.data(0, Qt.ItemDataRole.UserRole)
@@ -248,14 +247,19 @@ class ProjectListWidget(QWidget):
 
         current_assign = item_details.get('is_assignment', 0)
         current_research = item_details.get('is_research', 0)
+        current_bib = item_details.get('is_annotated_bib', 0)
 
-        dialog = EditProjectStatusDialog(current_assign, current_research, self)
+        dialog = EditProjectStatusDialog(current_assign, current_research, current_bib, self)
 
         if dialog.exec() == QDialog.DialogCode.Accepted:
             new_assign = dialog.new_assignment_status
             new_research = dialog.new_research_status
+            new_bib = dialog.new_bib_status
 
-            if new_assign != current_assign or new_research != current_research:
+            if (new_assign != current_assign or
+                    new_research != current_research or
+                    new_bib != current_bib):
+
                 # Warning only if turning OFF assignment (data loss risk)
                 if current_assign == 1 and new_assign == 0:
                     reply = QMessageBox.question(self, "Warning",
@@ -265,10 +269,10 @@ class ProjectListWidget(QWidget):
                     if reply == QMessageBox.StandardButton.No:
                         return
 
-                self.db.update_project_status(db_id, new_assign, new_research)
+                self.db.update_project_status(db_id, new_assign, new_research, new_bib)
                 self.load_data_to_tree()
 
-    # Alias for backward compatibility if needed, though context menu calls edit_project_status directly now
+    # Alias for backward compatibility if needed
     edit_assignment_status = edit_project_status
 
     def reorder_items(self):

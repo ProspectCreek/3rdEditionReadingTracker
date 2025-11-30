@@ -1,4 +1,3 @@
-# prospectcreek/3rdeditionreadingtracker/database_helpers/schema.py
 import sqlite3
 
 
@@ -38,6 +37,7 @@ class SchemaSetup:
             display_order INTEGER,
             is_assignment INTEGER DEFAULT 0,
             is_research INTEGER DEFAULT 0,
+            is_annotated_bib INTEGER DEFAULT 0,
             project_purpose_text TEXT,
             project_goals_text TEXT,
             key_questions_text TEXT,
@@ -51,7 +51,9 @@ class SchemaSetup:
         )
         """)
 
+        # Migration for existing databases
         self._add_column_if_not_exists("items", "is_research", "INTEGER", "0")
+        self._add_column_if_not_exists("items", "is_annotated_bib", "INTEGER", "0")
 
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS synthesis_tags (
@@ -151,6 +153,21 @@ class SchemaSetup:
             is_checked INTEGER DEFAULT 0,
             display_order INTEGER,
             FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE
+        )
+        """)
+
+        # --- Annotated Bibliography Table ---
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS annotated_bib_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            reading_id INTEGER NOT NULL,
+            citation_text TEXT,
+            description TEXT,
+            analysis TEXT,
+            applicability TEXT,
+            status TEXT DEFAULT 'Not Started',
+            FOREIGN KEY (reading_id) REFERENCES readings(id) ON DELETE CASCADE,
+            UNIQUE(reading_id)
         )
         """)
 
@@ -339,7 +356,6 @@ class SchemaSetup:
         )
         """)
 
-        # --- NEW: PDF Node Categories ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS pdf_node_categories (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -350,7 +366,6 @@ class SchemaSetup:
         )
         """)
 
-        # --- PDF Nodes Table ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS pdf_nodes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -506,7 +521,6 @@ class SchemaSetup:
         """)
         self._add_column_if_not_exists("terminology_references", "pdf_node_id", "INTEGER", "NULL")
 
-        # --- NEW TABLE: Multiple PDF links for a single Terminology Reference ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS terminology_reference_pdf_links (
             reference_id INTEGER NOT NULL,
@@ -532,7 +546,6 @@ class SchemaSetup:
         )
         """)
 
-        # --- NEW TABLE: Multiple PDF links for a single Proposition Reference ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS proposition_reference_pdf_links (
             reference_id INTEGER NOT NULL,

@@ -26,7 +26,8 @@ from tabs.reading_notes_tab import ReadingNotesTab, DEFAULT_READING_RULES_HTML
 from tabs.synthesis_tab import SynthesisTab, DEFAULT_SYNTOPIC_RULES_HTML
 from tabs.graph_view_tab import GraphViewTab
 from tabs.todo_list_tab import TodoListTab
-from tabs.research_tab import ResearchTab  # <-- IMPORT NEW TAB
+from tabs.research_tab import ResearchTab
+from tabs.annotated_bib_tab import AnnotatedBibTab  # <-- NEW IMPORT
 
 # --- Dialog Imports ---
 try:
@@ -165,7 +166,8 @@ class ProjectDashboardWidget(QWidget):
         self.graph_view_tab = None
         self.todo_list_tab = None
         self.assignment_tab = None
-        self.research_tab = None  # <-- NEW
+        self.research_tab = None
+        self.annotated_bib_tab = None  # <-- NEW
         self.mindmaps_tab = None
 
         # --- NEW: Readings Container ---
@@ -393,7 +395,8 @@ class ProjectDashboardWidget(QWidget):
         self.graph_view_tab = None
         self.todo_list_tab = None
         self.assignment_tab = None
-        self.research_tab = None  # Reset
+        self.research_tab = None
+        self.annotated_bib_tab = None  # Reset
         self.mindmaps_tab = None
 
         # --- MENUS ---
@@ -468,7 +471,12 @@ class ProjectDashboardWidget(QWidget):
             # Connect Term Jump Signal
             self.research_tab.openTermRequested.connect(self._open_term_in_synthesis)
 
-        # 3. Standard Tabs
+        # 3. Annotated Bibliography Tab (if enabled)
+        if self.project_details.get('is_annotated_bib', 0) == 1:
+            self.annotated_bib_tab = AnnotatedBibTab(self.db, self.project_id)
+            self.top_tab_widget.addTab(self.annotated_bib_tab, "Annotated Bib")
+
+        # 4. Standard Tabs
         self.mindmaps_tab = MindmapTab(self.db, self.project_id)
         self.top_tab_widget.addTab(self.mindmaps_tab, "Mindmaps")
 
@@ -496,9 +504,8 @@ class ProjectDashboardWidget(QWidget):
         self.todo_list_tab = TodoListTab(self.db, self.project_id)
         self.top_tab_widget.addTab(self.todo_list_tab, "To-Do List")
 
-        # --- NEW: Add "Readings" Workspace ---
+        # --- Add "Readings" Workspace ---
         self.top_tab_widget.addTab(self.readings_container, self.book_icon, "Readings")
-        # --- END NEW ---
 
         self.load_readings()
 
@@ -556,6 +563,10 @@ class ProjectDashboardWidget(QWidget):
             # Load Research Tab if present
             if self.research_tab:
                 self.research_tab.load_tree()
+
+            # Load Annotated Bib Tab if present
+            if self.annotated_bib_tab:
+                self.annotated_bib_tab.load_sources()
 
         except Exception as e:
             QMessageBox.critical(self, "Error Loading Content", f"Error: {e}")
@@ -643,6 +654,10 @@ class ProjectDashboardWidget(QWidget):
                 item.setText(2, author)
                 break
 
+        # Refresh Bib list if open
+        if self.annotated_bib_tab:
+            self.annotated_bib_tab.load_sources()
+
     def add_reading(self):
         if self.project_id == -1:
             return
@@ -662,6 +677,10 @@ class ProjectDashboardWidget(QWidget):
                 dialog.classification
             )
             self.load_readings()
+
+            # Refresh Bib list if open
+            if self.annotated_bib_tab:
+                self.annotated_bib_tab.load_sources()
 
             self.top_tab_widget.blockSignals(True)
             try:
@@ -694,6 +713,8 @@ class ProjectDashboardWidget(QWidget):
             self.graph_view_tab.load_graph()
         elif current_widget == self.todo_list_tab:
             self.todo_list_tab.load_items()
+        elif current_widget == self.annotated_bib_tab:
+            self.annotated_bib_tab.load_sources()
 
     @Slot()
     def save_all_editors(self):
@@ -729,6 +750,9 @@ class ProjectDashboardWidget(QWidget):
 
         if self.synthesis_tab and hasattr(self.synthesis_tab, 'save_editors'):
             self.synthesis_tab.save_editors()
+
+        if self.annotated_bib_tab:
+            self.annotated_bib_tab.save_current_data()
 
     @Slot()
     def open_edit_instructions(self):
@@ -932,6 +956,9 @@ class ProjectDashboardWidget(QWidget):
                 tab.load_data()
                 self._handle_reading_title_change(reading_id, tab)
 
+            if self.annotated_bib_tab:
+                self.annotated_bib_tab.load_sources()
+
     @Slot()
     def delete_reading(self):
         item = self.readings_tree.currentItem()
@@ -960,6 +987,9 @@ class ProjectDashboardWidget(QWidget):
                     # --- END MODIFIED ---
                 self.readings_tree.takeTopLevelItem(self.readings_tree.indexOfTopLevelItem(item))
                 del item
+
+                if self.annotated_bib_tab:
+                    self.annotated_bib_tab.load_sources()
 
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not delete reading: {e}")

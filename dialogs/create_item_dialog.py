@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt
 class CreateItemDialog(QDialog):
     """
     Asks for an item name and configuration.
-    Now includes checks for both Assignment and Research status for projects.
+    Now includes checks for Assignment, Research, and Annotated Bib status for projects.
     """
 
     def __init__(self, item_type, parent=None):
@@ -20,6 +20,7 @@ class CreateItemDialog(QDialog):
         self.name = ""
         self.is_assignment = 1  # Default to 'Yes'
         self.is_research = 0  # Default to 'No'
+        self.is_annotated_bib = 0  # Default to 'No'
 
         main_layout = QVBoxLayout(self)
 
@@ -40,14 +41,20 @@ class CreateItemDialog(QDialog):
             self.research_check = QCheckBox("Research Project")
             self.research_check.setChecked(False)  # Default to No
 
+            # Annotated Bibliography Checkbox
+            self.bib_check = QCheckBox("Create Annotated Bibliography")
+            self.bib_check.setChecked(False)
+
             # Add some vertical spacing
             main_layout.addSpacing(10)
             main_layout.addWidget(self.assignment_check)
             main_layout.addWidget(self.research_check)
+            main_layout.addWidget(self.bib_check)
 
         else:  # It's a 'class'
             self.is_assignment = 0
             self.is_research = 0
+            self.is_annotated_bib = 0
 
         # Standard OK/Cancel buttons
         self.button_box = QDialogButtonBox(
@@ -72,5 +79,6 @@ class CreateItemDialog(QDialog):
         if self.item_type == 'project':
             self.is_assignment = 1 if self.assignment_check.isChecked() else 0
             self.is_research = 1 if self.research_check.isChecked() else 0
+            self.is_annotated_bib = 1 if self.bib_check.isChecked() else 0
 
         super().accept()  # This closes the dialog with QDialog.Accepted

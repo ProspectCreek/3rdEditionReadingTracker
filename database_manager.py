@@ -1,5 +1,3 @@
-# prospectcreek/3rdeditionreadingtracker/database_manager.py
-
 import sqlite3
 import shutil
 import os
@@ -28,7 +26,8 @@ from database_helpers.graph_settings_mixin import GraphSettingsMixin
 from database_helpers.global_graph_settings_mixin import GlobalGraphSettingsMixin
 from database_helpers.settings_mixin import SettingsMixin
 from database_helpers.pdf_nodes_mixin import PdfNodesMixin
-from database_helpers.research_mixin import ResearchMixin  # <-- NEW IMPORT
+from database_helpers.research_mixin import ResearchMixin
+from database_helpers.annotated_bib_mixin import AnnotatedBibMixin
 
 class DatabaseManager(
     SchemaSetup,
@@ -52,7 +51,8 @@ class DatabaseManager(
     GlobalGraphSettingsMixin,
     SettingsMixin,
     PdfNodesMixin,
-    ResearchMixin,  # <-- ADD NEW MIXIN
+    ResearchMixin,
+    AnnotatedBibMixin,
     UtilityMixin
 ):
     def __init__(self, db_file="reading_tracker.db"):

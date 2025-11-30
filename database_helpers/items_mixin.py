@@ -1,5 +1,3 @@
-# database_helpers/items_mixin.py
-
 import sqlite3
 
 
@@ -23,13 +21,13 @@ class ItemsMixin:
         self.conn.commit()
         return self.cursor.lastrowid
 
-    def create_item(self, name, item_type, parent_db_id=None, is_assignment=0, is_research=0):
+    def create_item(self, name, item_type, parent_db_id=None, is_assignment=0, is_research=0, is_annotated_bib=0):
         """UI-facing creator (signature used by ProjectListWidget)."""
         new_order = self._next_item_order(parent_db_id)
         self.cursor.execute("""
-            INSERT INTO items (parent_id, type, name, display_order, is_assignment, is_research)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (parent_db_id, item_type, name, new_order, int(is_assignment), int(is_research)))
+            INSERT INTO items (parent_id, type, name, display_order, is_assignment, is_research, is_annotated_bib)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (parent_db_id, item_type, name, new_order, int(is_assignment), int(is_research), int(is_annotated_bib)))
         self.conn.commit()
         return self.cursor.lastrowid
 
@@ -81,11 +79,11 @@ class ItemsMixin:
             )
         self.conn.commit()
 
-    def update_project_status(self, project_id, is_assignment, is_research):
-        """Updates the is_assignment and is_research flags."""
+    def update_project_status(self, project_id, is_assignment, is_research, is_annotated_bib=0):
+        """Updates the is_assignment, is_research, and is_annotated_bib flags."""
         self.cursor.execute(
-            "UPDATE items SET is_assignment = ?, is_research = ? WHERE id = ?",
-            (int(bool(is_assignment)), int(bool(is_research)), project_id)
+            "UPDATE items SET is_assignment = ?, is_research = ?, is_annotated_bib = ? WHERE id = ?",
+            (int(bool(is_assignment)), int(bool(is_research)), int(bool(is_annotated_bib)), project_id)
         )
         # Clear assignment data if no longer an assignment
         if not is_assignment:
@@ -94,16 +92,15 @@ class ItemsMixin:
                 "UPDATE items SET assignment_instructions_text = NULL, assignment_draft_text = NULL WHERE id = ?",
                 (project_id,)
             )
-        # Note: No 'clear research data' logic yet as it's a blank tab
         self.conn.commit()
 
     def update_assignment_status(self, project_id, new_status_val):
         """Legacy alias for update_project_status, kept for safety if called elsewhere."""
-        # We assume existing research status is preserved or default 0 if we use this old method
-        # But to be safe, let's fetch current status first
+        # We assume existing research/bib status is preserved or default 0 if we use this old method
         curr = self.get_item_details(project_id)
         is_research = curr.get('is_research', 0)
-        self.update_project_status(project_id, new_status_val, is_research)
+        is_annotated_bib = curr.get('is_annotated_bib', 0)
+        self.update_project_status(project_id, new_status_val, is_research, is_annotated_bib)
 
     def duplicate_item(self, item_id):
         """Duplicates an item (project) and its children (readings, etc.)."""
@@ -113,15 +110,17 @@ class ItemsMixin:
 
         new_name = f"{original_project['name']} (Copy)"
 
-        # Handle potential missing 'is_research' in old records by defaulting to 0
+        # Handle potential missing fields by defaulting to 0
         is_research = original_project.get('is_research', 0)
+        is_annotated_bib = original_project.get('is_annotated_bib', 0)
 
         new_project_id = self.create_item(
             new_name,
             original_project['type'],
             original_project['parent_id'],
             original_project['is_assignment'],
-            is_research
+            is_research,
+            is_annotated_bib
         )
 
         fields_to_copy = [
