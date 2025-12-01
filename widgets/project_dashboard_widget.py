@@ -8,7 +8,8 @@ from PySide6.QtWidgets import (
     QTabWidget, QSplitter, QLabel, QTreeWidget,
     QFrame, QDialog, QTreeWidgetItem, QMenuBar,
     QMessageBox, QMenu, QApplication, QFileDialog,
-    QHeaderView, QStyledItemDelegate, QStyle, QStyleOptionViewItem
+    QHeaderView, QStyledItemDelegate, QStyle, QStyleOptionViewItem,
+    QSizePolicy, QTextEdit, QPlainTextEdit, QLineEdit
 )
 from PySide6.QtCore import Qt, Signal, Slot, QTimer, QPoint, QUrl, QSize, QRectF
 from PySide6.QtGui import (
@@ -28,7 +29,7 @@ from tabs.graph_view_tab import GraphViewTab
 from tabs.todo_list_tab import TodoListTab
 from tabs.research_tab import ResearchTab
 from tabs.annotated_bib_tab import AnnotatedBibTab
-from tabs.evidence_matrix_tab import EvidenceMatrixTab  # <-- NEW IMPORT
+from tabs.evidence_matrix_tab import EvidenceMatrixTab
 
 # --- Dialog Imports ---
 try:
@@ -169,7 +170,7 @@ class ProjectDashboardWidget(QWidget):
         self.assignment_tab = None
         self.research_tab = None
         self.annotated_bib_tab = None
-        self.evidence_matrix_tab = None  # <-- NEW
+        self.evidence_matrix_tab = None
         self.mindmaps_tab = None
 
         # --- NEW: Readings Container ---
@@ -225,7 +226,42 @@ class ProjectDashboardWidget(QWidget):
         button_layout.addWidget(btn_return_home)
         button_layout.addWidget(btn_launch_qda)
         button_layout.addWidget(btn_add_reading)
-        button_layout.addStretch()
+
+        # --- International Character Buttons ---
+        button_layout.addStretch()  # Push subsequent widgets to the right
+
+        # Characters to insert
+        chars = ['á', 'é', 'í', 'ó', 'ú', 'ñ']
+
+        for char in chars:
+            btn = QPushButton(char)
+            btn.setFixedSize(24, 24)  # Small square button
+            btn.setToolTip(f"Insert {char}")
+            # Prevent button from taking focus when clicked
+            btn.setFocusPolicy(Qt.NoFocus)
+            # Use lambda with default argument to capture 'char' correctly in loop
+            btn.clicked.connect(lambda _, c=char: self.insert_character(c))
+
+            # Optional: Styling to make them unobtrusive
+            btn.setStyleSheet("""
+                QPushButton {
+                    border: 1px solid #ccc;
+                    border-radius: 2px;
+                    background-color: #fcfcfc;
+                    font-weight: bold;
+                    padding: 0px;
+                    margin: 0px;
+                }
+                QPushButton:hover {
+                    background-color: #e0e0e0;
+                }
+                QPushButton:pressed {
+                    background-color: #d0d0d0;
+                }
+            """)
+
+            button_layout.addWidget(btn)
+
         main_layout.addWidget(button_bar)
 
         self.top_tab_widget = QTabWidget()
@@ -240,6 +276,39 @@ class ProjectDashboardWidget(QWidget):
         self.readings_tab_widget.currentChanged.connect(self.save_all_editors)
 
         QTimer.singleShot(0, self._enforce_equal_splits)
+
+    @Slot()
+    def insert_character(self, char):
+        """
+        Inserts the given character into the currently focused widget, if it supports text input.
+        """
+        focus_widget = QApplication.focusWidget()
+
+        if not focus_widget:
+            return
+
+        # Check if the focused widget is an editor we control (RichTextEditor's internal editor)
+        # Often RichTextEditorTab wraps the actual editor.
+        # But focusWidget should return the actual QWidget receiving input (QTextEdit, QLineEdit, etc)
+
+        # For our RichTextEditor (QTextEdit based)
+        if isinstance(focus_widget, (QTextEdit, QPlainTextEdit)):
+            if focus_widget.isReadOnly():
+                return
+            cursor = focus_widget.textCursor()
+            cursor.insertText(char)
+            focus_widget.setTextCursor(cursor)  # Ensure cursor position updates
+
+        # For QLineEdit
+        elif isinstance(focus_widget, QLineEdit):
+            if focus_widget.isReadOnly():
+                return
+            focus_widget.insert(char)
+
+        # For generic input handling (fallback)
+        else:
+            # We could try simulating a key press, but direct API is better if known widget
+            pass
 
     @Slot()
     def launch_qda_tool(self):
@@ -984,7 +1053,6 @@ class ProjectDashboardWidget(QWidget):
             if self.annotated_bib_tab:
                 self.annotated_bib_tab.load_sources()
 
-    @Slot()
     def delete_reading(self):
         item = self.readings_tree.currentItem()
         if not item:
@@ -1019,7 +1087,6 @@ class ProjectDashboardWidget(QWidget):
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Could not delete reading: {e}")
 
-    @Slot()
     def reorder_readings(self):
         if not ReorderDialog:
             QMessageBox.critical(self, "Error", "Reorder dialog is not available.")
