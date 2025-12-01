@@ -28,6 +28,7 @@ from database_helpers.settings_mixin import SettingsMixin
 from database_helpers.pdf_nodes_mixin import PdfNodesMixin
 from database_helpers.research_mixin import ResearchMixin
 from database_helpers.annotated_bib_mixin import AnnotatedBibMixin
+from database_helpers.evidence_matrix_mixin import EvidenceMatrixMixin
 
 class DatabaseManager(
     SchemaSetup,
@@ -53,6 +54,7 @@ class DatabaseManager(
     PdfNodesMixin,
     ResearchMixin,
     AnnotatedBibMixin,
+    EvidenceMatrixMixin,
     UtilityMixin
 ):
     def __init__(self, db_file="reading_tracker.db"):

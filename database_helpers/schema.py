@@ -239,7 +239,7 @@ class SchemaSetup:
         )
         """)
 
-        # --- NEW: Research Plans Table ---
+        # --- Research Plans Table ---
         self.cursor.execute("""
         CREATE TABLE IF NOT EXISTS research_plans (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -255,6 +255,31 @@ class SchemaSetup:
             validity_limitations TEXT,
             display_order INTEGER,
             FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE
+        )
+        """)
+
+        # --- NEW: Evidence Matrix Tables ---
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS evidence_matrix_themes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            author_evidence TEXT,
+            data_evidence TEXT,
+            interpretation TEXT,
+            display_order INTEGER,
+            FOREIGN KEY (project_id) REFERENCES items(id) ON DELETE CASCADE
+        )
+        """)
+
+        self.cursor.execute("""
+        CREATE TABLE IF NOT EXISTS evidence_matrix_pdf_links (
+            theme_id INTEGER NOT NULL,
+            pdf_node_id INTEGER NOT NULL,
+            link_type TEXT NOT NULL, -- 'author' or 'data'
+            PRIMARY KEY (theme_id, pdf_node_id, link_type),
+            FOREIGN KEY (theme_id) REFERENCES evidence_matrix_themes(id) ON DELETE CASCADE,
+            FOREIGN KEY (pdf_node_id) REFERENCES pdf_nodes(id) ON DELETE CASCADE
         )
         """)
 

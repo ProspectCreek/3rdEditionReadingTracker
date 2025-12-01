@@ -27,7 +27,8 @@ from tabs.synthesis_tab import SynthesisTab, DEFAULT_SYNTOPIC_RULES_HTML
 from tabs.graph_view_tab import GraphViewTab
 from tabs.todo_list_tab import TodoListTab
 from tabs.research_tab import ResearchTab
-from tabs.annotated_bib_tab import AnnotatedBibTab  # <-- NEW IMPORT
+from tabs.annotated_bib_tab import AnnotatedBibTab
+from tabs.evidence_matrix_tab import EvidenceMatrixTab  # <-- NEW IMPORT
 
 # --- Dialog Imports ---
 try:
@@ -167,7 +168,8 @@ class ProjectDashboardWidget(QWidget):
         self.todo_list_tab = None
         self.assignment_tab = None
         self.research_tab = None
-        self.annotated_bib_tab = None  # <-- NEW
+        self.annotated_bib_tab = None
+        self.evidence_matrix_tab = None  # <-- NEW
         self.mindmaps_tab = None
 
         # --- NEW: Readings Container ---
@@ -396,7 +398,8 @@ class ProjectDashboardWidget(QWidget):
         self.todo_list_tab = None
         self.assignment_tab = None
         self.research_tab = None
-        self.annotated_bib_tab = None  # Reset
+        self.annotated_bib_tab = None
+        self.evidence_matrix_tab = None  # Reset
         self.mindmaps_tab = None
 
         # --- MENUS ---
@@ -473,10 +476,26 @@ class ProjectDashboardWidget(QWidget):
 
         # 3. Annotated Bibliography Tab (if enabled)
         if self.project_details.get('is_annotated_bib', 0) == 1:
-            self.annotated_bib_tab = AnnotatedBibTab(self.db, self.project_id)
-            self.top_tab_widget.addTab(self.annotated_bib_tab, "Annotated Bib")
+            if AnnotatedBibTab:
+                self.annotated_bib_tab = AnnotatedBibTab(self.db, self.project_id)
+                self.top_tab_widget.addTab(self.annotated_bib_tab, "Annotated Bib")
+            else:
+                print("Skipping Annotated Bib tab due to import error")
 
-        # 4. Standard Tabs
+        # 4. Evidence Matrix Tab (NEW)
+        # Show if Assignment OR Research is enabled
+        if self.project_details.get('is_assignment', 0) == 1 or self.project_details.get('is_research', 0) == 1:
+            if EvidenceMatrixTab:
+                self.evidence_matrix_tab = EvidenceMatrixTab(self.db, self.project_id,
+                                                             spell_checker_service=self.spell_checker_service)
+                self.top_tab_widget.addTab(self.evidence_matrix_tab, "Evidence Matrix")
+
+                # Connect link clicks
+                self.evidence_matrix_tab.linkUrlClicked.connect(self._on_editor_link_clicked)
+            else:
+                print("Skipping Evidence Matrix tab due to import error")
+
+        # 5. Standard Tabs
         self.mindmaps_tab = MindmapTab(self.db, self.project_id)
         self.top_tab_widget.addTab(self.mindmaps_tab, "Mindmaps")
 
@@ -567,6 +586,10 @@ class ProjectDashboardWidget(QWidget):
             # Load Annotated Bib Tab if present
             if self.annotated_bib_tab:
                 self.annotated_bib_tab.load_sources()
+
+            # Load Evidence Matrix if present
+            if self.evidence_matrix_tab:
+                self.evidence_matrix_tab.load_themes()
 
         except Exception as e:
             QMessageBox.critical(self, "Error Loading Content", f"Error: {e}")
@@ -715,6 +738,8 @@ class ProjectDashboardWidget(QWidget):
             self.todo_list_tab.load_items()
         elif current_widget == self.annotated_bib_tab:
             self.annotated_bib_tab.load_sources()
+        elif current_widget == self.evidence_matrix_tab:
+            self.evidence_matrix_tab.load_themes()
 
     @Slot()
     def save_all_editors(self):
