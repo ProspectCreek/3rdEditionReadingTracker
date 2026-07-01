@@ -2,9 +2,9 @@
 class ReadingsMixin:
     # --------------------------- readings ---------------------------
 
-    def add_reading(self, project_id, title, author, nickname, zotero_key=None,
+    def add_reading(self, project_id, title, author, nickname,
                     published="", pages="", level="", classification=""):
-        """Named params + computed display_order + verify presence."""
+        """Create a reading from manually entered metadata."""
         self.cursor.execute(
             "SELECT COALESCE(MAX(display_order), -1) FROM readings WHERE project_id = ?",
             (project_id,)
@@ -17,20 +17,19 @@ class ReadingsMixin:
             "author": (author or "").strip(),
             "nickname": (nickname or "").strip(),
             "display_order": int(new_order),
-            "zotero_item_key": zotero_key,
             "published": published,
             "pages": pages,
             "level": level,
-            "classification": classification
+            "classification": classification,
         }
 
         self.cursor.execute("""
             INSERT INTO readings (
-                project_id, title, author, nickname, display_order, zotero_item_key,
+                project_id, title, author, nickname, display_order,
                 published, pages, level, classification
             )
             VALUES (
-                :project_id, :title, :author, :nickname, :display_order, :zotero_item_key,
+                :project_id, :title, :author, :nickname, :display_order,
                 :published, :pages, :level, :classification
             )
         """, payload)
@@ -54,12 +53,11 @@ class ReadingsMixin:
         return self._rowdict(self.cursor.fetchone())
 
     def update_reading_details(self, reading_id, details_dict):
-        """Updated to include zotero_item_key in the update."""
+        """Update manually entered reading metadata."""
         self.cursor.execute("""
             UPDATE readings
-            SET title = ?, author = ?, nickname = ?, published = ?, 
-                pages = ?, assignment = ?, level = ?, classification = ?,
-                zotero_item_key = ?
+            SET title = ?, author = ?, nickname = ?, published = ?,
+                pages = ?, assignment = ?, level = ?, classification = ?
             WHERE id = ?
         """, (
             details_dict.get('title', ''),
@@ -70,8 +68,7 @@ class ReadingsMixin:
             details_dict.get('assignment', ''),
             details_dict.get('level', ''),
             details_dict.get('classification', ''),
-            details_dict.get('zotero_item_key'), # <-- Added this
-            reading_id
+            reading_id,
         ))
         self.conn.commit()
 
@@ -84,10 +81,7 @@ class ReadingsMixin:
         allowed_fields = [
             'propositions_html', 'unity_html', 'key_terms_html',
             'arguments_html', 'gaps_html', 'theories_html',
-            'personal_dialogue_html',
-            # --- FIX: Add the new column to the whitelist ---
-            'elevator_abstract_html'
-            # --- END FIX ---
+            'personal_dialogue_html', 'elevator_abstract_html'
         ]
         if field_name not in allowed_fields:
             print(f"Error: Attempt to update invalid field {field_name}")
@@ -99,15 +93,14 @@ class ReadingsMixin:
         )
         self.conn.commit()
 
-    # --- NEW METHOD FOR UNITY TAB ---
     def save_reading_unity_data(self, reading_id, html_content, kind_of_work, dq_id):
         """Saves all data from the custom Unity tab."""
         try:
             self.cursor.execute("""
                 UPDATE readings
-                SET 
-                    unity_html = ?, 
-                    unity_kind_of_work = ?, 
+                SET
+                    unity_html = ?,
+                    unity_kind_of_work = ?,
                     unity_driving_question_id = ?
                 WHERE id = ?
             """, (html_content, kind_of_work, dq_id, reading_id))
@@ -116,10 +109,8 @@ class ReadingsMixin:
             print(f"Error in save_reading_unity_data: {e}")
             self.conn.rollback()
 
-    # --- END NEW METHOD ---
-
     def delete_reading(self, reading_id):
-        """Deletes a reading and all its related data (outline, attachments) via cascade."""
+        """Deletes a reading and all its related data via cascade."""
         self.cursor.execute("DELETE FROM readings WHERE id = ?", (reading_id,))
         self.conn.commit()
 
