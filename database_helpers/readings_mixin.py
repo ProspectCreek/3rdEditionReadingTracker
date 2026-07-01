@@ -6,10 +6,11 @@ class ReadingsMixin:
                     published="", pages="", level="", classification=""):
         """Create a reading from manually entered metadata."""
         self.cursor.execute(
-            "SELECT COALESCE(MAX(display_order), -1) FROM readings WHERE project_id = ?",
+            "SELECT MAX(display_order) FROM readings WHERE project_id = ?",
             (project_id,)
         )
-        new_order = (self.cursor.fetchone()[0] or -1) + 1
+        max_order = self.cursor.fetchone()[0]
+        new_order = 0 if max_order is None else max_order + 1
 
         payload = {
             "project_id": int(project_id),
